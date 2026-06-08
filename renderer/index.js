@@ -1782,10 +1782,10 @@ if (isMiniMode) {
 
   function toggleChatSidebar(isOpen) {
     if (isOpen) {
-      chatAgentWidget.classList.remove('hidden');
+      chatAgentWidget.classList.remove('closed');
       btnChatSidebarToggle.classList.add('hidden');
     } else {
-      chatAgentWidget.classList.add('hidden');
+      chatAgentWidget.classList.add('closed');
       btnChatSidebarToggle.classList.remove('hidden');
     }
   }
