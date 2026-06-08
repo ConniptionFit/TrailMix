@@ -1,0 +1,28 @@
+{
+  "id": "call_1780873370274",
+  "date": "6/7/2026, 6:02:50 PM",
+  "title": "New Session 06:02 PM",
+  "transcript": [
+    {
+      "id": "call_1780873370274_0_0",
+      "timestampMs": 0,
+      "timestamp": "00:00",
+      "speaker": "You",
+      "text": "Testing testing and so my fellow Americans ask not what you are cutting",
+      "chunkIndex": 0,
+      "wallTimeMs": 1780873382162
+    },
+    {
+      "id": "call_1780873370274_3_0",
+      "timestampMs": 30000,
+      "timestamp": "00:30",
+      "speaker": "You",
+      "text": "country can do for you, ask what you can do for your country.",
+      "chunkIndex": 3,
+      "wallTimeMs": 1780873390136
+    }
+  ],
+  "summary": "Here’s a recap of the key discussion highlights in bullet points based solely on the provided transcript excerpts:\n\n*   **Focus Shift:** The speaker is contemplating how to best serve and support American citizens.\n* **Important Question:** They're shifting their focus from what Americans do for them to what they can do for America. \n\n\n\nDo you want me to flesh this out further with any other details gleaned from the transcript, perhaps analyzing potential goals or suggestions?",
+  "actionItems": "Here's a list of the actionable next steps and owners based on the transcript, in bullet point format:\n\n* **Action:** Focus on understanding the needs and concerns of Americans.\n    * **Owner:** You (The speaker) - implies strategic leadership & listening to citizens \n\nLet me know if you’d like me to explore a specific aspect further!",
+  "encrypted": false
+}

@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>TrailMix - Local AI Notes & Transcription</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="index.css">
+</head>
+<body>
+  <!-- Mini Mode Widget (Used when window is minimized during transcription) -->
+  <div id="mini-widget" class="mini-widget-container hidden">
+    <div class="mini-logo-area">
+      <img src="../assets/logo.png" alt="TrailMix Logo" class="mini-logo">
+      <div class="mini-info">
+        <span class="mini-title">TrailMix</span>
+        <span class="mini-status animate-pulse">Transcribing...</span>
+      </div>
+    </div>
+    <div class="mini-controls">
+      <button id="mini-toggle" class="btn-mini-stop">⏹ Stop</button>
+      <button id="mini-relaunch" class="btn-mini-open">↗ Open</button>
+    </div>
+  </div>
+
+  <!-- Main App Window -->
+  <div id="main-app" class="app-layout">
+    
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <img src="../assets/logo.png" alt="TrailMix Logo" class="app-logo">
+        <h2>TrailMix</h2>
+      </div>
+      
+      <div class="sidebar-menu">
+        <button id="nav-dashboard" class="sidebar-btn active">
+          <span class="icon">📊</span> Dashboard
+        </button>
+        <button id="nav-calendar" class="sidebar-btn">
+          <span class="icon">📅</span> Calendar
+        </button>
+        <button id="nav-action-items" class="sidebar-btn">
+          <span class="icon">📋</span> Action Items
+        </button>
+        <button id="nav-history" class="sidebar-btn">
+          <span class="icon">📜</span> Call History
+        </button>
+        <button id="nav-settings" class="sidebar-btn">
+          <span class="icon">⚙️</span> Settings
+        </button>
+      </div>
+
+      <div class="sidebar-history-section">
+        <div class="sidebar-history-header" style="position: relative;">
+          <h3>Recent Transcriptions</h3>
+          <button id="btn-history-menu" class="icon-btn-toggle" title="History Menu">☰</button>
+          
+          <!-- History Menu Dropdown -->
+          <div id="history-menu-dropdown" class="history-dropdown hidden">
+            <button id="menu-opt-multiselect" class="dropdown-item">☑️ Select Multiple</button>
+            <div class="dropdown-divider"></div>
+            <div class="dropdown-header">Sort By</div>
+            <button id="menu-opt-sort-newest" class="dropdown-item active-sort">📅 Date: Newest First</button>
+            <button id="menu-opt-sort-oldest" class="dropdown-item">📅 Date: Oldest First</button>
+            <button id="menu-opt-sort-title-asc" class="dropdown-item">🔤 Title: A-Z</button>
+            <button id="menu-opt-sort-title-desc" class="dropdown-item">🔤 Title: Z-A</button>
+          </div>
+        </div>
+        <div class="sidebar-search-container" style="margin-bottom: 12px; padding: 0 4px;">
+          <input type="text" id="input-sidebar-search" placeholder="Search transcripts or #tag..." class="input-text" style="width: 100%; font-size: 11px; padding: 6px 8px; box-sizing: border-box;">
+        </div>
+        <div id="sidebar-bulk-actions" class="bulk-actions-bar hidden">
+          <span id="bulk-select-count">0 selected</span>
+          <div class="bulk-buttons">
+            <button id="btn-bulk-merge" class="bulk-btn" title="Merge Selected">🔗</button>
+            <button id="btn-bulk-export" class="bulk-btn" title="Export Selected">📤</button>
+            <button id="btn-bulk-delete" class="bulk-btn delete" title="Delete Selected">🗑️</button>
+            <button id="btn-bulk-cancel" class="bulk-btn" title="Cancel">❌</button>
+          </div>
+        </div>
+        <div id="sidebar-calls-list" class="calls-list">
+          <!-- Calls list will be dynamically rendered here -->
+          <div class="empty-state">No calls transcribed yet.</div>
+        </div>
+      </div>
+      
+      <div class="sidebar-footer">
+        <div class="status-indicator">
+          <span class="indicator-dot online"></span>
+          <span>Local Engine Active</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="content-area">
+      
+      <!-- Dashboard Tab -->
+      <section id="tab-dashboard" class="tab-pane active">
+        <div class="dashboard-header">
+          <div>
+            <h1>Live Transcription</h1>
+            <p class="subtitle">100% Offline speech-to-text and intelligence engine</p>
+          </div>
+          <div class="devices-picker">
+            <span class="device-badge">🎤 Mic: <span id="label-mic-device">Loading...</span></span>
+            <span class="device-badge">🔊 System: <span id="label-sys-device">Loading...</span></span>
+          </div>
+        </div>
+
+        <div class="rec-control-panel card glassmorphic">
+          <div class="rec-status-details">
+            <div id="rec-indicator" class="rec-indicator-static"></div>
+            <div class="rec-info-text">
+              <h3 id="rec-title">Engine Idle</h3>
+              <span id="rec-timer">00:00</span>
+            </div>
+          </div>
+          <div class="rec-actions" style="display: flex; gap: 10px;">
+            <button id="btn-record-toggle" class="btn-record start">
+              <span class="btn-icon">⏺</span> New Transcript
+            </button>
+            <button id="btn-pause-toggle" class="btn-record pause hidden">
+              <span class="btn-icon">⏸</span> Pause
+            </button>
+            <button id="btn-resume-past" class="btn-record resume hidden">
+              <span class="btn-icon">⏯</span> Resume
+            </button>
+          </div>
+        </div>
+
+        <div class="split-view">
+          <!-- Live Transcript Pane -->
+          <div class="transcript-pane card glassmorphic">
+            <div class="pane-header">
+              <h2>Transcript</h2>
+              <span class="transcript-badge">No audio saved in files</span>
+            </div>
+            <div id="transcript-container" class="transcript-container">
+              <div class="transcript-empty-state">
+                <span class="empty-icon">🎧</span>
+                <p>Click "New Transcript" or select a past session from the history sidebar to begin.</p>
+              </div>
+            </div>
+            <!-- Jump to Latest Floating Button -->
+            <button id="btn-jump-latest" class="btn-jump-latest hidden">
+              <span>↓ Jump to latest</span>
+            </button>
+          </div>
+
+          <!-- Summarization Pane -->
+          <div class="analysis-pane card glassmorphic">
+            <div class="pane-header">
+              <h2>AI Summaries</h2>
+              <span class="ai-badge">Offline Model</span>
+            </div>
+            
+            <div class="analysis-tabs">
+              <button id="btn-show-summary" class="analysis-tab-btn active">Highlights</button>
+              <button id="btn-show-actions" class="analysis-tab-btn">Action Items</button>
+            </div>
+
+            <div class="analysis-content">
+              <div id="summary-content" class="analysis-text">
+                <p class="placeholder-text">AI Highlights will be generated automatically at the end of the transcription session.</p>
+              </div>
+              <div id="action-content" class="analysis-text hidden">
+                <p class="placeholder-text">Action items will be extracted at the end of the transcription session.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Calendar Tab -->
+      <section id="tab-calendar" class="tab-pane">
+        <div class="tab-header">
+          <h1>Deadline Calendar</h1>
+          <p>Manage date-specific deadlines extracted offline from call context</p>
+        </div>
+        
+        <div class="calendar-controls-bar">
+          <div class="view-selectors">
+            <button id="btn-calendar-grid-view" class="view-btn active">📅 Calendar View</button>
+            <button id="btn-calendar-list-view" class="view-btn">📋 List View</button>
+            <button id="btn-calendar-omitted-view" class="view-btn">🙈 Omitted Deadlines</button>
+          </div>
+          
+          <div id="calendar-sort-controls" class="sort-controls hidden">
+            <label for="select-deadline-sort">Sort Order:</label>
+            <select id="select-deadline-sort" class="input-select sort-select">
+              <option value="asc">Ascending (Soonest First)</option>
+              <option value="desc">Descending (Latest First)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="calendar-layout-container">
+          <!-- Month Grid View -->
+          <div id="calendar-grid-container" class="card glassmorphic calendar-card">
+            <div class="calendar-grid-header">
+              <button id="btn-prev-month" class="month-nav-btn">&lt;</button>
+              <h2 id="calendar-month-year-label">June 2026</h2>
+              <button id="btn-next-month" class="month-nav-btn">&gt;</button>
+            </div>
+            <div class="calendar-month-grid" id="calendar-month-grid">
+              <!-- Grid rendered dynamically -->
+            </div>
+          </div>
+
+          <!-- List View -->
+          <div id="calendar-list-container" class="card glassmorphic calendar-card hidden">
+            <h2>Upcoming Deadlines List</h2>
+            <div id="calendar-deadlines-list" class="deadlines-list-wrapper">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+
+          <!-- Omitted Deadlines View -->
+          <div id="calendar-omitted-container" class="card glassmorphic calendar-card hidden">
+            <h2>Omitted Deadlines</h2>
+            <div id="calendar-omitted-list" class="deadlines-list-wrapper">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Action Items Tab -->
+      <section id="tab-action-items" class="tab-pane">
+        <div class="tab-header">
+          <h1>Action Items Checklist</h1>
+          <p>Actionable next steps extracted from your transcriptions with full conversation context</p>
+        </div>
+        <div class="action-items-container">
+          <div class="card glassmorphic action-items-card">
+            <h2>📋 Extracted Action Items</h2>
+            <div id="action-items-list" class="action-checklist-wrapper">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- History Tab -->
+      <section id="tab-history" class="tab-pane">
+        <div class="tab-header">
+          <h1>Call History</h1>
+          <p>Review and search past local transcriptions</p>
+        </div>
+        <div class="history-grid" id="history-grid">
+          <!-- Dynamically populated -->
+        </div>
+      </section>
+
+      <!-- Settings Tab -->
+      <section id="tab-settings" class="tab-pane">
+        <div class="tab-header">
+          <h1>Settings</h1>
+          <p>Configure Offline Models and Privacy Credentials</p>
+        </div>
+        
+        <div class="settings-grid">
+          <!-- Hardware Recommendations -->
+          <div class="card glassmorphic settings-card">
+            <h2>Hardware Profiler</h2>
+            <div class="hardware-info-list">
+              <div class="hw-item"><strong>CPU:</strong> <span id="hw-cpu">Loading...</span></div>
+              <div class="hw-item"><strong>Memory:</strong> <span id="hw-ram">Loading...</span></div>
+              <div class="hw-item"><strong>GPU:</strong> <span id="hw-gpu">Loading...</span></div>
+              <div class="hw-item highlight">
+                <strong>Recommended Model:</strong> 
+                <span id="hw-recommendation" class="badge-rec">Analyzing...</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Model Manager -->
+          <div class="card glassmorphic settings-card">
+            <h2>Local AI Models</h2>
+            
+            <div class="settings-field">
+              <label for="select-whisper-model">Whisper Transcription Model</label>
+              <select id="select-whisper-model" class="input-select">
+                <option value="ggml-tiny.bin">Whisper Tiny (75 MB - Ultra Fast)</option>
+                <option value="ggml-base.bin" selected>Whisper Base (140 MB - Balanced)</option>
+              </select>
+              <p class="field-desc">Smaller models run faster; larger models offer better accuracy.</p>
+            </div>
+
+            <div class="settings-field">
+              <label for="select-llm-model">Ollama Summarization Model</label>
+              <select id="select-llm-model" class="input-select">
+                <!-- Dynamically loaded from Ollama tags -->
+              </select>
+              <p class="field-desc">Choose which local Ollama model to use for summarization and chat.</p>
+            </div>
+
+            <div class="settings-actions">
+              <button id="btn-download-whisper" class="btn-secondary">Download Selected Whisper Model</button>
+            </div>
+            
+            <!-- Download progress bar -->
+            <div id="download-progress-container" class="download-progress-container hidden">
+              <div class="progress-bar-label">Downloading Model: <span id="download-progress-percent">0%</span></div>
+              <div class="progress-bar-bg">
+                <div id="download-progress-fill" class="progress-bar-fill"></div>
+              </div>
+              <pre id="download-progress-log" class="download-log"></pre>
+            </div>
+          </div>
+
+          <!-- Audio Devices & Routing -->
+          <div class="card glassmorphic settings-card">
+            <h2>Audio Devices & Routing</h2>
+            <div class="settings-field">
+              <label for="select-mic-device">Microphone (Input Device)</label>
+              <select id="select-mic-device" class="input-select">
+                <option value="default" selected>Default Active Microphone</option>
+              </select>
+              <p class="field-desc">Select which local physical microphone to capture.</p>
+            </div>
+
+            <div class="settings-field">
+              <label for="select-sys-device">System Audio (Output Device)</label>
+              <select id="select-sys-device" class="input-select">
+                <option value="default" selected>Default Active Output Monitor</option>
+              </select>
+              <p class="field-desc">Select which system device monitor to capture inbound calls or desktop audio.</p>
+            </div>
+
+            <div class="settings-field" style="margin-top: 10px;">
+              <label class="checkbox-container">
+                <input type="checkbox" id="check-noise-cancel" checked>
+                <span class="checkmark"></span>
+                Enable acoustic noise/echo cancellation
+              </label>
+              <p class="field-desc" style="margin-left: 24px;">Automatically filters system speaker playback from being registered by your microphone to prevent transcribing desktop audio twice.</p>
+            </div>
+          </div>
+
+          <!-- User Profile -->
+          <div class="card glassmorphic settings-card">
+            <h2>User Profile</h2>
+            <div class="settings-field">
+              <label for="input-user-name">Your Name</label>
+              <input type="text" id="input-user-name" class="input-text" placeholder="Enter your name">
+              <p class="field-desc">Your name is saved 100% offline on this machine and is never sent to external servers. It is solely used by the local LLM to understand context when labeling other speakers in transcripts.</p>
+            </div>
+          </div>
+
+          <!-- Timeline & Calendar -->
+          <div class="card glassmorphic settings-card">
+            <h2>Timeline & Calendar</h2>
+            <div class="settings-field">
+              <label class="checkbox-container">
+                <input type="checkbox" id="check-color-deadlines">
+                <span class="checkmark"></span>
+                Color-code upcoming deadlines as dates approach
+              </label>
+              <p class="field-desc" style="margin-left: 24px;">Visually highlight deadlines (overdue in red, critical in orange, warnings in yellow, safe in green).</p>
+            </div>
+          </div>
+
+          <!-- Transcript Storage -->
+          <div class="card glassmorphic settings-card">
+            <h2>Transcript Storage</h2>
+            <div class="settings-field">
+              <label for="input-storage-path">Save Location</label>
+              <div style="display: flex; gap: 8px;">
+                <input type="text" id="input-storage-path" class="input-text" readonly placeholder="Default directory" style="flex: 1;">
+                <button id="btn-browse-storage" class="btn-secondary" style="white-space: nowrap; padding: 8px 14px;">Browse...</button>
+              </div>
+              <p class="field-desc">Select the directory where TrailMix will save your `.trail` transcript files.</p>
+            </div>
+          </div>
+
+          <!-- Security and Encryption -->
+          <div class="card glassmorphic settings-card">
+            <h2>Security & Encryption</h2>
+            <div class="settings-field">
+              <label class="checkbox-container">
+                <input type="checkbox" id="check-encrypt-default">
+                <span class="checkmark"></span>
+                Encrypt new calls by default
+              </label>
+            </div>
+            <div class="settings-field">
+              <label for="input-encrypt-password">Encryption Password / Shareable Key</label>
+              <input type="password" id="input-encrypt-password" class="input-text" placeholder="Enter security passphrase">
+              <p class="field-desc">This password will derive an AES-256 key to secure calls. Share this key to let recipients decrypt the call file.</p>
+            </div>
+            <button id="btn-save-settings" class="btn-primary" style="margin-top: 15px; width: 100%;">Save Settings</button>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Floating AI Chat Toggle Button (only visible when chat panel is closed) -->
+    <button id="btn-chat-sidebar-toggle" class="chat-sidebar-toggle-btn" title="Open AI Assistant">
+      <span class="chat-toggle-icon">💬</span> Ask AI
+    </button>
+
+    <!-- AI Chat Agent Widget (Collapsible Drawer) -->
+    <div id="chat-agent-widget" class="chat-widget closed">
+      <div id="chat-header" class="chat-header">
+        <div class="chat-title">
+          <span class="chat-icon">💬</span>
+          <div>
+            <h4>TrailMix AI Assistant</h4>
+            <span>Ask anything about the active call</span>
+          </div>
+        </div>
+        <button id="btn-chat-toggle" class="chat-toggle-btn">▲</button>
+      </div>
+
+      <div class="chat-body">
+        <div class="chat-shortcuts">
+          <button id="btn-chat-miss" class="btn-shortcut">⏱️ What'd I miss?</button>
+          <button id="btn-chat-action" class="btn-shortcut">📋 Action items?</button>
+        </div>
+        
+        <div id="chat-messages" class="chat-messages">
+          <div class="msg system">
+            Hi! I am your offline assistant. Ask me questions like "What was the conclusion on the budget?" or click the shortcuts above to query the transcript.
+          </div>
+        </div>
+      </div>
+
+      <div class="chat-footer">
+        <input type="text" id="input-chat-query" placeholder="Ask a question..." class="input-chat">
+        <button id="btn-chat-send" class="btn-chat-send">Send</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Password Entry Modal -->
+  <div id="password-modal" class="modal hidden">
+    <div class="modal-content glassmorphic">
+      <h2>Locked Session</h2>
+      <p>This TrailMix call session is encrypted. Enter the password or shareable security key to decrypt it.</p>
+      
+      <div class="modal-field">
+        <input type="password" id="modal-password-input" class="input-text" placeholder="Enter decryption key">
+      </div>
+      
+      <div id="modal-error-message" class="modal-error hidden">
+        Incorrect passphrase. Please try again.
+      </div>
+      
+      <div class="modal-actions">
+        <button id="btn-modal-cancel" class="btn-secondary">Cancel</button>
+        <button id="btn-modal-decrypt" class="btn-primary">Decrypt File</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Custom Context Menu for Call items -->
+  <div id="calls-context-menu" class="custom-context-menu hidden">
+    <div class="context-menu-item" id="ctx-open-file">📂 Open File Location</div>
+    <div class="context-menu-item" id="ctx-find-related">🔍 Find Related Transcripts</div>
+    <div class="context-menu-item" id="ctx-select-mode">☑️ Select (Multi-Select)</div>
+    <div class="context-menu-divider"></div>
+    <div class="context-menu-item delete" id="ctx-delete-call">🗑️ Delete Transcript</div>
+  </div>
+
+  <!-- Custom Context Menu for Deadline items -->
+  <div id="deadlines-context-menu" class="custom-context-menu hidden">
+    <div class="context-menu-item" id="ctx-hide-deadline">🙈 Hide from Calendar</div>
+    <div class="context-menu-item" id="ctx-show-deadline">👁️ Restore to Calendar</div>
+    <div class="context-menu-divider"></div>
+    <div class="context-menu-item delete" id="ctx-delete-deadline">🗑️ Delete Action Item</div>
+  </div>
+
+  <!-- Global Tooltip Element -->
+  <div id="global-tooltip" class="global-tooltip-el hidden"></div>
+
+  <script src="index.js"></script>
+</body>
+</html>

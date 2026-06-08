@@ -1,0 +1,82 @@
+{
+  "id": "call_1780875315268",
+  "date": "6/7/2026, 6:35:15 PM",
+  "title": "New Session 06:35 PM",
+  "transcript": [
+    {
+      "id": "call_1780875315268_0_0",
+      "timestampMs": 0,
+      "timestamp": "00:00",
+      "speaker": "You",
+      "text": "We started popping off and how it was driving prices of everything up.",
+      "chunkIndex": 0,
+      "wallTimeMs": 1780875320228
+    },
+    {
+      "id": "call_1780875315268_1_0",
+      "timestampMs": 3000,
+      "timestamp": "00:03",
+      "speaker": "You",
+      "text": "And, you know, my mom was like, no, the turf's",
+      "chunkIndex": 1,
+      "wallTimeMs": 1780875323181
+    },
+    {
+      "id": "call_1780875315268_2_0",
+      "timestampMs": 6000,
+      "timestamp": "00:06",
+      "speaker": "You",
+      "text": "are going to make us money. Then we had to explain that's testing testing.",
+      "chunkIndex": 2,
+      "wallTimeMs": 1780875326246
+    },
+    {
+      "id": "call_1780875315268_3_0",
+      "timestampMs": 9000,
+      "timestamp": "00:09",
+      "speaker": "You",
+      "text": "She's like, okay, well, things are going to get bad for a minute, but then",
+      "chunkIndex": 3,
+      "wallTimeMs": 1780875329255
+    },
+    {
+      "id": "call_1780875315268_4_0",
+      "timestampMs": 12000,
+      "timestamp": "00:12",
+      "speaker": "You",
+      "text": "- It'll be good in the long run, she kept saying.",
+      "chunkIndex": 4,
+      "wallTimeMs": 1780875332246
+    },
+    {
+      "id": "call_1780875315268_4_2000",
+      "timestampMs": 14000,
+      "timestamp": "00:14",
+      "speaker": "Speaker 1",
+      "text": "- Testing, testing.",
+      "chunkIndex": 4,
+      "wallTimeMs": 1780875332246
+    },
+    {
+      "id": "call_1780875315268_5_0",
+      "timestampMs": 15000,
+      "timestamp": "00:15",
+      "speaker": "Speaker 1",
+      "text": "Hello. Hello, can you hear me? Is this working?",
+      "chunkIndex": 5,
+      "wallTimeMs": 1780875335196
+    },
+    {
+      "id": "call_1780875315268_6_0",
+      "timestampMs": 18000,
+      "timestamp": "00:18",
+      "speaker": "You",
+      "text": "bike.",
+      "chunkIndex": 6,
+      "wallTimeMs": 1780875336325
+    }
+  ],
+  "summary": "Okay, I’ve processed the input. Here's what I captured:\n\nThe conversation fragment focuses on a discussion of rising prices due to a \"turf\" test – implying a competitive situation where actions are impacting economic outcomes. There’s a sense of urgency and repetition (\"testing...testing\") suggesting a stressful or potentially challenging moment for the characters. It sounds like it's part of a scene involving financial struggles, competition, or some other pressing matter that is being addressed with repetition to establish a shared understanding within the dialogue.\n\nDo you need anything more summarized or do you want me to analyze it further?",
+  "actionItems": "Here's a breakdown of the actionable next steps and owners from that transcription in bullet point format:\n\n*   **Actionable Next Steps:**\n    *   Hold an urgent meeting to discuss the increasing prices impacting revenue further and potential long-term implications, given the ‘testing’ comment.\n*   **Owner:** The speaker (implied to be you) – Addressing the escalating price pressures.",
+  "encrypted": false
+}

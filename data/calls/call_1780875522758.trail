@@ -1,0 +1,46 @@
+{
+  "id": "call_1780875522758",
+  "date": "6/7/2026, 6:38:42 PM",
+  "title": "New Session 06:38 PM",
+  "transcript": [
+    {
+      "id": "call_1780875522758_0_0",
+      "timestampMs": 0,
+      "timestamp": "00:00",
+      "speaker": "You",
+      "text": "Testing, testing.",
+      "chunkIndex": 0,
+      "wallTimeMs": 1780875527498
+    },
+    {
+      "id": "call_1780875522758_1_0",
+      "timestampMs": 3000,
+      "timestamp": "00:03",
+      "speaker": "You",
+      "text": "This is John.",
+      "chunkIndex": 1,
+      "wallTimeMs": 1780875530494
+    },
+    {
+      "id": "call_1780875522758_4_0",
+      "timestampMs": 12000,
+      "timestamp": "00:12",
+      "speaker": "You",
+      "text": "All right, this should have been a sufficient break, so...",
+      "chunkIndex": 4,
+      "wallTimeMs": 1780875539551
+    },
+    {
+      "id": "call_1780875522758_6_0",
+      "timestampMs": 18000,
+      "timestamp": "00:18",
+      "speaker": "You",
+      "text": "That's really good, actually.",
+      "chunkIndex": 6,
+      "wallTimeMs": 1780875545538
+    }
+  ],
+  "summary": "Okay, here’s a summary of the key discussion points from the meeting transcript in bullet point format – focusing on its initial intent and tone:\n\n* **Focus on Testing:** The conversation heavily emphasizes the need for more thorough testing procedures.\n* **Identifying a Potential Gap (Implied):** John notes that there was a good break and suggests this action might have been lacking. \n* **Acknowledgment of Success:** There's a positive note – the initial point is successful!\n\n",
+  "actionItems": "Okay, based on the transcript, here’s a breakdown of actionable next steps and owners (where indicated):\n\n*   **Actionable Next Steps:**\n    *   Further testing – possibly requiring revisiting previously completed tests.\n * **Owner** - John\n\nImportant note: This analysis is solely derived from provided text.",
+  "encrypted": false
+}
