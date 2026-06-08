@@ -1402,7 +1402,7 @@ ipcMain.handle('settings:save', async (event, newSettings) => {
 
 ipcMain.handle('audio:start-recording', () => {
   startRecordingHandler();
-  return true;
+  return activeSession ? activeSession.id : 'live';
 });
 
 ipcMain.handle('audio:stop-recording', () => {
@@ -1587,6 +1587,25 @@ ipcMain.handle('calls:save', (event, callData, password) => {
   return true;
 });
 
+ipcMain.handle('calls:save-silently', (event, callData) => {
+  if (!callData) return false;
+  const filePath = path.join(getCallsDir(), `${callData.id}.trail`);
+  try {
+    const encryptionPassword = decryptionKeys.get(callData.id) || settings.encryptionPassword;
+    if (callData.encrypted && encryptionPassword) {
+      const encryptedData = encryption.encrypt(JSON.stringify(callData), encryptionPassword);
+      fs.writeFileSync(filePath, encryptedData, 'utf8');
+      decryptionKeys.set(callData.id, encryptionPassword);
+    } else {
+      fs.writeFileSync(filePath, JSON.stringify(callData, null, 2), 'utf8');
+    }
+    return true;
+  } catch (err) {
+    console.error('Failed to silently save session via IPC', err);
+    return false;
+  }
+});
+
 function extractKeywords(text) {
   if (!text) return [];
   const words = text.toLowerCase().split(/[^a-z0-9]+/i);
@@ -1730,6 +1749,27 @@ ipcMain.handle('chat:query', async (event, query, transcriptText) => {
 
   try {
     return await queryOllama(userPrompt, model, systemPrompt);
+  } catch (error) {
+    return `Error: Could not retrieve response from Ollama model "${model}". Please verify Ollama is active.`;
+  }
+});
+
+ipcMain.handle('chat:mix-enhance', async (event, jots, transcriptText) => {
+  const model = settings.selectedLlm;
+  const systemPrompt = `You are a local meeting assistant that emulates the "jot and enhance" feature.
+Your task is to take the user's rough manual notes/jots and enhance them into clean, structured, and professionally formatted notes in markdown.
+Use the background transcript to resolve shorthand, abbreviations, typos, and fill in missing technical details, precise metrics, dates, or key quotes surrounding the jots.
+
+CRITICAL CONSTRAINTS:
+1. ONLY include topics, tasks, or decisions that are explicitly referenced in the user's rough jots.
+2. If a topic mentioned in the background transcript is NOT referenced in the user's jots, assume it is low-importance and DO NOT include it in the enhanced output.
+3. Clean up typos and use professional markdown structure (such as bolding, H2/H3 headers, and bullet points).
+4. Output ONLY the clean enhanced markdown notes directly. Do NOT include any conversational filler, intro, outro, or conversational responses.`;
+
+  const prompt = `Here is the background transcript of the meeting:\n\n${transcriptText}\n\nHere are the user's rough jots:\n\n${jots}\n\nGenerate the enhanced notes:`;
+
+  try {
+    return await queryOllama(prompt, model, systemPrompt);
   } catch (error) {
     return `Error: Could not retrieve response from Ollama model "${model}". Please verify Ollama is active.`;
   }

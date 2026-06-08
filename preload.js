@@ -78,5 +78,7 @@ contextBridge.exposeInMainWorld('api', {
   },
 
   // Chat Agent
-  chatQuery: (query, transcriptText) => ipcRenderer.invoke('chat:query', query, transcriptText)
+  chatQuery: (query, transcriptText) => ipcRenderer.invoke('chat:query', query, transcriptText),
+  saveCallSilently: (callData) => ipcRenderer.invoke('calls:save-silently', callData),
+  mixEnhance: (jots, transcriptText) => ipcRenderer.invoke('chat:mix-enhance', jots, transcriptText)
 });

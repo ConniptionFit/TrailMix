@@ -151,8 +151,18 @@ if (isMiniMode) {
       transcriptContainer.innerHTML = '';
       document.getElementById('summary-content').innerHTML = '<p class="placeholder-text">AI Highlights will be generated automatically at the end of the transcription session.</p>';
       document.getElementById('action-content').innerHTML = '<p class="placeholder-text">Action items will be extracted at the end of the transcription session.</p>';
+      
+      const textareaMixJots = document.getElementById('textarea-mix-jots');
+      const mixEnhancedPreview = document.getElementById('mix-enhanced-preview');
+      if (textareaMixJots) textareaMixJots.value = '';
+      if (mixEnhancedPreview) mixEnhancedPreview.innerHTML = '<p class="placeholder-text">Your enhanced notes will display here after you click "Mix & Enhance".</p>';
+      
       lastSegmentTimeMs = null;
-      window.api.startRecording();
+      window.api.startRecording().then(sessionId => {
+        if (activeSession && activeSession.id === 'live' && sessionId) {
+          activeSession.id = sessionId;
+        }
+      });
     } else {
       window.api.stopRecording();
     }
@@ -264,6 +274,14 @@ if (isMiniMode) {
   // Transcription Update Listener
   window.api.onTranscriptionUpdate((segment) => {
     if (!activeSession) return;
+    
+    // Extract real session ID from segment ID during live call
+    if (activeSession.id === 'live' && segment.id && segment.id.startsWith('call_')) {
+      const match = segment.id.match(/^(call_\d+)/);
+      if (match) {
+        activeSession.id = match[1];
+      }
+    }
     
     // Remove empty placeholder if present
     const emptyState = transcriptContainer.querySelector('.transcript-empty-state');
@@ -428,22 +446,94 @@ if (isMiniMode) {
   // Summary Tab Toggle
   const btnShowSummary = document.getElementById('btn-show-summary');
   const btnShowActions = document.getElementById('btn-show-actions');
+  const btnShowMix = document.getElementById('btn-show-mix');
   const summaryContent = document.getElementById('summary-content');
   const actionContent = document.getElementById('action-content');
+  const mixContent = document.getElementById('mix-content');
+  const textareaMixJots = document.getElementById('textarea-mix-jots');
+  const btnMixEnhance = document.getElementById('btn-mix-enhance');
+  const mixEnhancedPreview = document.getElementById('mix-enhanced-preview');
 
   btnShowSummary.addEventListener('click', () => {
     btnShowSummary.classList.add('active');
     btnShowActions.classList.remove('active');
+    if (btnShowMix) btnShowMix.classList.remove('active');
     summaryContent.classList.remove('hidden');
     actionContent.classList.add('hidden');
+    if (mixContent) mixContent.classList.add('hidden');
   });
 
   btnShowActions.addEventListener('click', () => {
     btnShowActions.classList.add('active');
     btnShowSummary.classList.remove('active');
+    if (btnShowMix) btnShowMix.classList.remove('active');
     actionContent.classList.remove('hidden');
     summaryContent.classList.add('hidden');
+    if (mixContent) mixContent.classList.add('hidden');
   });
+
+  if (btnShowMix) {
+    btnShowMix.addEventListener('click', () => {
+      btnShowMix.classList.add('active');
+      btnShowSummary.classList.remove('active');
+      btnShowActions.classList.remove('active');
+      if (mixContent) mixContent.classList.remove('hidden');
+      summaryContent.classList.add('hidden');
+      actionContent.classList.add('hidden');
+    });
+  }
+
+  let mixNotesSaveTimeout = null;
+  if (textareaMixJots) {
+    textareaMixJots.addEventListener('input', () => {
+      if (!activeSession) return;
+      activeSession.mixNotes = textareaMixJots.value;
+      
+      clearTimeout(mixNotesSaveTimeout);
+      mixNotesSaveTimeout = setTimeout(() => {
+        window.api.saveCallSilently(activeSession);
+      }, 500);
+    });
+  }
+
+  if (btnMixEnhance) {
+    btnMixEnhance.addEventListener('click', () => {
+      if (!activeSession) return;
+      const transcriptText = activeSession.transcript 
+        ? activeSession.transcript.map(t => `[${t.timestamp}] ${t.speaker}: ${t.text}`).join('\n') 
+        : '';
+      const jots = textareaMixJots ? textareaMixJots.value.trim() : '';
+      if (!jots) {
+        alert("Please enter some rough jots first!");
+        return;
+      }
+      
+      btnMixEnhance.disabled = true;
+      btnMixEnhance.innerHTML = '✨ Enhancing...';
+      if (mixEnhancedPreview) {
+        mixEnhancedPreview.innerHTML = '<p class="placeholder-text">AI is enhancing your notes using meeting context...</p>';
+      }
+      
+      window.api.mixEnhance(jots, transcriptText).then(response => {
+        activeSession.enhancedNotes = response;
+        if (mixEnhancedPreview) {
+          mixEnhancedPreview.innerHTML = formatAISummary(response);
+        }
+        
+        window.api.saveCall(activeSession).then(() => {
+          console.log("Enhanced notes saved successfully");
+        });
+      }).catch(err => {
+        console.error(err);
+        if (mixEnhancedPreview) {
+          mixEnhancedPreview.innerHTML = `<p class="placeholder-text" style="color: var(--text-critical);">Error enhancing notes: ${err.message || err}</p>`;
+        }
+      }).finally(() => {
+        btnMixEnhance.disabled = false;
+        btnMixEnhance.innerHTML = '✨ Mix & Enhance';
+      });
+    });
+  }
 
   // ----------------------------------------------------
   // Sidebar and History Loading
@@ -1109,6 +1199,20 @@ if (isMiniMode) {
       actionContent.innerHTML = formatAISummary(activeSession.actionItems);
     } else {
       actionContent.innerHTML = '<p class="placeholder-text">No action items extracted.</p>';
+    }
+
+    // Render Mix Notes
+    const textareaMixJots = document.getElementById('textarea-mix-jots');
+    const mixEnhancedPreview = document.getElementById('mix-enhanced-preview');
+    if (textareaMixJots) {
+      textareaMixJots.value = activeSession.mixNotes || '';
+    }
+    if (mixEnhancedPreview) {
+      if (activeSession.enhancedNotes) {
+        mixEnhancedPreview.innerHTML = formatAISummary(activeSession.enhancedNotes);
+      } else {
+        mixEnhancedPreview.innerHTML = '<p class="placeholder-text">Your enhanced notes will display here after you click "Mix & Enhance".</p>';
+      }
     }
   }
 
