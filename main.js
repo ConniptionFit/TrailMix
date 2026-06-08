@@ -992,7 +992,7 @@ function runWhisperOnChunkPromise(chunkWavPath, chunkIndex) {
       const timestampStr = formatTimestamp(sessionOffsetMs);
       
       const transcriptSegment = {
-        id: `${activeSession.id}_${sessionChunkOffset + chunkIndex}_${seg.speaker}_${seg.fromMs}`,
+        id: `${activeSession.id}_${sessionChunkOffset + chunkIndex}_${seg.speaker.replace(/\s+/g, '_')}_${seg.fromMs}`,
         timestampMs: sessionOffsetMs,
         timestamp: timestampStr,
         speaker: seg.speaker,
