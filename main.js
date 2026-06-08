@@ -441,10 +441,13 @@ function checkVoiceActivity(wavPath) {
     const buffer = fs.readFileSync(wavPath);
     if (buffer.length <= 44) return false;
     
+    const numChannels = buffer.readUInt16LE(22);
+    const bytesPerFrame = numChannels * 2;
+    
     let sum = 0;
     let count = 0;
     // Read 16-bit PCM samples
-    for (let i = 44; i < buffer.length; i += 4) {
+    for (let i = 44; i < buffer.length; i += bytesPerFrame) {
       if (i + 1 < buffer.length) {
         const sampleL = buffer.readInt16LE(i);
         sum += sampleL * sampleL;
@@ -453,7 +456,7 @@ function checkVoiceActivity(wavPath) {
     }
     if (count === 0) return false;
     const rms = Math.sqrt(sum / count);
-    console.log(`VAD check: RMS energy = ${Math.round(rms)}`);
+    console.log(`VAD check [${path.basename(wavPath)}]: RMS energy = ${Math.round(rms)}`);
     // Threshold of 100 RMS represents standard silence noise gate
     return rms > 100;
   } catch (err) {
@@ -865,21 +868,10 @@ async function processWhisperQueue() {
 }
 
 function runWhisperOnChunkPromise(chunkWavPath, chunkIndex) {
-  return new Promise((resolve) => {
+  return new Promise(async (resolve) => {
     const whisperCli = path.join(WHISPER_DIR, 'build', 'bin', 'whisper-cli');
     const whisperModel = path.join(WHISPER_DIR, 'models', settings.selectedModel);
-    const monoWavPath = chunkWavPath.replace('.wav', '_mono.wav');
     
-    // Check Voice Activity Detection (VAD) noise gate
-    const hasVoice = checkVoiceActivity(chunkWavPath);
-    if (!hasVoice) {
-      console.log(`VAD noise gate: Chunk ${chunkIndex} is silent (RMS < 100). Dropping chunk to save CPU/VRAM.`);
-      // Shred file immediately and return
-      secureShredFile(chunkWavPath);
-      resolve();
-      return;
-    }
-
     if (!fs.existsSync(whisperCli)) {
       console.error('Whisper.cpp binary not found at', whisperCli);
       secureShredFile(chunkWavPath);
@@ -893,115 +885,142 @@ function runWhisperOnChunkPromise(chunkWavPath, chunkIndex) {
       return;
     }
 
-    // Downmix to 16kHz mono WAV for Whisper
+    const leftWavPath = chunkWavPath.replace('.wav', '_left.wav');
+    const rightWavPath = chunkWavPath.replace('.wav', '_right.wav');
+    
+    // Extract Left channel (System Monitor / "Them") and Right channel (Microphone / "You")
     try {
-      let downmixFilter = '-ac 1';
-      if (settings.enableNoiseCancellation !== false) {
-        downmixFilter = '-filter_complex "aeval=\'val(0)+0.75*val(1)\':c=mono"';
-      }
-      execSync(`ffmpeg -y -i "${chunkWavPath}" ${downmixFilter} "${monoWavPath}"`);
+      execSync(`ffmpeg -y -i "${chunkWavPath}" -af "pan=mono|c0=c0" "${leftWavPath}"`);
+      execSync(`ffmpeg -y -i "${chunkWavPath}" -af "pan=mono|c0=c1" "${rightWavPath}"`);
     } catch (err) {
-      console.error('Ffmpeg downmix failed', err);
+      console.error('Ffmpeg channel splitting failed', err);
       secureShredFile(chunkWavPath);
       resolve();
       return;
     }
-
-    // Run Whisper CLI and produce JSON output
-    const outputBase = chunkWavPath.replace('.wav', '_trans');
-    const threads = Math.min(8, Math.max(4, require('os').cpus().length - 2));
-    const whisperCmd = `"${whisperCli}" -m "${whisperModel}" -f "${monoWavPath}" -t ${threads} -oj -of "${outputBase}"`;
     
-    exec(whisperCmd, (error) => {
-      if (error) {
-        console.error('Whisper execution failed', error);
-        secureShredFile(chunkWavPath);
-        secureShredFile(monoWavPath);
-        resolve();
-        return;
-      }
-      
-      const jsonPath = outputBase + '.json';
-      if (!fs.existsSync(jsonPath)) {
-        console.error('Whisper JSON file not found', jsonPath);
-        secureShredFile(chunkWavPath);
-        secureShredFile(monoWavPath);
-        resolve();
-        return;
-      }
-      
-      try {
-        const data = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
-        const segments = data.transcription || [];
+    // Check Voice Activity Detection (VAD) noise gate for both channels
+    const hasLeftVoice = checkVoiceActivity(leftWavPath);
+    const hasRightVoice = checkVoiceActivity(rightWavPath);
+    
+    if (!hasLeftVoice && !hasRightVoice) {
+      console.log(`VAD noise gate: Chunk ${chunkIndex} Left & Right are silent. Dropping chunk.`);
+      secureShredFile(chunkWavPath);
+      secureShredFile(leftWavPath);
+      secureShredFile(rightWavPath);
+      resolve();
+      return;
+    }
+    
+    const allSegments = [];
+    
+    // Helper to transcribe a mono channel file
+    const transcribeMonoFile = (monoWavPath, speakerName) => {
+      return new Promise((resolveTranscribe) => {
+        const outputBase = monoWavPath.replace('.wav', '_trans');
+        const jsonPath = outputBase + '.json';
+        const threads = Math.min(8, Math.max(4, require('os').cpus().length - 2));
+        const whisperCmd = `"${whisperCli}" -m "${whisperModel}" -f "${monoWavPath}" -t ${threads} -oj -of "${outputBase}"`;
         
-        segments.forEach((seg) => {
-          const text = seg.text.trim();
-          if (!text) return;
-          
-          if (/^\[blank_audio\]$/i.test(text) || text.toUpperCase().includes('BLANK_AUDIO')) {
+        exec(whisperCmd, (error) => {
+          if (error) {
+            console.error(`Whisper execution failed for ${speakerName}`, error);
+            resolveTranscribe([]);
             return;
           }
           
-          const fromMs = seg.offsets.from;
-          const toMs = seg.offsets.to;
-          
-          const { rmsL, rmsR } = calculateChannelEnergy(chunkWavPath, fromMs, toMs);
-          const rmsMic = rmsL;
-          const rmsSystem = rmsR;
-          
-          let effectiveRmsMic = rmsMic;
-          if (settings.enableNoiseCancellation !== false) {
-            effectiveRmsMic = Math.max(0, rmsMic - rmsSystem * 0.25);
+          if (!fs.existsSync(jsonPath)) {
+            console.error(`Whisper JSON file not found for ${speakerName}`, jsonPath);
+            resolveTranscribe([]);
+            return;
           }
           
-          console.log(`Diarization debug - Chunk: ${chunkIndex}, Segment: [${fromMs}ms - ${toMs}ms], RMS L (Mic): ${Math.round(rmsMic)}, RMS R (System): ${Math.round(rmsSystem)}, Eff Mic: ${Math.round(effectiveRmsMic)}`);
-          
-          let speaker = 'Speaker 1';
-          if (effectiveRmsMic > rmsSystem && effectiveRmsMic > 150) {
-            speaker = 'You';
-          } else if (rmsSystem > effectiveRmsMic && rmsSystem > 150) {
-            speaker = 'Speaker 1';
-          } else {
-            speaker = effectiveRmsMic > rmsSystem ? 'You' : 'Speaker 1';
-          }
-          
-          const sessionOffsetMs = (sessionChunkOffset + chunkIndex) * 2000 + fromMs;
-          const timestampStr = formatTimestamp(sessionOffsetMs);
-          
-          const transcriptSegment = {
-            id: `${activeSession.id}_${sessionChunkOffset + chunkIndex}_${fromMs}`,
-            timestampMs: sessionOffsetMs,
-            timestamp: timestampStr,
-            speaker: speaker,
-            text: text,
-            chunkIndex: sessionChunkOffset + chunkIndex,
-            wallTimeMs: Date.now()
-          };
-          
-          activeSession.transcript.push(transcriptSegment);
-          
-          if (mainWindow) {
-            mainWindow.webContents.send('audio:on-transcription-update', transcriptSegment);
-          }
-          if (miniWindow) {
-            miniWindow.webContents.send('audio:on-transcription-update', transcriptSegment);
+          try {
+            const data = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+            const segments = data.transcription || [];
+            const results = [];
+            
+            segments.forEach((seg) => {
+              const text = seg.text.trim();
+              if (!text) return;
+              
+              if (/^\[blank_audio\]$/i.test(text) || text.toUpperCase().includes('BLANK_AUDIO')) {
+                return;
+              }
+              
+              results.push({
+                fromMs: seg.offsets.from,
+                toMs: seg.offsets.to,
+                speaker: speakerName,
+                text: text
+              });
+            });
+            
+            try {
+              if (fs.existsSync(jsonPath)) fs.unlinkSync(jsonPath);
+            } catch (e) {}
+            
+            resolveTranscribe(results);
+          } catch (e) {
+            console.error(`Error parsing whisper JSON output for ${speakerName}`, e);
+            resolveTranscribe([]);
           }
         });
-        
-        saveSessionToFileSilently(activeSession);
-      } catch (e) {
-        console.error('Error parsing whisper JSON output', e);
+      });
+    };
+    
+    // Run transcriptions sequentially to keep CPU/RAM usage low and optimized
+    if (hasLeftVoice) {
+      const leftSegs = await transcribeMonoFile(leftWavPath, 'Speaker 1');
+      allSegments.push(...leftSegs);
+    } else {
+      secureShredFile(leftWavPath);
+    }
+    
+    if (hasRightVoice) {
+      const rightSegs = await transcribeMonoFile(rightWavPath, 'You');
+      allSegments.push(...rightSegs);
+    } else {
+      secureShredFile(rightWavPath);
+    }
+    
+    // Merge and sort segments chronologically by offset start time
+    allSegments.sort((a, b) => a.fromMs - b.fromMs);
+    
+    allSegments.forEach((seg) => {
+      const sessionOffsetMs = (sessionChunkOffset + chunkIndex) * 2000 + seg.fromMs;
+      const timestampStr = formatTimestamp(sessionOffsetMs);
+      
+      const transcriptSegment = {
+        id: `${activeSession.id}_${sessionChunkOffset + chunkIndex}_${seg.speaker}_${seg.fromMs}`,
+        timestampMs: sessionOffsetMs,
+        timestamp: timestampStr,
+        speaker: seg.speaker,
+        text: seg.text,
+        chunkIndex: sessionChunkOffset + chunkIndex,
+        wallTimeMs: Date.now()
+      };
+      
+      activeSession.transcript.push(transcriptSegment);
+      
+      if (mainWindow) {
+        mainWindow.webContents.send('audio:on-transcription-update', transcriptSegment);
       }
-      
-      // Compliance: Secure file shredding of temporary raw WAV and mono WAV files immediately
-      secureShredFile(chunkWavPath);
-      secureShredFile(monoWavPath);
-      try {
-        if (fs.existsSync(jsonPath)) fs.unlinkSync(jsonPath);
-      } catch (e) {}
-      
-      resolve();
+      if (miniWindow) {
+        miniWindow.webContents.send('audio:on-transcription-update', transcriptSegment);
+      }
     });
+    
+    if (allSegments.length > 0) {
+      saveSessionToFileSilently(activeSession);
+    }
+    
+    // Clean up temporary files
+    secureShredFile(chunkWavPath);
+    secureShredFile(leftWavPath);
+    secureShredFile(rightWavPath);
+    
+    resolve();
   });
 }
 
@@ -1122,7 +1141,7 @@ function startRecordingHandler() {
       if (err) return;
       
       const wavChunks = files
-        .filter(f => f.startsWith('chunk_') && f.endsWith('.wav') && !f.includes('_mono') && !f.includes('_trans'))
+        .filter(f => f.startsWith('chunk_') && f.endsWith('.wav') && !f.includes('_mono') && !f.includes('_left') && !f.includes('_right') && !f.includes('_trans'))
         .sort();
       
       // If we have at least 2 chunks, the previous ones are complete.
@@ -1180,7 +1199,7 @@ function pauseRecordingHandler() {
     if (fs.existsSync(TEMP_DIR)) {
       const files = fs.readdirSync(TEMP_DIR);
       const wavChunks = files
-        .filter(f => f.startsWith('chunk_') && f.endsWith('.wav') && !f.includes('_mono') && !f.includes('_trans'))
+        .filter(f => f.startsWith('chunk_') && f.endsWith('.wav') && !f.includes('_mono') && !f.includes('_left') && !f.includes('_right') && !f.includes('_trans'))
         .sort();
         
       let processedInThisRun = wavChunks.length;
@@ -1244,7 +1263,7 @@ function stopRecordingHandler() {
     if (fs.existsSync(TEMP_DIR)) {
       const files = fs.readdirSync(TEMP_DIR);
       const wavChunks = files
-        .filter(f => f.startsWith('chunk_') && f.endsWith('.wav') && !f.includes('_mono') && !f.includes('_trans'))
+        .filter(f => f.startsWith('chunk_') && f.endsWith('.wav') && !f.includes('_mono') && !f.includes('_left') && !f.includes('_right') && !f.includes('_trans'))
         .sort();
         
       let pendingTranscriptions = 0;
@@ -1261,8 +1280,7 @@ function stopRecordingHandler() {
       });
       
       const waitInterval = setInterval(() => {
-        const transFiles = fs.readdirSync(TEMP_DIR).filter(f => f.endsWith('_trans.json'));
-        if (transFiles.length >= wavChunks.length || pendingTranscriptions === 0) {
+        if (!isWhisperRunning && whisperQueue.length === 0) {
           clearInterval(waitInterval);
           finalizeAndSaveSession();
         }
