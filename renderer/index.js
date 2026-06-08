@@ -1544,6 +1544,17 @@ if (isMiniMode) {
   const downloadProgressFill = document.getElementById('download-progress-fill');
   const downloadProgressLog = document.getElementById('download-progress-log');
 
+  const selectNoteStyle = document.getElementById('select-note-style');
+  const textareaNotePrompt = document.getElementById('textarea-note-prompt');
+  const textareaSummaryPrompt = document.getElementById('textarea-summary-prompt');
+  const textareaActionPrompt = document.getElementById('textarea-action-prompt');
+  const btnRestoreDefaults = document.getElementById('btn-restore-defaults');
+  
+  let defaultPrompts = null;
+  window.api.getDefaultPrompts().then((defaults) => {
+    defaultPrompts = defaults;
+  });
+
   // Load hardware specs
   window.api.getSpecs().then((specs) => {
     hwCpu.textContent = specs.cpuInfo;
@@ -1562,6 +1573,11 @@ if (isMiniMode) {
     document.getElementById('input-user-name').value = saved.userName || '';
     document.getElementById('check-noise-cancel').checked = saved.enableNoiseCancellation !== false;
     document.getElementById('input-storage-path').value = saved.customStoragePath || '';
+    
+    if (selectNoteStyle) selectNoteStyle.value = saved.selectedNoteStyle || 'executive';
+    if (textareaNotePrompt) textareaNotePrompt.value = saved.notePromptTemplate || '';
+    if (textareaSummaryPrompt) textareaSummaryPrompt.value = saved.summaryPromptTemplate || '';
+    if (textareaActionPrompt) textareaActionPrompt.value = saved.actionPromptTemplate || '';
     
     const btnBrowseStorage = document.getElementById('btn-browse-storage');
     if (btnBrowseStorage) {
@@ -1677,6 +1693,38 @@ if (isMiniMode) {
     }
   });
 
+  // Style dropdown change handler
+  if (selectNoteStyle) {
+    selectNoteStyle.addEventListener('change', () => {
+      const style = selectNoteStyle.value;
+      if (style !== 'custom' && defaultPrompts && defaultPrompts[style]) {
+        textareaNotePrompt.value = defaultPrompts[style];
+      }
+    });
+  }
+
+  // Textarea input handler (switch to custom when edited manually)
+  if (textareaNotePrompt && selectNoteStyle) {
+    textareaNotePrompt.addEventListener('input', () => {
+      selectNoteStyle.value = 'custom';
+    });
+  }
+
+  // Restore Defaults handler
+  if (btnRestoreDefaults) {
+    btnRestoreDefaults.addEventListener('click', () => {
+      if (defaultPrompts) {
+        if (selectNoteStyle) selectNoteStyle.value = 'executive';
+        if (textareaNotePrompt) textareaNotePrompt.value = defaultPrompts.executive;
+        if (textareaSummaryPrompt) textareaSummaryPrompt.value = defaultPrompts.summary;
+        if (textareaActionPrompt) textareaActionPrompt.value = defaultPrompts.actionItems;
+        
+        // Auto-save restored settings
+        btnSaveSettings.click();
+      }
+    });
+  }
+
   // Save Settings handler
   btnSaveSettings.addEventListener('click', () => {
     const updated = {
@@ -1689,7 +1737,11 @@ if (isMiniMode) {
       colorCodeDeadlines: document.getElementById('check-color-deadlines').checked,
       userName: document.getElementById('input-user-name').value.trim(),
       enableNoiseCancellation: document.getElementById('check-noise-cancel').checked,
-      customStoragePath: document.getElementById('input-storage-path').value
+      customStoragePath: document.getElementById('input-storage-path').value,
+      selectedNoteStyle: selectNoteStyle ? selectNoteStyle.value : 'executive',
+      notePromptTemplate: textareaNotePrompt ? textareaNotePrompt.value : '',
+      summaryPromptTemplate: textareaSummaryPrompt ? textareaSummaryPrompt.value : '',
+      actionPromptTemplate: textareaActionPrompt ? textareaActionPrompt.value : ''
     };
     
     window.api.saveSettings(updated).then(() => {

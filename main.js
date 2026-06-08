@@ -109,6 +109,100 @@ let processedChunks = new Set();
 let activeSession = null;
 let decryptionKeys = new Map(); // In-memory cache for decrypted session keys
 
+const DEFAULT_PROMPTS = {
+  executive: `Act as an elite executive assistant and structural document compiler. Your task is to process a messy stream of real-time human shorthand ("User Jots") and an unedited text transcription of a meeting room, transforming them into a beautifully typeset, high-signal Markdown document.
+
+### 1. Core Synthesis Philosophy (Augmented Notepad Framework)
+- Human Intent is King: The User Jots serve as top-down attention filters. If a topic, side-track, or tangent exists in the raw transcript but was NOT anchored by a phrase, abbreviation, or word in the User Jots, you must completely suppress it. Do not generate information overload.
+- Anchor-Based Expansion: For every line item or concept inside the User Jots, find its corresponding temporal or thematic window in the Raw Transcript. Expand the user's brief shorthand into explicit, polished technical mechanics, key quantitative metrics, and verified operational deadlines mentioned in that part of the conversation.
+- Phonetic & Semantic Error Correction: Clean up human typos, misspelled names, or clunky abbreviations found in the User Jots by cross-referencing the phonetics and context of the surrounding transcript (e.g., if jots say "auth via okta workflows" and transcript talks about "Okta Workflows SCIM provisioning pipelines", use the accurate technical string).
+
+### 2. Mandatory Structural Layout (Markdown Template)
+Your final output must strictly mirror this format, using crisp bolding, native headers, and clean spacing. Do not include empty placeholders if a section yields no content based on the jots.
+
+## [Meeting Title / Objective]
+*Provide a concise 1-2 sentence context paragraph restating the primary operational purpose of the meeting, using customer/technical terms extracted from the text.*
+
+### Key Discussion Points
+*Convert the messy user jots into highly polished, structured, nested bullet points. Bold the leading concept of each primary bullet point.*
+- **[Core Concept Area Name]:** Clear, factual summary detailing the exact mechanical update or status. Use precise quotes or direct metrics where helpful.
+  - *Supporting Detail:* Sub-bullets showing dependencies or exact conditions discussed.
+
+### Decisions & Agreements
+*A definitive list of every resolution, alignment, architectural choice, or direction confirmed during the call.*
+- **[Decision]:** Brief description of what was chosen + the rationale/owner.
+
+### Action Items
+*A strict task list. Every bullet item must have an owner, a clear deliverable, and a deadline if discussed.*
+- [ ] **[Owner Name]** to [Specific Task/Deliverable] — **Deadline:** [Date/Month or "ASAP"]
+
+### Open Questions & Risks
+*A log of project risks, hedge language, unconfirmed dependencies, or questions that were raised but explicitly parked for later.*
+- **[Unresolved Thread]:** Describe the blocker or outstanding risk.
+
+---
+
+### 3. Strict Style & Token Constraints
+- Never use fluffy or conversational opening filler text like "Here is your summary" or "Based on your notes." Begin immediately with the \`##\` Title.
+- Write with professional, clear, and direct language. Avoid passive phrasing.
+- If the user provided a customized template layout or configuration block, prioritize those section headings exactly over the default layout rules.`,
+
+  technical: `Act as a Principal Software Architect and systems engineer. Your goal is to process the user's rough jots and the raw transcript into a technical specifications document.
+
+Focus heavily on:
+- Architectural decisions, API endpoints, data models, and database changes.
+- Exact technology choices, protocols, library names, and performance metrics mentioned.
+- Ignore general small-talk or administrative details unless specifically mentioned in the user's jots.
+
+Structure the output as follows:
+## [Technical System Update / Architecture Review]
+*Brief technical objective of the architecture or system change.*
+
+### System Architecture & Tech Stack
+- **[Component/Module]:** Tech stack details, protocol, database modifications, or dependencies.
+
+### Key API & Data Model Contracts
+- **[Contract/Endpoint]:** Inputs, outputs, schema, formats, or parameters.
+
+### Decisions & Trade-Offs
+- **[Decision]:** What was chosen, why it was chosen, and alternative considerations.
+
+### Action Items / Engineering Tasks
+- [ ] **[Developer]** - [Technical task description] — **Deadline:** [Due date]`,
+
+  action: `Act as a results-driven Project Manager. Your task is to extract clear deliverables, assignees, deadlines, and project risks from the raw transcript using the user's jots as areas of concern.
+
+Structure the output strictly for task management:
+## [Project Status & Deliverables Summary]
+
+### Action Checklist
+- [ ] **[Owner]** - [Clear, actionable deliverable] — **Deadline:** [Date/Month or "ASAP"]
+
+### Project Risks & Impediments
+- **[Risk Item]:** Description of blocker, owner responsible for resolution, and status.
+
+### Alignments & Approved Changes
+- **[Alignment]:** What was approved, when it will be deployed, and who was aligned.`,
+
+  minutes: `Act as a professional corporate scribe. Your goal is to synthesize the user's rough notes and transcript into standard meeting minutes.
+
+Structure:
+## [Meeting Minutes: Subject Title]
+
+### Attendees & Speaker Alignment
+- Brief note of key speakers and who discussed what.
+
+### Discussed Agenda Items
+- **[Topic]:** Summary of status, considerations, and opinions shared.
+
+### Summary of Next Steps
+- [ ] **[Assignee]** - [Next step] — **Deadline:** [Date]`,
+
+  summary: `Based on the following meeting transcript, write a beautifully formatted markdown summary of the key discussion highlights. Feel free to use headers (##), bold text (**text**), bullet points, and moderate relevant emojis (like 📌, 💡, 🎯, ✅) for readability, but avoid loose asterisks. Do not include any conversational filler, follow-up questions, or requests for elaboration at the end:\n\n{transcriptText}`,
+
+  actionItems: `Based on the following meeting transcript, extract and list ONLY the actionable next steps and tasks that require someone to take action. Do not include informational remarks or general points. Format each item starting with an assignee in brackets followed by a dash and the task, like "[Name] - Task description" (or "[You] - Task description" if assigned to the local user). If no owner/assignee is specified, label it "[Unassigned] - Task description":\n\n{transcriptText}`
+};
+
 // Default Settings
 let settings = {
   selectedModel: 'ggml-base.bin',
@@ -121,6 +215,10 @@ let settings = {
   userName: '',
   enableNoiseCancellation: true,
   customStoragePath: '',
+  selectedNoteStyle: 'executive',
+  notePromptTemplate: DEFAULT_PROMPTS.executive,
+  summaryPromptTemplate: DEFAULT_PROMPTS.summary,
+  actionPromptTemplate: DEFAULT_PROMPTS.actionItems,
   customAgents: [
     { name: 'Summary Agent', prompt: 'Summarize the meeting highlights and key decisions.' },
     { name: 'Action Items Agent', prompt: 'Extract and list actionable next steps with owners.' }
@@ -135,6 +233,12 @@ if (fs.existsSync(SETTINGS_FILE)) {
     console.error('Error loading settings, using defaults', e);
   }
 }
+
+// Ensure new settings fields are populated
+if (!settings.selectedNoteStyle) settings.selectedNoteStyle = 'executive';
+if (!settings.notePromptTemplate) settings.notePromptTemplate = DEFAULT_PROMPTS.executive;
+if (!settings.summaryPromptTemplate) settings.summaryPromptTemplate = DEFAULT_PROMPTS.summary;
+if (!settings.actionPromptTemplate) settings.actionPromptTemplate = DEFAULT_PROMPTS.actionItems;
 
 function saveSettings() {
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8');
@@ -1604,8 +1708,19 @@ async function saveSessionToFile(session) {
 function triggerOllamaSummary(transcriptText, callback) {
   const model = settings.selectedLlm;
   
-  const summaryPrompt = `Based on the following meeting transcript, write a beautifully formatted markdown summary of the key discussion highlights. Feel free to use headers (##), bold text (**text**), bullet points, and moderate relevant emojis (like 📌, 💡, 🎯, ✅) for readability, but avoid loose asterisks. Do not include any conversational filler, follow-up questions, or requests for elaboration at the end:\n\n${transcriptText}`;
-  const actionItemsPrompt = `Based on the following meeting transcript, extract and list ONLY the actionable next steps and tasks that require someone to take action. Do not include informational remarks or general points. Format each item starting with an assignee in brackets followed by a dash and the task, like "[Name] - Task description" (or "[You] - Task description" if assigned to the local user). If no owner/assignee is specified, label it "[Unassigned] - Task description":\n\n${transcriptText}`;
+  let summaryPrompt = settings.summaryPromptTemplate || DEFAULT_PROMPTS.summary;
+  if (summaryPrompt.includes('{transcriptText}')) {
+    summaryPrompt = summaryPrompt.replace('{transcriptText}', transcriptText);
+  } else {
+    summaryPrompt = `${summaryPrompt}\n\n${transcriptText}`;
+  }
+  
+  let actionItemsPrompt = settings.actionPromptTemplate || DEFAULT_PROMPTS.actionItems;
+  if (actionItemsPrompt.includes('{transcriptText}')) {
+    actionItemsPrompt = actionItemsPrompt.replace('{transcriptText}', transcriptText);
+  } else {
+    actionItemsPrompt = `${actionItemsPrompt}\n\n${transcriptText}`;
+  }
   
   // Request summary
   queryOllama(summaryPrompt, model)
@@ -1659,6 +1774,10 @@ ipcMain.handle('audio:get-devices', () => {
 
 ipcMain.handle('settings:get', () => {
   return settings;
+});
+
+ipcMain.handle('settings:get-default-prompts', () => {
+  return DEFAULT_PROMPTS;
 });
 
 ipcMain.handle('settings:select-directory', async () => {
@@ -1792,10 +1911,7 @@ ${query}`;
 ipcMain.handle('chat:mix-enhance', async (event, jots, transcriptText) => {
   try {
     const model = settings.selectedLlm;
-    const systemPrompt = `You are a Principal Technical Writer. Your task is to perform top-down attention filtering to enhance rough jots using raw transcript context.
-You must use the user's manual "Jots" as anchor metrics. Delineate and expand upon the user's jots by extracting relevant technical details, decisions, dates, and quotes from the "Raw Transcript" that match those anchors.
-CRITICAL RULE: Entirely ignore transcript tangents, side-talk, and details that the user did not jot down. Do NOT add new topics not mentioned in the user's jots.
-Format the output as beautifully structured Markdown (using H2, H3, bold text, and checklists) for Notion/Apple Notes style canvas. Avoid loose asterisks.`;
+    const systemPrompt = settings.notePromptTemplate || DEFAULT_PROMPTS.executive;
     
     const userPrompt = `User's Rough Jots:
 ${jots || 'No jots provided.'}

@@ -533,6 +533,47 @@
             </div>
           </div>
 
+          <!-- LLM Prompts & Note Customization -->
+          <div class="card glassmorphic settings-card" style="grid-column: span 2;">
+            <h2>LLM Prompt Customization</h2>
+            
+            <div class="settings-field">
+              <label for="select-note-style">Note-Taking Style (Mix & Enhance Prompt)</label>
+              <select id="select-note-style" class="input-select">
+                <option value="executive">Elite Executive Assistant (Default)</option>
+                <option value="technical">Technical & Engineering Specs</option>
+                <option value="action">Action-Oriented Checklist</option>
+                <option value="minutes">General Corporate Minutes</option>
+                <option value="custom">Custom Prompt Template</option>
+              </select>
+              <p class="field-desc">Choose a pre-defined note-taking prompt style, or select "Custom" to write your own.</p>
+            </div>
+
+            <div class="settings-field">
+              <label for="textarea-note-prompt">Note Enhancement System Prompt</label>
+              <textarea id="textarea-note-prompt" class="input-text" style="height: 140px; font-family: monospace; font-size: 11px; resize: vertical; line-height: 1.4;"></textarea>
+              <p class="field-desc">System instructions passed to the local LLM when blending shorthand jots and transcripts.</p>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+              <div class="settings-field">
+                <label for="textarea-summary-prompt">Highlights Summary Prompt</label>
+                <textarea id="textarea-summary-prompt" class="input-text" style="height: 100px; font-family: monospace; font-size: 11px; resize: vertical; line-height: 1.4;"></textarea>
+                <p class="field-desc">Prompt used to generate call highlights. Use {transcriptText} to place the transcript stream.</p>
+              </div>
+
+              <div class="settings-field">
+                <label for="textarea-action-prompt">Action Items Extraction Prompt</label>
+                <textarea id="textarea-action-prompt" class="input-text" style="height: 100px; font-family: monospace; font-size: 11px; resize: vertical; line-height: 1.4;"></textarea>
+                <p class="field-desc">Prompt used to extract tasks checklist. Use {transcriptText} to place the transcript stream.</p>
+              </div>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; margin-top: 6px;">
+              <button id="btn-restore-defaults" class="btn-secondary" style="font-size: 12px; padding: 8px 14px;">Restore to Default</button>
+            </div>
+          </div>
+
           <!-- Security and Encryption -->
           <div class="card glassmorphic settings-card">
             <h2>Security & Encryption</h2>

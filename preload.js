@@ -50,6 +50,7 @@ contextBridge.exposeInMainWorld('api', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   saveSettings: (newSettings) => ipcRenderer.invoke('settings:save', newSettings),
   selectDirectory: () => ipcRenderer.invoke('settings:select-directory'),
+  getDefaultPrompts: () => ipcRenderer.invoke('settings:get-default-prompts'),
 
   // Live Pause & Resume / Resume Past Sessions
   pauseRecording: () => ipcRenderer.invoke('audio:pause-recording'),
