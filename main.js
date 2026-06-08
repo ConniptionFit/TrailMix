@@ -214,16 +214,22 @@ async function migrateOldData() {
         const tasks = JSON.parse(fs.readFileSync(TASKS_FILE, 'utf8'));
         if (Array.isArray(tasks)) {
           console.log(`Migrating ${tasks.length} tasks to SQLite...`);
+          await dbRun("PRAGMA foreign_keys = OFF;");
           for (const task of tasks) {
-            await dbRun(`INSERT OR IGNORE INTO tasks (
-              id, text, assignee, completed, dueDate, omitted, 
-              sourceCallId, sourceCallTitle, sourceSegmentId, sourceTimestamp
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
-              task.id, task.text, task.assignee || 'Unassigned', task.completed ? 1 : 0, 
-              task.dueDate || '', task.omitted ? 1 : 0, task.sourceCallId, 
-              task.sourceCallTitle || '', task.sourceSegmentId || '', task.sourceTimestamp || ''
-            ]);
+            try {
+              await dbRun(`INSERT OR IGNORE INTO tasks (
+                id, text, assignee, completed, dueDate, omitted, 
+                sourceCallId, sourceCallTitle, sourceSegmentId, sourceTimestamp
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+                task.id, task.text, task.assignee || 'Unassigned', task.completed ? 1 : 0, 
+                task.dueDate || '', task.omitted ? 1 : 0, task.sourceCallId, 
+                task.sourceCallTitle || '', task.sourceSegmentId || '', task.sourceTimestamp || ''
+              ]);
+            } catch (insertErr) {
+              console.error(`Failed to insert task ${task.id}:`, insertErr);
+            }
           }
+          await dbRun("PRAGMA foreign_keys = ON;");
         }
         fs.renameSync(TASKS_FILE, TASKS_FILE + '.bak');
       } catch (err) {
@@ -387,6 +393,10 @@ function createMainWindow() {
       contextIsolation: true,
       nodeIntegration: false
     }
+  });
+
+  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+    console.log(`[Renderer Console] ${message} (${sourceId}:${line})`);
   });
 
   mainWindow.loadFile(path.join(PROJECT_DIR, 'renderer', 'index.html'));
@@ -2279,6 +2289,20 @@ ipcMain.handle('calls:move-to-folder', async (event, sessionId, folderId) => {
 });
 
 // Tasks Management (v0.2)
+async function getTasksListFromDb() {
+  try {
+    const rows = await dbAll("SELECT * FROM tasks");
+    return rows.map(r => ({
+      ...r,
+      completed: r.completed === 1,
+      omitted: r.omitted === 1
+    }));
+  } catch (err) {
+    console.error("Error getting tasks from DB:", err);
+    return [];
+  }
+}
+
 ipcMain.handle('tasks:get', async () => {
   return await getTasksListFromDb();
 });
@@ -2352,7 +2376,8 @@ ipcMain.on('app:relaunch', () => {
 });
 
 // App Lifecycles
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  await initDatabase();
   createMainWindow();
   setupTray();
   watchCallsDirectory();

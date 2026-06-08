@@ -2,9 +2,11 @@ node_modules/
 dist/
 *.log
 data/*.trail
+data/calls/
 data/temp_rec/
 data/tasks.json
 data/settings.json
 __pycache__/
 *.pyc
 .DS_Store
+*.bak

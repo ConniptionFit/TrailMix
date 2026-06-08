@@ -868,11 +868,7 @@ if (isMiniMode) {
         
         // Highlight active past transcript
         const isSelected = activeSession && activeSession.id === call.id;
-        item.className = `group flex items-start gap-2.5 p-3 rounded-lg border cursor-pointer transition ${
-          isSelected 
-            ? 'bg-trail-500/10 border-trail-500/20 text-white moss-glow' 
-            : 'border-white/5 bg-slate-900/10 hover:bg-slate-900/30 text-slate-300'
-        }`;
+        item.className = `call-list-item ${isSelected ? 'selected' : ''}`;
         
         item.setAttribute('data-callid', call.id);
         
