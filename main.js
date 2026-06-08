@@ -1,8 +1,46 @@
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, screen, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { exec, execSync, spawn } = require('child_process');
 const encryption = require('./encryption');
+const sqlite3 = require('sqlite3').verbose();
+
+// XDG Compliant Database Path
+const XDG_CONFIG_DIR = path.join(os.homedir(), '.config', 'trailmix');
+if (!fs.existsSync(XDG_CONFIG_DIR)) {
+  fs.mkdirSync(XDG_CONFIG_DIR, { recursive: true });
+}
+const DB_PATH = path.join(XDG_CONFIG_DIR, 'db.sqlite');
+const db = new sqlite3.Database(DB_PATH);
+
+// Promise-based SQL Wrappers
+function dbRun(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.run(sql, params, function (err) {
+      if (err) reject(err);
+      else resolve(this);
+    });
+  });
+}
+
+function dbAll(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => {
+      if (err) reject(err);
+      else resolve(rows);
+    });
+  });
+}
+
+function dbGet(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => {
+      if (err) reject(err);
+      else resolve(row);
+    });
+  });
+}
 
 // Application Paths
 const PROJECT_DIR = __dirname;
@@ -100,6 +138,238 @@ if (fs.existsSync(SETTINGS_FILE)) {
 
 function saveSettings() {
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8');
+}
+
+// ----------------------------------------------------
+// Database Initialization & Migrations (v0.2)
+// ----------------------------------------------------
+
+function initDatabase() {
+  return new Promise((resolve, reject) => {
+    db.serialize(() => {
+      db.run("PRAGMA foreign_keys = ON;");
+      
+      // Folders Table
+      db.run(`CREATE TABLE IF NOT EXISTS folders (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL
+      )`, (err) => { if (err) console.error("Error creating folders table", err); });
+
+      // Sessions Table
+      db.run(`CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        date TEXT,
+        title TEXT,
+        description TEXT,
+        summary TEXT,
+        actionItems TEXT,
+        mixNotes TEXT,
+        enhancedNotes TEXT,
+        encrypted INTEGER,
+        encrypted_payload TEXT,
+        folder_id TEXT,
+        mtimeMs REAL,
+        tags TEXT,
+        suggestedTags TEXT,
+        FOREIGN KEY(folder_id) REFERENCES folders(id) ON DELETE SET NULL
+      )`, (err) => { if (err) console.error("Error creating sessions table", err); });
+
+      // Tasks Table
+      db.run(`CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        text TEXT,
+        assignee TEXT,
+        completed INTEGER,
+        dueDate TEXT,
+        omitted INTEGER,
+        sourceCallId TEXT,
+        sourceCallTitle TEXT,
+        sourceSegmentId TEXT,
+        sourceTimestamp TEXT,
+        FOREIGN KEY(sourceCallId) REFERENCES sessions(id) ON DELETE CASCADE
+      )`, (err) => { 
+        if (err) console.error("Error creating tasks table", err);
+        else {
+          migrateOldData().then(resolve).catch(reject);
+        }
+      });
+    });
+  });
+}
+
+async function migrateOldData() {
+  try {
+    // 1. Setup default folders if empty
+    const existingFolders = await dbAll("SELECT * FROM folders");
+    if (existingFolders.length === 0) {
+      await dbRun("INSERT INTO folders (id, name) VALUES (?, ?)", ["work", "Work"]);
+      await dbRun("INSERT INTO folders (id, name) VALUES (?, ?)", ["personal", "Personal"]);
+      await dbRun("INSERT INTO folders (id, name) VALUES (?, ?)", ["drafts", "Drafts"]);
+    }
+
+    // 2. Tasks migration
+    const TASKS_FILE = path.join(DATA_DIR, 'tasks.json');
+    if (fs.existsSync(TASKS_FILE)) {
+      try {
+        const tasks = JSON.parse(fs.readFileSync(TASKS_FILE, 'utf8'));
+        if (Array.isArray(tasks)) {
+          console.log(`Migrating ${tasks.length} tasks to SQLite...`);
+          for (const task of tasks) {
+            await dbRun(`INSERT OR IGNORE INTO tasks (
+              id, text, assignee, completed, dueDate, omitted, 
+              sourceCallId, sourceCallTitle, sourceSegmentId, sourceTimestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+              task.id, task.text, task.assignee || 'Unassigned', task.completed ? 1 : 0, 
+              task.dueDate || '', task.omitted ? 1 : 0, task.sourceCallId, 
+              task.sourceCallTitle || '', task.sourceSegmentId || '', task.sourceTimestamp || ''
+            ]);
+          }
+        }
+        fs.renameSync(TASKS_FILE, TASKS_FILE + '.bak');
+      } catch (err) {
+        console.error("Failed to migrate tasks.json", err);
+      }
+    }
+
+    // 3. Sessions migration from data/calls/
+    const callsDir = getCallsDir();
+    if (fs.existsSync(callsDir)) {
+      const files = fs.readdirSync(callsDir).filter(f => f.endsWith('.trail'));
+      if (files.length > 0) {
+        console.log(`Migrating ${files.length} .trail files to SQLite...`);
+        for (const file of files) {
+          const filePath = path.join(callsDir, file);
+          const id = file.replace('.trail', '');
+          
+          try {
+            const rawContent = fs.readFileSync(filePath, 'utf8');
+            const isEncrypted = rawContent.includes('"salt"') && rawContent.includes('"iv"') && rawContent.includes('"encrypted"');
+            
+            let data = null;
+            if (isEncrypted) {
+              const cachedKey = decryptionKeys.get(id) || settings.encryptionPassword;
+              if (cachedKey) {
+                try {
+                  const decrypted = encryption.decrypt(rawContent, cachedKey);
+                  data = JSON.parse(decrypted);
+                } catch (decErr) {}
+              }
+            } else {
+              data = JSON.parse(rawContent);
+            }
+
+            if (data) {
+              const stat = fs.statSync(filePath);
+              const mtimeMs = stat.mtimeMs;
+              
+              if (isEncrypted) {
+                await dbRun(`INSERT OR IGNORE INTO sessions (
+                  id, date, title, description, encrypted, encrypted_payload, folder_id, mtimeMs, tags, suggestedTags
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+                  data.id || id, data.date || '', 'Encrypted Session (Locked)', 
+                  'This session is encrypted. Enter credentials to unlock.', 1, rawContent, 'work', mtimeMs,
+                  JSON.stringify(data.tags || []), JSON.stringify(data.suggestedTags || [])
+                ]);
+              } else {
+                await dbRun(`INSERT OR IGNORE INTO sessions (
+                  id, date, title, description, summary, actionItems, 
+                  mixNotes, enhancedNotes, encrypted, encrypted_payload, folder_id, mtimeMs, tags, suggestedTags
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+                  data.id || id, data.date || '', data.title || 'Meeting Session', 
+                  data.description || 'No description available.', data.summary || '', 
+                  data.actionItems || '', data.mixNotes || '', data.enhancedNotes || '',
+                  0, JSON.stringify(data), 'work', mtimeMs,
+                  JSON.stringify(data.tags || []), JSON.stringify(data.suggestedTags || [])
+                ]);
+              }
+            }
+            fs.renameSync(filePath, filePath + '.bak');
+          } catch (migrateErr) {
+            console.error(`Failed to migrate file ${file}`, migrateErr);
+          }
+        }
+      }
+    }
+    await syncDatabaseWithFiles();
+  } catch (err) {
+    console.error("Migration error", err);
+  }
+}
+
+async function syncDatabaseWithFiles() {
+  try {
+    const callsDir = getCallsDir();
+    if (!fs.existsSync(callsDir)) return;
+    const files = fs.readdirSync(callsDir);
+    const existingIds = new Set(
+      files
+        .filter(f => f.endsWith('.trail') || f.endsWith('.trail.bak'))
+        .map(f => f.replace('.trail.bak', '').replace('.trail', ''))
+    );
+    
+    // Get all sessions from DB
+    const sessions = await dbAll("SELECT id FROM sessions");
+    for (const session of sessions) {
+      if (session.id !== 'live' && !existingIds.has(session.id)) {
+        console.log(`Pruning session ${session.id} from database because file does not exist in ${callsDir}`);
+        await dbRun("DELETE FROM sessions WHERE id = ?", [session.id]);
+      }
+    }
+  } catch (err) {
+    console.error("Error syncing database with files:", err);
+  }
+}
+
+
+// ----------------------------------------------------
+// VAD & Secure File Shredding (v0.2 Compliance)
+// ----------------------------------------------------
+
+function checkVoiceActivity(wavPath) {
+  try {
+    if (!fs.existsSync(wavPath)) return false;
+    const buffer = fs.readFileSync(wavPath);
+    if (buffer.length <= 44) return false;
+    
+    let sum = 0;
+    let count = 0;
+    // Read 16-bit PCM samples
+    for (let i = 44; i < buffer.length; i += 4) {
+      if (i + 1 < buffer.length) {
+        const sampleL = buffer.readInt16LE(i);
+        sum += sampleL * sampleL;
+        count++;
+      }
+    }
+    if (count === 0) return false;
+    const rms = Math.sqrt(sum / count);
+    console.log(`VAD check: RMS energy = ${Math.round(rms)}`);
+    // Threshold of 100 RMS represents standard silence noise gate
+    return rms > 100;
+  } catch (err) {
+    console.error("VAD check failed, treating as active", err);
+    return true;
+  }
+}
+
+function secureShredFile(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return;
+    const stats = fs.statSync(filePath);
+    if (stats.isFile()) {
+      const size = stats.size;
+      const crypto = require('crypto');
+      const randomData = crypto.randomBytes(size);
+      fs.writeFileSync(filePath, randomData);
+      fs.unlinkSync(filePath);
+      console.log(`Secured shredded file: ${path.basename(filePath)}`);
+    }
+  } catch (err) {
+    console.error(`Shred failed for ${filePath}, attempting direct deletion`, err);
+    try {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    } catch (e) {}
+  }
 }
 
 // ----------------------------------------------------
@@ -403,20 +673,57 @@ function calculateChannelEnergy(wavPath, startMs, endMs) {
 // Whisper & Transcription Runner
 // ----------------------------------------------------
 
-function saveSessionToFileSilently(session) {
+async function saveSessionToDbPromise(session) {
   if (!session) return;
-  const filePath = path.join(getCallsDir(), `${session.id}.trail`);
+  const tagsStr = JSON.stringify(session.tags || []);
+  const suggestedTagsStr = JSON.stringify(session.suggestedTags || []);
+  const mtimeMs = Date.now();
+  
   try {
-    if (session.encrypted && settings.encryptionPassword) {
-      const encryptedData = encryption.encrypt(JSON.stringify(session), settings.encryptionPassword);
-      fs.writeFileSync(filePath, encryptedData, 'utf8');
-      decryptionKeys.set(session.id, settings.encryptionPassword);
+    const isEncrypted = session.encrypted ? 1 : 0;
+    const password = decryptionKeys.get(session.id) || settings.encryptionPassword;
+    
+    let payload = '';
+    if (isEncrypted && password) {
+      payload = encryption.encrypt(JSON.stringify(session), password);
+      await dbRun(`INSERT OR REPLACE INTO sessions (
+        id, date, title, description, summary, actionItems, mixNotes, enhancedNotes, 
+        encrypted, encrypted_payload, folder_id, mtimeMs, tags, suggestedTags
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+        session.id, session.date || '', session.title || 'Meeting Session',
+        session.description || 'No description available.', '', '', '', '',
+        1, payload, session.folder_id || 'work', mtimeMs, tagsStr, suggestedTagsStr
+      ]);
+      decryptionKeys.set(session.id, password);
     } else {
-      fs.writeFileSync(filePath, JSON.stringify(session, null, 2), 'utf8');
+      payload = JSON.stringify(session);
+      await dbRun(`INSERT OR REPLACE INTO sessions (
+        id, date, title, description, summary, actionItems, mixNotes, enhancedNotes, 
+        encrypted, encrypted_payload, folder_id, mtimeMs, tags, suggestedTags
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+        session.id, session.date || '', session.title || 'Meeting Session',
+        session.description || 'No description available.', session.summary || '',
+        session.actionItems || '', session.mixNotes || '', session.enhancedNotes || '',
+        0, payload, session.folder_id || 'work', mtimeMs, tagsStr, suggestedTagsStr
+      ]);
     }
+    
+    // Write file to save location directory as .trail.bak
+    const callsDir = getCallsDir();
+    if (!fs.existsSync(callsDir)) {
+      fs.mkdirSync(callsDir, { recursive: true });
+    }
+    const filePath = path.join(callsDir, `${session.id}.trail.bak`);
+    fs.writeFileSync(filePath, payload, 'utf8');
   } catch (err) {
-    console.error('Failed to silently save session', err);
+    console.error("Failed to save session to DB", err);
   }
+}
+
+function saveSessionToFileSilently(session) {
+  saveSessionToDbPromise(session).catch(err => {
+    console.error("Failed to save session silently", err);
+  });
 }
 
 const whisperQueue = [];
@@ -449,13 +756,25 @@ function runWhisperOnChunkPromise(chunkWavPath, chunkIndex) {
     const whisperModel = path.join(WHISPER_DIR, 'models', settings.selectedModel);
     const monoWavPath = chunkWavPath.replace('.wav', '_mono.wav');
     
+    // Check Voice Activity Detection (VAD) noise gate
+    const hasVoice = checkVoiceActivity(chunkWavPath);
+    if (!hasVoice) {
+      console.log(`VAD noise gate: Chunk ${chunkIndex} is silent (RMS < 100). Dropping chunk to save CPU/VRAM.`);
+      // Shred file immediately and return
+      secureShredFile(chunkWavPath);
+      resolve();
+      return;
+    }
+
     if (!fs.existsSync(whisperCli)) {
       console.error('Whisper.cpp binary not found at', whisperCli);
+      secureShredFile(chunkWavPath);
       resolve();
       return;
     }
     if (!fs.existsSync(whisperModel)) {
       console.error('Whisper model not found at', whisperModel);
+      secureShredFile(chunkWavPath);
       resolve();
       return;
     }
@@ -469,6 +788,7 @@ function runWhisperOnChunkPromise(chunkWavPath, chunkIndex) {
       execSync(`ffmpeg -y -i "${chunkWavPath}" ${downmixFilter} "${monoWavPath}"`);
     } catch (err) {
       console.error('Ffmpeg downmix failed', err);
+      secureShredFile(chunkWavPath);
       resolve();
       return;
     }
@@ -481,6 +801,8 @@ function runWhisperOnChunkPromise(chunkWavPath, chunkIndex) {
     exec(whisperCmd, (error) => {
       if (error) {
         console.error('Whisper execution failed', error);
+        secureShredFile(chunkWavPath);
+        secureShredFile(monoWavPath);
         resolve();
         return;
       }
@@ -488,6 +810,8 @@ function runWhisperOnChunkPromise(chunkWavPath, chunkIndex) {
       const jsonPath = outputBase + '.json';
       if (!fs.existsSync(jsonPath)) {
         console.error('Whisper JSON file not found', jsonPath);
+        secureShredFile(chunkWavPath);
+        secureShredFile(monoWavPath);
         resolve();
         return;
       }
@@ -554,6 +878,13 @@ function runWhisperOnChunkPromise(chunkWavPath, chunkIndex) {
       } catch (e) {
         console.error('Error parsing whisper JSON output', e);
       }
+      
+      // Compliance: Secure file shredding of temporary raw WAV and mono WAV files immediately
+      secureShredFile(chunkWavPath);
+      secureShredFile(monoWavPath);
+      try {
+        if (fs.existsSync(jsonPath)) fs.unlinkSync(jsonPath);
+      } catch (e) {}
       
       resolve();
     });
@@ -830,25 +1161,23 @@ function stopRecordingHandler() {
   }, 1000);
 }
 
-function resumeCallTranscriptionHandler(filePath) {
+async function resumeCallTranscriptionHandler(sessionId) {
   try {
-    const rawContent = fs.readFileSync(filePath, 'utf8');
-    const isEncrypted = rawContent.includes('"salt"') && rawContent.includes('"iv"') && rawContent.includes('"encrypted"');
+    const res = await dbGet("SELECT * FROM sessions WHERE id = ?", [sessionId]);
+    if (!res) return { success: false, error: 'Session not found' };
     
     let session = null;
-    if (isEncrypted) {
-      const id = path.basename(filePath, '.trail');
-      const cachedKey = decryptionKeys.get(id);
+    if (res.encrypted) {
+      const cachedKey = decryptionKeys.get(sessionId);
       if (!cachedKey) {
         return { success: false, requirePassword: true };
       }
-      const decrypted = encryption.decrypt(rawContent, cachedKey);
+      const decrypted = encryption.decrypt(res.encrypted_payload, cachedKey);
       session = JSON.parse(decrypted);
     } else {
-      session = JSON.parse(rawContent);
+      session = JSON.parse(res.encrypted_payload || '{}');
     }
     
-    // Set loaded session as active
     activeSession = session;
     
     // Calculate sessionChunkOffset based on the last segment timestamp
@@ -859,7 +1188,6 @@ function resumeCallTranscriptionHandler(filePath) {
       sessionChunkOffset = 0;
     }
     
-    // Transition to paused state first, then start transcribing
     isPaused = true;
     startRecordingHandler();
     return { success: true };
@@ -1181,39 +1509,34 @@ function parseDeadlineDate(text) {
     if (numMatch[3] && numMatch[3].length === 2) {
       year += 2000;
     }
-    const d = new Date(year, month, day);
-    if (d < now && !numMatch[3]) {
-      d.setFullYear(now.getFullYear() + 1);
-    }
     return d.toISOString().split('T')[0];
   }
 
   return '';
 }
 
-function extractTasksFromActionItems(session) {
-  let tasks = getTasksList();
-  
+async function extractTasksFromActionItems(session) {
+  const existingTasks = await getTasksListFromDb();
   const lines = (session.actionItems || '').split('\n');
-  lines.forEach((line, idx) => {
+  
+  for (let idx = 0; idx < lines.length; idx++) {
+    const line = lines[idx];
     const trimmed = line.trim();
     if (trimmed.startsWith('-') || trimmed.startsWith('*')) {
       const text = trimmed.substring(1).trim();
-      if (!text) return;
+      if (!text) continue;
       
       let assignee = 'Unassigned';
       let cleanText = text;
-      // Match "[Name] - Task description" or "[Name]: Task description"
       const match = text.match(/^\[(.*?)\]\s*[-:]\s*(.*)$/);
       if (match) {
         assignee = match[1].trim();
         cleanText = match[2].trim();
       }
       
-      const exists = tasks.some(t => t.text === cleanText && t.sourceCallId === session.id);
+      const exists = existingTasks.some(t => t.text === cleanText && t.sourceCallId === session.id);
       if (!exists) {
         const dueDate = parseDeadlineDate(cleanText);
-        
         let sourceSegmentId = '';
         let sourceTimestamp = '00:00';
         if (session.transcript) {
@@ -1229,7 +1552,7 @@ function extractTasksFromActionItems(session) {
           }
         }
         
-        tasks.push({
+        await saveTaskToDb({
           id: `task_${session.id}_${idx}_${Date.now()}`,
           text: cleanText,
           assignee: assignee,
@@ -1243,31 +1566,23 @@ function extractTasksFromActionItems(session) {
         });
       }
     }
-  });
-  
-  saveTasksList(tasks);
+  }
 }
 
-function saveSessionToFile(session) {
-  const filePath = path.join(getCallsDir(), `${session.id}.trail`);
-  
-  if (session.encrypted && settings.encryptionPassword) {
-    // Encrypt the session
-    const encryptedData = encryption.encrypt(JSON.stringify(session), settings.encryptionPassword);
-    fs.writeFileSync(filePath, encryptedData, 'utf8');
-    decryptionKeys.set(session.id, settings.encryptionPassword);
-  } else {
-    // Save plain text
-    fs.writeFileSync(filePath, JSON.stringify(session, null, 2), 'utf8');
-  }
+async function saveSessionToFile(session) {
+  await saveSessionToDbPromise(session);
   
   // Reload call list on frontend
   if (mainWindow) {
     mainWindow.webContents.send('calls:list-updated');
   }
   
-  // Clean up temp recordings
+  // Compliance: Secure file shredding of temporary recordings
   if (fs.existsSync(TEMP_DIR)) {
+    try {
+      const files = fs.readdirSync(TEMP_DIR);
+      files.forEach(f => secureShredFile(path.join(TEMP_DIR, f)));
+    } catch (e) {}
     fs.rmSync(TEMP_DIR, { recursive: true, force: true });
   }
 }
@@ -1354,7 +1669,7 @@ ipcMain.handle('settings:save', async (event, newSettings) => {
   let moveFiles = false;
   if (oldStoragePath !== newStoragePath) {
     const oldExists = fs.existsSync(oldStoragePath);
-    const filesToMove = oldExists ? fs.readdirSync(oldStoragePath).filter(f => f.endsWith('.trail')) : [];
+    const filesToMove = oldExists ? fs.readdirSync(oldStoragePath).filter(f => f.endsWith('.trail') || f.endsWith('.trail.bak')) : [];
     
     if (filesToMove.length > 0) {
       const choice = await dialog.showMessageBox(mainWindow, {
@@ -1393,6 +1708,9 @@ ipcMain.handle('settings:save', async (event, newSettings) => {
   // Start watcher on the new directory
   watchCallsDirectory();
   
+  // Sync the database with the directory state
+  await syncDatabaseWithFiles();
+  
   // Reload call list on frontend
   if (mainWindow) {
     mainWindow.webContents.send('calls:list-updated');
@@ -1408,6 +1726,80 @@ ipcMain.handle('audio:start-recording', () => {
 ipcMain.handle('audio:stop-recording', () => {
   stopRecordingHandler();
   return true;
+});
+
+ipcMain.handle('audio:pause-recording', () => {
+  pauseRecordingHandler();
+  return true;
+});
+
+ipcMain.handle('audio:resume-recording', () => {
+  isRecording = true;
+  isPaused = false;
+  updateTray();
+  if (mainWindow) {
+    mainWindow.webContents.send('audio:on-recording-status', { isRecording: true, isPaused: false });
+  }
+  startRecordingHandler();
+  return true;
+});
+
+ipcMain.handle('calls:resume-transcription', async (event, sessionId) => {
+  return await resumeCallTranscriptionHandler(sessionId);
+});
+
+ipcMain.handle('chat:query', async (event, query, activeTranscriptText) => {
+  try {
+    const model = settings.selectedLlm;
+    const rows = await dbAll("SELECT title, date, summary, actionItems, mixNotes, enhancedNotes FROM sessions");
+    
+    let historyContext = "Here is the context of past calls:\n";
+    rows.forEach(r => {
+      historyContext += `- [${r.date}] Title: ${r.title}\n`;
+      if (r.summary) historyContext += `  Summary: ${r.summary}\n`;
+      if (r.actionItems) historyContext += `  Action Items: ${r.actionItems}\n`;
+      historyContext += `\n`;
+    });
+    
+    const systemPrompt = `You are an offline AI meeting assistant. You have access to the active call's transcript and the history of all past calls.
+Use this context to answer the user's question accurately.
+Be concise, helpful, and write your responses using clean Markdown format (headers, bold, list items, etc.) for great readability in the chat panel. Do not include loose asterisks.`;
+    
+    const userPrompt = `${historyContext}
+Active Call Transcript:
+${activeTranscriptText || 'No active transcript.'}
+
+User Question:
+${query}`;
+    
+    return await queryOllama(userPrompt, model, systemPrompt);
+  } catch (err) {
+    console.error("Chat query error", err);
+    return "Could not query local AI model. Please verify Ollama is running.";
+  }
+});
+
+ipcMain.handle('chat:mix-enhance', async (event, jots, transcriptText) => {
+  try {
+    const model = settings.selectedLlm;
+    const systemPrompt = `You are a Principal Technical Writer. Your task is to perform top-down attention filtering to enhance rough jots using raw transcript context.
+You must use the user's manual "Jots" as anchor metrics. Delineate and expand upon the user's jots by extracting relevant technical details, decisions, dates, and quotes from the "Raw Transcript" that match those anchors.
+CRITICAL RULE: Entirely ignore transcript tangents, side-talk, and details that the user did not jot down. Do NOT add new topics not mentioned in the user's jots.
+Format the output as beautifully structured Markdown (using H2, H3, bold text, and checklists) for Notion/Apple Notes style canvas. Avoid loose asterisks.`;
+    
+    const userPrompt = `User's Rough Jots:
+${jots || 'No jots provided.'}
+
+Raw Transcript:
+${transcriptText || 'No transcript text available.'}
+
+Enhanced Notes:`;
+    
+    return await queryOllama(userPrompt, model, systemPrompt);
+  } catch (err) {
+    console.error("Mix & Enhance error", err);
+    return "Failed to run Mix & Enhance. Please ensure Ollama is running and the model is loaded.";
+  }
 });
 
 ipcMain.handle('models:get-specs', () => {
@@ -1455,85 +1847,47 @@ ipcMain.handle('models:download-whisper', async (event, modelName) => {
   });
 });
 
-ipcMain.handle('calls:get-list', () => {
-  const callsDir = getCallsDir();
-  if (!fs.existsSync(callsDir)) return [];
-  
-  const files = fs.readdirSync(callsDir).filter(f => f.endsWith('.trail'));
-  return files.map((file) => {
-    const filePath = path.join(callsDir, file);
-    const id = file.replace('.trail', '');
-    
-    let mtimeMs = 0;
-    try {
-      const stat = fs.statSync(filePath);
-      mtimeMs = stat.mtimeMs;
-    } catch (statErr) {}
-    
-    // Check if encrypted
-    try {
-      const rawContent = fs.readFileSync(filePath, 'utf8');
-      const isEncrypted = rawContent.includes('"salt"') && rawContent.includes('"iv"') && rawContent.includes('"encrypted"');
+ipcMain.handle('calls:get-list', async () => {
+  try {
+    await migrateOldData();
+    await syncDatabaseWithFiles();
+    const rows = await dbAll("SELECT * FROM sessions ORDER BY mtimeMs DESC");
+    return rows.map(row => {
+      let tags = [];
+      let suggestedTags = [];
+      try { tags = JSON.parse(row.tags || '[]'); } catch (e) {}
+      try { suggestedTags = JSON.parse(row.suggestedTags || '[]'); } catch (e) {}
       
-      if (isEncrypted) {
-        const cachedKey = decryptionKeys.get(id);
-        if (cachedKey) {
-          try {
-            const decrypted = encryption.decrypt(rawContent, cachedKey);
-            const data = JSON.parse(decrypted);
-            return {
-              id: data.id,
-              title: data.title || 'Meeting Session',
-              date: data.date,
-              encrypted: true,
-              unlocked: true,
-              filePath: filePath,
-              summary: data.summary,
-              description: data.description || 'No description available.',
-              tags: data.tags || [],
-              suggestedTags: data.suggestedTags || [],
-              mtimeMs: mtimeMs
-            };
-          } catch (decErr) {}
-        }
-        // Return placeholder metadata
-        return {
-          id: id,
-          title: 'Encrypted Session (Locked)',
-          date: 'Unknown Date',
-          encrypted: true,
-          unlocked: false,
-          filePath: filePath,
-          mtimeMs: mtimeMs
-        };
-      } else {
-        const data = JSON.parse(rawContent);
-        return {
-          id: data.id,
-          title: data.title || 'Meeting Session',
-          date: data.date,
-          encrypted: false,
-          filePath: filePath,
-          summary: data.summary,
-          description: data.description || 'No description available.',
-          tags: data.tags || [],
-          suggestedTags: data.suggestedTags || [],
-          mtimeMs: mtimeMs
-        };
-      }
-    } catch (e) {
-      return { id, title: 'Corrupt Call file', date: '', encrypted: false, filePath, mtimeMs };
-    }
-  });
+      return {
+        id: row.id,
+        title: row.title || 'Meeting Session',
+        date: row.date,
+        encrypted: row.encrypted === 1,
+        unlocked: row.encrypted !== 1 || decryptionKeys.has(row.id),
+        filePath: row.id,
+        summary: row.summary,
+        description: row.description || 'No description available.',
+        tags: tags,
+        suggestedTags: suggestedTags,
+        folder_id: row.folder_id,
+        mtimeMs: row.mtimeMs
+      };
+    });
+  } catch (err) {
+    console.error(err);
+    return [];
+  }
 });
 
-ipcMain.handle('calls:decrypt', (event, filePath, password) => {
+ipcMain.handle('calls:decrypt', async (event, sessionId, password) => {
   try {
-    const rawContent = fs.readFileSync(filePath, 'utf8');
-    const decrypted = encryption.decrypt(rawContent, password);
-    const sessionData = JSON.parse(decrypted);
+    const session = await dbGet("SELECT * FROM sessions WHERE id = ?", [sessionId]);
+    if (!session) return { success: false, error: 'Session not found' };
     
-    // Cache the password securely in memory for this session ID
+    const decrypted = encryption.decrypt(session.encrypted_payload, password);
+    const sessionData = JSON.parse(decrypted);
+    sessionData.folder_id = session.folder_id;
+    
     decryptionKeys.set(sessionData.id, password);
     return { success: true, session: sessionData };
   } catch (error) {
@@ -1541,363 +1895,117 @@ ipcMain.handle('calls:decrypt', (event, filePath, password) => {
   }
 });
 
-ipcMain.handle('calls:load', (event, filePath, password) => {
+ipcMain.handle('calls:load', async (event, sessionId, password) => {
   try {
-    const rawContent = fs.readFileSync(filePath, 'utf8');
-    const isEncrypted = rawContent.includes('"salt"') && rawContent.includes('"iv"') && rawContent.includes('"encrypted"');
+    const session = await dbGet("SELECT * FROM sessions WHERE id = ?", [sessionId]);
+    if (!session) return { success: false, error: 'Session not found' };
     
-    if (isEncrypted) {
-      if (!password) {
-        // Check if we have the password cached in memory
-        const id = path.basename(filePath, '.trail');
-        const cachedKey = decryptionKeys.get(id);
-        if (cachedKey) {
-          const decrypted = encryption.decrypt(rawContent, cachedKey);
-          return { success: true, session: JSON.parse(decrypted) };
-        }
+    if (session.encrypted) {
+      const cachedKey = password || decryptionKeys.get(sessionId) || settings.encryptionPassword;
+      if (!cachedKey) {
         return { success: false, requirePassword: true };
       }
       
-      const decrypted = encryption.decrypt(rawContent, password);
+      const decrypted = encryption.decrypt(session.encrypted_payload, cachedKey);
       const sessionData = JSON.parse(decrypted);
-      decryptionKeys.set(sessionData.id, password);
+      sessionData.folder_id = session.folder_id;
+      decryptionKeys.set(sessionData.id, cachedKey);
       return { success: true, session: sessionData };
     } else {
-      return { success: true, session: JSON.parse(rawContent) };
+      let sessionData = {};
+      try {
+        sessionData = JSON.parse(session.encrypted_payload);
+      } catch (e) {
+        sessionData = {
+          id: session.id,
+          date: session.date,
+          title: session.title,
+          description: session.description,
+          summary: session.summary,
+          actionItems: session.actionItems,
+          mixNotes: session.mixNotes,
+          enhancedNotes: session.enhancedNotes,
+          encrypted: false,
+          folder_id: session.folder_id,
+          tags: JSON.parse(session.tags || '[]'),
+          suggestedTags: JSON.parse(session.suggestedTags || '[]')
+        };
+      }
+      return { success: true, session: sessionData };
     }
   } catch (error) {
     return { success: false, error: error.message };
   }
 });
 
-ipcMain.handle('calls:save', (event, callData, password) => {
-  const filePath = path.join(getCallsDir(), `${callData.id}.trail`);
-  
-  const encryptionPassword = password || decryptionKeys.get(callData.id);
-  
-  if (encryptionPassword) {
-    const encryptedData = encryption.encrypt(JSON.stringify(callData), encryptionPassword);
-    fs.writeFileSync(filePath, encryptedData, 'utf8');
-    decryptionKeys.set(callData.id, encryptionPassword);
-  } else {
-    fs.writeFileSync(filePath, JSON.stringify(callData, null, 2), 'utf8');
-  }
-  
-  if (mainWindow) mainWindow.webContents.send('calls:list-updated');
-  return true;
-});
-
-ipcMain.handle('calls:save-silently', (event, callData) => {
-  if (!callData) return false;
-  const filePath = path.join(getCallsDir(), `${callData.id}.trail`);
+ipcMain.handle('calls:save', async (event, callData, password) => {
   try {
-    const encryptionPassword = decryptionKeys.get(callData.id) || settings.encryptionPassword;
-    if (callData.encrypted && encryptionPassword) {
-      const encryptedData = encryption.encrypt(JSON.stringify(callData), encryptionPassword);
-      fs.writeFileSync(filePath, encryptedData, 'utf8');
+    const encryptionPassword = password || decryptionKeys.get(callData.id);
+    if (encryptionPassword) {
+      callData.encrypted = true;
       decryptionKeys.set(callData.id, encryptionPassword);
-    } else {
-      fs.writeFileSync(filePath, JSON.stringify(callData, null, 2), 'utf8');
     }
+    
+    await saveSessionToDbPromise(callData);
+    if (mainWindow) mainWindow.webContents.send('calls:list-updated');
     return true;
   } catch (err) {
-    console.error('Failed to silently save session via IPC', err);
+    console.error(err);
     return false;
   }
 });
 
-function extractKeywords(text) {
-  if (!text) return [];
-  const words = text.toLowerCase().split(/[^a-z0-9]+/i);
-  const stopWords = new Set([
-    'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', 'your', 'yours', 
-    'yourself', 'yourselves', 'he', 'him', 'his', 'himself', 'she', 'her', 'hers', 'herself', 
-    'it', 'its', 'itself', 'they', 'them', 'their', 'theirs', 'themselves', 'what', 'which', 
-    'who', 'whom', 'this', 'that', 'these', 'those', 'am', 'is', 'are', 'was', 'were', 'be', 
-    'been', 'being', 'have', 'has', 'had', 'having', 'do', 'does', 'did', 'doing', 'a', 'an', 
-    'the', 'and', 'but', 'if', 'or', 'because', 'as', 'until', 'while', 'of', 'at', 'by', 'for', 
-    'with', 'about', 'against', 'between', 'into', 'through', 'during', 'before', 'after', 
-    'above', 'below', 'to', 'from', 'up', 'down', 'in', 'out', 'on', 'off', 'over', 'under', 
-    'again', 'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 
-    'any', 'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 
-    'only', 'own', 'same', 'so', 'than', 'too', 'very', 's', 't', 'can', 'will', 'just', 'don', 
-    'should', 'now', 'need', 'get', 'know', 'have', 'call', 'hour', 'meeting', 'transcription', 
-    'assistant', 'trailmix', 'someone', 'ready', 'talking', 'points', 'point', 'suggest', 'suggestions'
-  ]);
-  return words.filter(w => w.length > 2 && !stopWords.has(w));
-}
-
-function getRelevantTranscriptSnippets(sessions, queryKeywords) {
-  if (!queryKeywords || queryKeywords.length === 0) return '';
-  
-  let result = '';
-  let matchesFound = 0;
-  const maxMatches = 5;
-  
-  for (const s of sessions) {
-    if (!s.transcript || !Array.isArray(s.transcript)) continue;
-    
-    const matchingIndices = [];
-    s.transcript.forEach((seg, index) => {
-      const textLower = seg.text.toLowerCase();
-      const hasMatch = queryKeywords.some(keyword => textLower.includes(keyword));
-      if (hasMatch) {
-        matchingIndices.push(index);
-      }
-    });
-    
-    if (matchingIndices.length === 0) continue;
-    
-    const windows = [];
-    matchingIndices.forEach((idx) => {
-      const start = Math.max(0, idx - 1);
-      const end = Math.min(s.transcript.length - 1, idx + 1);
-      
-      if (windows.length > 0 && start <= windows[windows.length - 1].end) {
-        windows[windows.length - 1].end = Math.max(windows[windows.length - 1].end, end);
-      } else {
-        windows.push({ start, end });
-      }
-    });
-    
-    if (windows.length > 0) {
-      result += `--- RELEVANT TRANSCRIPT SNIPPETS FROM "${s.title}" (${s.date}) ---\n`;
-      windows.forEach((win) => {
-        for (let i = win.start; i <= win.end; i++) {
-          const seg = s.transcript[i];
-          result += `[${seg.speaker}]: ${seg.text}\n`;
-        }
-        result += `...\n`;
-      });
-      result += `---------------------------------------------------\n\n`;
-      matchesFound++;
-      if (matchesFound >= maxMatches) break;
-    }
-  }
-  
-  return result;
-}
-
-ipcMain.handle('chat:query', async (event, query, transcriptText) => {
-  const model = settings.selectedLlm;
-  let systemPrompt = 'You are TrailMix Assistant. You help users understand details of their recorded transcripts. You run 100% offline. ' +
-    'You have access to the current active call transcript, as well as the summaries and action items of all past calls to help the user answer general questions about their schedules, upcoming deadlines, action items, and past discussions.';
-  
-  let pastCallsContext = '';
-  let readableSessions = [];
+ipcMain.handle('calls:save-silently', async (event, callData) => {
   try {
-    const callsDir = getCallsDir();
-    if (fs.existsSync(callsDir)) {
-      const files = fs.readdirSync(callsDir).filter(f => f.endsWith('.trail'));
-      
-      files.forEach((file) => {
-        const filePath = path.join(callsDir, file);
-        const id = file.replace('.trail', '');
-        try {
-          const rawContent = fs.readFileSync(filePath, 'utf8');
-          const isEncrypted = rawContent.includes('"salt"') && rawContent.includes('"iv"') && rawContent.includes('"encrypted"');
-          let session = null;
-          if (isEncrypted) {
-            const cachedKey = decryptionKeys.get(id);
-            if (cachedKey) {
-              const decrypted = encryption.decrypt(rawContent, cachedKey);
-              session = JSON.parse(decrypted);
-            }
-          } else {
-            session = JSON.parse(rawContent);
-          }
-          
-          if (session) {
-            readableSessions.push(session);
-          }
-        } catch (e) {
-          console.error('Failed to read call file for global context', e);
-        }
-      });
-      
-      if (readableSessions.length > 0) {
-        pastCallsContext = "Here is the summary history of all previous call transcriptions:\n\n";
-        readableSessions.forEach((s) => {
-          pastCallsContext += `--- SESSION ---\n`;
-          pastCallsContext += `Title: ${s.title}\n`;
-          pastCallsContext += `Date: ${s.date}\n`;
-          if (s.summary) pastCallsContext += `Summary: ${s.summary.trim()}\n`;
-          if (s.actionItems) pastCallsContext += `Action Items:\n${s.actionItems.trim()}\n`;
-          pastCallsContext += `---------------\n\n`;
-        });
-      }
-    }
+    await saveSessionToDbPromise(callData);
+    return true;
   } catch (err) {
-    console.error('Error reading past calls for context', err);
+    console.error(err);
+    return false;
   }
+});
 
-  let userPrompt = query;
-  if (query === 'action') {
-    userPrompt = `Based on the following meeting transcript, extract and list the actionable next steps and owners (if mentioned) in clear bullet points:\n\n${transcriptText}`;
-  } else if (query === 'miss') {
-    userPrompt = `What did I miss in the last few minutes? Summarize the latest key points and decisions in short bullet points:\n\n${transcriptText}`;
-  } else {
-    const keywords = extractKeywords(query);
-    const relevantSnippets = getRelevantTranscriptSnippets(readableSessions, keywords);
-    
-    userPrompt = `You have access to past calls context (summaries and action items):\n\n${pastCallsContext}\n\n`;
-    if (relevantSnippets) {
-      userPrompt += `Here are the most relevant transcript segments found in call history matching search terms [${keywords.join(', ')}]:\n\n${relevantSnippets}\n\n`;
-    }
-    userPrompt += `And the current active session transcript:\n\n${transcriptText}\n\nAnswer the user query: ${query}`;
-  }
-
+ipcMain.handle('calls:delete', async (event, sessionId) => {
   try {
-    return await queryOllama(userPrompt, model, systemPrompt);
-  } catch (error) {
-    return `Error: Could not retrieve response from Ollama model "${model}". Please verify Ollama is active.`;
-  }
-});
-
-ipcMain.handle('chat:mix-enhance', async (event, jots, transcriptText) => {
-  const model = settings.selectedLlm;
-  const systemPrompt = `You are a local meeting assistant that emulates the "jot and enhance" feature.
-Your task is to take the user's rough manual notes/jots and enhance them into clean, structured, and professionally formatted notes in markdown.
-Use the background transcript to resolve shorthand, abbreviations, typos, and fill in missing technical details, precise metrics, dates, or key quotes surrounding the jots.
-
-CRITICAL CONSTRAINTS:
-1. ONLY include topics, tasks, or decisions that are explicitly referenced in the user's rough jots.
-2. If a topic mentioned in the background transcript is NOT referenced in the user's jots, assume it is low-importance and DO NOT include it in the enhanced output.
-3. Clean up typos and use professional markdown structure (such as bolding, H2/H3 headers, and bullet points).
-4. Output ONLY the clean enhanced markdown notes directly. Do NOT include any conversational filler, intro, outro, or conversational responses.`;
-
-  const prompt = `Here is the background transcript of the meeting:\n\n${transcriptText}\n\nHere are the user's rough jots:\n\n${jots}\n\nGenerate the enhanced notes:`;
-
-  try {
-    return await queryOllama(prompt, model, systemPrompt);
-  } catch (error) {
-    return `Error: Could not retrieve response from Ollama model "${model}". Please verify Ollama is active.`;
-  }
-});
-
-// Pause / Resume and Timeline IPC handlers
-ipcMain.handle('audio:pause-recording', () => {
-  pauseRecordingHandler();
-  return true;
-});
-
-ipcMain.handle('audio:resume-recording', () => {
-  startRecordingHandler();
-  return true;
-});
-
-ipcMain.handle('calls:resume-transcription', (event, filePath) => {
-  return resumeCallTranscriptionHandler(filePath);
-});
-
-ipcMain.handle('tasks:get', () => {
-  return getTasksList();
-});
-
-ipcMain.handle('tasks:toggle', (event, taskId) => {
-  let tasks = getTasksList();
-  const task = tasks.find(t => t.id === taskId);
-  if (task) {
-    task.completed = !task.completed;
-    saveTasksList(tasks);
-    return { success: true, task };
-  }
-  return { success: false, error: 'Task not found' };
-});
-
-ipcMain.handle('tasks:delete', (event, taskId) => {
-  let tasks = getTasksList();
-  const index = tasks.findIndex(t => t.id === taskId);
-  if (index !== -1) {
-    tasks.splice(index, 1);
-    saveTasksList(tasks);
+    await dbRun("DELETE FROM sessions WHERE id = ?", [sessionId]);
+    if (mainWindow) mainWindow.webContents.send('calls:list-updated');
     return { success: true };
-  }
-  return { success: false, error: 'Task not found' };
-});
-
-ipcMain.handle('tasks:set-omitted', (event, taskId, omitted) => {
-  let tasks = getTasksList();
-  const task = tasks.find(t => t.id === taskId);
-  if (task) {
-    task.omitted = omitted;
-    saveTasksList(tasks);
-    return { success: true, task };
-  }
-  return { success: false, error: 'Task not found' };
-});
-
-ipcMain.handle('tasks:delete-multiple', (event, taskIds) => {
-  let tasks = getTasksList();
-  const initialLength = tasks.length;
-  tasks = tasks.filter(t => !taskIds.includes(t.id));
-  saveTasksList(tasks);
-  return { success: tasks.length < initialLength };
-});
-
-ipcMain.handle('calls:open-file-location', (event, filePath) => {
-  if (fs.existsSync(filePath)) {
-    shell.showItemInFolder(filePath);
-    return { success: true };
-  }
-  return { success: false, error: 'File not found' };
-});
-
-ipcMain.handle('calls:delete', (event, filePath) => {
-  try {
-    if (fs.existsSync(filePath)) {
-      fs.unlinkSync(filePath);
-      const id = path.basename(filePath, '.trail');
-      let tasks = getTasksList();
-      tasks = tasks.filter(t => t.sourceCallId !== id);
-      saveTasksList(tasks);
-      return { success: true };
-    }
   } catch (e) {
     return { success: false, error: e.message };
   }
-  return { success: false, error: 'File not found' };
 });
 
-ipcMain.handle('calls:delete-multiple', (event, filePaths) => {
-  const errors = [];
-  filePaths.forEach(fp => {
-    try {
-      if (fs.existsSync(fp)) {
-        fs.unlinkSync(fp);
-        const id = path.basename(fp, '.trail');
-        let tasks = getTasksList();
-        tasks = tasks.filter(t => t.sourceCallId !== id);
-        saveTasksList(tasks);
-      }
-    } catch (e) {
-      errors.push(`${fp}: ${e.message}`);
-    }
-  });
-  return { success: errors.length === 0, errors };
+ipcMain.handle('calls:delete-multiple', async (event, sessionIds) => {
+  try {
+    if (sessionIds.length === 0) return { success: true };
+    const placeholders = sessionIds.map(() => '?').join(',');
+    await dbRun(`DELETE FROM sessions WHERE id IN (${placeholders})`, sessionIds);
+    if (mainWindow) mainWindow.webContents.send('calls:list-updated');
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
 });
 
-ipcMain.handle('calls:merge', (event, filePaths) => {
+ipcMain.handle('calls:merge', async (event, sessionIds) => {
   try {
     const sessions = [];
-    filePaths.forEach(fp => {
-      if (fs.existsSync(fp)) {
-        const raw = fs.readFileSync(fp, 'utf8');
-        const isEncrypted = raw.includes('"salt"') && raw.includes('"iv"');
-        if (isEncrypted) {
-          const id = path.basename(fp, '.trail');
+    for (const id of sessionIds) {
+      const res = await dbGet("SELECT * FROM sessions WHERE id = ?", [id]);
+      if (res) {
+        if (res.encrypted) {
           const cachedKey = decryptionKeys.get(id);
           if (cachedKey) {
-            const decrypted = encryption.decrypt(raw, cachedKey);
+            const decrypted = encryption.decrypt(res.encrypted_payload, cachedKey);
             sessions.push(JSON.parse(decrypted));
           } else {
             throw new Error(`Cannot merge encrypted session ${id} without cached password.`);
           }
         } else {
-          sessions.push(JSON.parse(raw));
+          sessions.push(JSON.parse(res.encrypted_payload || '{}'));
         }
       }
-    });
+    }
 
     if (sessions.length < 2) {
       return { success: false, error: 'Need at least 2 sessions to merge.' };
@@ -1918,16 +2026,18 @@ ipcMain.handle('calls:merge', (event, filePaths) => {
       }
       const startOffsetMs = cumulativeTimeMs;
       
-      sess.transcript.forEach((seg) => {
-        mergedTranscript.push({
-          ...seg,
-          id: `merged_${sess.id}_${seg.id}`,
-          timestampMs: startOffsetMs + seg.timestampMs,
-          timestamp: formatTimestamp(startOffsetMs + seg.timestampMs)
+      if (sess.transcript) {
+        sess.transcript.forEach((seg) => {
+          mergedTranscript.push({
+            ...seg,
+            id: `merged_${sess.id}_${seg.id}`,
+            timestampMs: startOffsetMs + seg.timestampMs,
+            timestamp: formatTimestamp(startOffsetMs + seg.timestampMs)
+          });
         });
-      });
+      }
       
-      if (sess.transcript.length > 0) {
+      if (sess.transcript && sess.transcript.length > 0) {
         const lastSeg = sess.transcript[sess.transcript.length - 1];
         cumulativeTimeMs += lastSeg.timestampMs + 3000;
       }
@@ -1941,50 +2051,51 @@ ipcMain.handle('calls:merge', (event, filePaths) => {
       transcript: mergedTranscript,
       summary: sessions.map(s => `--- ${s.title} ---\n${s.summary || ''}`).join('\n\n'),
       actionItems: sessions.map(s => `--- ${s.title} ---\n${s.actionItems || ''}`).join('\n\n'),
-      encrypted: false
+      encrypted: false,
+      folder_id: 'work'
     };
 
-    saveSessionToFile(newSession);
+    await saveSessionToDbPromise(newSession);
+    if (mainWindow) mainWindow.webContents.send('calls:list-updated');
     return { success: true, session: newSession };
   } catch (e) {
     return { success: false, error: e.message };
   }
 });
 
-ipcMain.handle('calls:export', async (event, filePaths) => {
+ipcMain.handle('calls:export', async (event, sessionIds) => {
   try {
     let combinedMarkdown = '';
     
-    filePaths.forEach(fp => {
-      if (fs.existsSync(fp)) {
-        const raw = fs.readFileSync(fp, 'utf8');
-        const isEncrypted = raw.includes('"salt"') && raw.includes('"iv"');
+    for (const id of sessionIds) {
+      const res = await dbGet("SELECT * FROM sessions WHERE id = ?", [id]);
+      if (res) {
         let session = null;
-        
-        if (isEncrypted) {
-          const id = path.basename(fp, '.trail');
+        if (res.encrypted) {
           const cachedKey = decryptionKeys.get(id);
           if (cachedKey) {
-            const decrypted = encryption.decrypt(raw, cachedKey);
+            const decrypted = encryption.decrypt(res.encrypted_payload, cachedKey);
             session = JSON.parse(decrypted);
           }
         } else {
-          session = JSON.parse(raw);
+          session = JSON.parse(res.encrypted_payload || '{}');
         }
         
         if (session) {
           combinedMarkdown += `# ${session.title}\n`;
           combinedMarkdown += `Date: ${session.date}\n\n`;
           combinedMarkdown += `## Transcript\n`;
-          session.transcript.forEach((t) => {
-            combinedMarkdown += `[${t.timestamp}] ${t.speaker}: ${t.text}\n`;
-          });
+          if (session.transcript) {
+            session.transcript.forEach((t) => {
+              combinedMarkdown += `[${t.timestamp}] ${t.speaker}: ${t.text}\n`;
+            });
+          }
           combinedMarkdown += `\n## Highlights Summary\n${session.summary || 'No summary'}\n\n`;
           combinedMarkdown += `## Action Items\n${session.actionItems || 'No action items'}\n`;
           combinedMarkdown += `\n---\n\n`;
         }
       }
-    });
+    }
 
     const { filePath } = await dialog.showSaveDialog(mainWindow, {
       title: 'Export Transcripts',
@@ -2002,53 +2113,42 @@ ipcMain.handle('calls:export', async (event, filePaths) => {
   }
 });
 
-ipcMain.handle('calls:find-related', (event, filePath) => {
+ipcMain.handle('calls:find-related', async (event, sessionId) => {
   try {
-    if (!fs.existsSync(filePath)) return [];
+    const targetRow = await dbGet("SELECT * FROM sessions WHERE id = ?", [sessionId]);
+    if (!targetRow) return [];
     
-    const raw = fs.readFileSync(filePath, 'utf8');
-    const isEncrypted = raw.includes('"salt"') && raw.includes('"iv"');
     let targetSession = null;
-    
-    if (isEncrypted) {
-      const id = path.basename(filePath, '.trail');
-      const cachedKey = decryptionKeys.get(id);
+    if (targetRow.encrypted) {
+      const cachedKey = decryptionKeys.get(sessionId);
       if (cachedKey) {
-        targetSession = JSON.parse(encryption.decrypt(raw, cachedKey));
+        targetSession = JSON.parse(encryption.decrypt(targetRow.encrypted_payload, cachedKey));
       }
     } else {
-      targetSession = JSON.parse(raw);
+      targetSession = JSON.parse(targetRow.encrypted_payload || '{}');
     }
     
-    if (!targetSession) return [];
+    if (!targetSession || !targetSession.transcript) return [];
 
     const targetSpeakers = new Set(targetSession.transcript.map(t => t.speaker.toLowerCase()).filter(s => s !== 'you' && !s.startsWith('speaker')));
     const targetWords = new Set(targetSession.title.toLowerCase().split(/\s+/).filter(w => w.length > 4));
 
-    const callsDir = getCallsDir();
-    const files = fs.readdirSync(callsDir).filter(f => f.endsWith('.trail'));
+    const rows = await dbAll("SELECT * FROM sessions WHERE id != ?", [sessionId]);
     const related = [];
 
-    files.forEach(file => {
-      const fp = path.join(callsDir, file);
-      if (fp === filePath) return;
-
+    for (const r of rows) {
       try {
-        const rawContent = fs.readFileSync(fp, 'utf8');
-        const isEncryptedContent = rawContent.includes('"salt"') && rawContent.includes('"iv"');
         let session = null;
-
-        if (isEncryptedContent) {
-          const id = file.replace('.trail', '');
-          const cachedKey = decryptionKeys.get(id);
+        if (r.encrypted) {
+          const cachedKey = decryptionKeys.get(r.id);
           if (cachedKey) {
-            session = JSON.parse(encryption.decrypt(rawContent, cachedKey));
+            session = JSON.parse(encryption.decrypt(r.encrypted_payload, cachedKey));
           }
         } else {
-          session = JSON.parse(rawContent);
+          session = JSON.parse(r.encrypted_payload || '{}');
         }
 
-        if (session) {
+        if (session && session.transcript) {
           let score = 0;
           session.transcript.forEach(t => {
             const spk = t.speaker.toLowerCase();
@@ -2070,12 +2170,12 @@ ipcMain.handle('calls:find-related', (event, filePath) => {
               title: session.title,
               date: session.date,
               score: score,
-              filePath: fp
+              filePath: session.id
             });
           }
         }
       } catch (err) {}
-    });
+    }
 
     related.sort((a, b) => b.score - a.score);
     return related;
@@ -2083,6 +2183,160 @@ ipcMain.handle('calls:find-related', (event, filePath) => {
     console.error(e);
     return [];
   }
+});
+
+// Obsidian vault exports (v0.2 Compatibility)
+ipcMain.handle('calls:export-obsidian', async (event, folderId, exportDir) => {
+  try {
+    if (!fs.existsSync(exportDir)) {
+      fs.mkdirSync(exportDir, { recursive: true });
+    }
+    
+    let sql = "SELECT * FROM sessions";
+    let params = [];
+    if (folderId && folderId !== 'all') {
+      sql = "SELECT * FROM sessions WHERE folder_id = ?";
+      params = [folderId];
+    }
+    
+    const sessions = await dbAll(sql, params);
+    let count = 0;
+    
+    for (const sessionRow of sessions) {
+      let session = null;
+      if (sessionRow.encrypted) {
+        const cachedKey = decryptionKeys.get(sessionRow.id);
+        if (cachedKey) {
+          session = JSON.parse(encryption.decrypt(sessionRow.encrypted_payload, cachedKey));
+        }
+      } else {
+        session = JSON.parse(sessionRow.encrypted_payload || '{}');
+      }
+      
+      if (session) {
+        const cleanTitle = sessionRow.title.replace(/[^a-zA-Z0-9\s_-]/g, '').trim() || 'Session';
+        const mdName = `${cleanTitle}_${sessionRow.id}.md`;
+        const mdPath = path.join(exportDir, mdName);
+        
+        let mdContent = `# ${sessionRow.title}\n`;
+        mdContent += `Date: ${sessionRow.date}\n`;
+        if (session.tags && session.tags.length > 0) {
+          mdContent += `Tags: ${session.tags.map(t => `#${t}`).join(' ')}\n`;
+        }
+        mdContent += `\n---\n\n`;
+        mdContent += `## Jots (Manual Notes)\n${session.mixNotes || 'No manual jots.'}\n\n`;
+        mdContent += `## Blended Notes (AI Enhanced)\n${session.enhancedNotes || 'No enhanced notes.'}\n\n`;
+        mdContent += `## Highlights Summary\n${session.summary || 'No summary.'}\n\n`;
+        mdContent += `## Action Items\n${session.actionItems || 'No action items.'}\n`;
+        
+        fs.writeFileSync(mdPath, mdContent, 'utf8');
+        count++;
+      }
+    }
+    return { success: true, count };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Folders Management (v0.2)
+ipcMain.handle('folders:get', async () => {
+  try {
+    return await dbAll("SELECT * FROM folders");
+  } catch (err) {
+    console.error(err);
+    return [];
+  }
+});
+
+ipcMain.handle('folders:create', async (event, name) => {
+  try {
+    const id = 'folder_' + Date.now();
+    await dbRun("INSERT INTO folders (id, name) VALUES (?, ?)", [id, name]);
+    return { success: true, folder: { id, name } };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('folders:delete', async (event, id) => {
+  try {
+    await dbRun("DELETE FROM folders WHERE id = ?", [id]);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('calls:move-to-folder', async (event, sessionId, folderId) => {
+  try {
+    await dbRun("UPDATE sessions SET folder_id = ? WHERE id = ?", [folderId, sessionId]);
+    if (mainWindow) mainWindow.webContents.send('calls:list-updated');
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Tasks Management (v0.2)
+ipcMain.handle('tasks:get', async () => {
+  return await getTasksListFromDb();
+});
+
+ipcMain.handle('tasks:toggle', async (event, taskId) => {
+  try {
+    const task = await dbGet("SELECT * FROM tasks WHERE id = ?", [taskId]);
+    if (task) {
+      const newCompleted = task.completed === 1 ? 0 : 1;
+      await dbRun("UPDATE tasks SET completed = ? WHERE id = ?", [newCompleted, taskId]);
+      task.completed = newCompleted === 1;
+      return { success: true, task };
+    }
+    return { success: false, error: 'Task not found' };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('tasks:delete', async (event, taskId) => {
+  try {
+    await dbRun("DELETE FROM tasks WHERE id = ?", [taskId]);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('tasks:set-omitted', async (event, taskId, omitted) => {
+  try {
+    const omittedVal = omitted ? 1 : 0;
+    await dbRun("UPDATE tasks SET omitted = ? WHERE id = ?", [omittedVal, taskId]);
+    const task = await dbGet("SELECT * FROM tasks WHERE id = ?", [taskId]);
+    if (task) {
+      task.completed = task.completed === 1;
+      task.omitted = task.omitted === 1;
+      return { success: true, task };
+    }
+    return { success: false, error: 'Task not found' };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('tasks:delete-multiple', async (event, taskIds) => {
+  try {
+    if (taskIds.length === 0) return { success: true };
+    const placeholders = taskIds.map(() => '?').join(',');
+    await dbRun(`DELETE FROM tasks WHERE id IN (${placeholders})`, taskIds);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('calls:open-file-location', () => {
+  shell.openPath(XDG_CONFIG_DIR);
+  return { success: true };
 });
 
 ipcMain.on('app:minimize', () => {

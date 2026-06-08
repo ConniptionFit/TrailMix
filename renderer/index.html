@@ -1,480 +1,653 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
   <meta charset="UTF-8">
   <title>TrailMix - Local AI Notes & Transcription</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="index.css">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            trail: {
+              50: '#f4f8e6',
+              100: '#e5eed0',
+              200: '#ccdca1',
+              300: '#a7c369',
+              400: '#84a63b',
+              500: '#69872b', // Moss Green
+              600: '#526b20',
+              700: '#3e5219',
+              800: '#324217',
+              900: '#2c3917',
+              950: '#17200a',
+            },
+            dark: {
+              base: '#0c0e11',
+              surface: '#12161c',
+              hover: '#1a2028',
+              border: 'rgba(164, 198, 57, 0.12)',
+            }
+          },
+          fontFamily: {
+            sans: ['Outfit', 'Plus Jakarta Sans', 'system-ui', 'sans-serif'],
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* Custom scrollbars */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(164, 198, 57, 0.3);
+    }
+
+    /* Glow utilities */
+    .moss-glow {
+      box-shadow: 0 0 15px rgba(164, 198, 57, 0.15);
+    }
+    .moss-glow-heavy {
+      box-shadow: 0 0 25px rgba(164, 198, 57, 0.35);
+    }
+
+    /* Tab styles */
+    .tab-pane {
+      display: none;
+      height: 100%;
+      flex-direction: column;
+    }
+    .tab-pane.active {
+      display: flex;
+    }
+
+    /* Custom context menu styles */
+    .custom-context-menu {
+      position: absolute;
+      background: #181d24;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 6px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+      z-index: 1000;
+      padding: 4px;
+      min-width: 170px;
+    }
+    .context-menu-item {
+      padding: 8px 12px;
+      font-size: 12px;
+      color: #94a3b8;
+      cursor: pointer;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all 0.15s;
+    }
+    .context-menu-item:hover {
+      background: rgba(164, 198, 57, 0.1);
+      color: #f8fafc;
+    }
+    .context-menu-item.delete:hover {
+      background: rgba(239, 68, 68, 0.1);
+      color: #f87171;
+    }
+    .context-menu-divider {
+      height: 1px;
+      background: rgba(255, 255, 255, 0.06);
+      margin: 4px 0;
+    }
+
+    /* Tooltip styles */
+    .global-tooltip-el {
+      position: absolute;
+      background: #0f172a;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #f1f5f9;
+      padding: 6px 10px;
+      font-size: 11px;
+      border-radius: 4px;
+      z-index: 2000;
+      pointer-events: none;
+      max-width: 280px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    }
+
+    /* CSS Animations */
+    @keyframes pulse-recording {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(1.15); }
+    }
+    .animate-recording {
+      animation: pulse-recording 1.8s infinite ease-in-out;
+    }
+
+    /* Notion editor layout overrides */
+    .notion-textarea:focus {
+      outline: none;
+      box-shadow: none;
+    }
+  </style>
 </head>
-<body>
-  <!-- Mini Mode Widget (Used when window is minimized during transcription) -->
-  <div id="mini-widget" class="mini-widget-container hidden">
-    <div class="mini-logo-area">
-      <img src="../assets/logo.png" alt="TrailMix Logo" class="mini-logo">
-      <div class="mini-info">
-        <span class="mini-title">TrailMix</span>
-        <span class="mini-status animate-pulse">Transcribing...</span>
+<body class="bg-[#090b0d] text-[#e2e8f0] font-sans h-screen w-screen overflow-hidden flex select-none">
+
+  <!-- Mini Mode Widget (Transcribing mini overlay) -->
+  <div id="mini-widget" class="hidden flex items-center justify-between w-[260px] h-[90px] p-3 rounded-xl border border-trail-500/20 bg-slate-900/90 backdrop-blur-md shadow-2xl">
+    <div class="flex items-center gap-2">
+      <img src="../assets/logo.png" alt="Logo" class="w-8 h-8 rounded-lg shadow-md">
+      <div class="flex flex-col">
+        <span class="text-xs font-semibold text-white">TrailMix</span>
+        <span class="text-[10px] text-trail-400 animate-pulse">Transcribing...</span>
       </div>
     </div>
-    <div class="mini-controls">
-      <button id="mini-toggle" class="btn-mini-stop">⏹ Stop</button>
-      <button id="mini-relaunch" class="btn-mini-open">↗ Open</button>
+    <div class="flex items-center gap-1.5">
+      <button id="mini-toggle" class="px-2.5 py-1 text-[11px] font-medium rounded bg-red-500/10 text-red-400 hover:bg-red-500/20 transition">⏹ Stop</button>
+      <button id="mini-relaunch" class="px-2.5 py-1 text-[11px] font-medium rounded bg-trail-500/10 text-trail-400 hover:bg-trail-500/20 transition">↗ Open</button>
     </div>
   </div>
 
-  <!-- Main App Window -->
-  <div id="main-app" class="app-layout">
+  <!-- Main Application Window -->
+  <div id="main-app" class="flex w-full h-full">
     
-    <!-- Sidebar -->
-    <aside class="sidebar">
-      <div class="sidebar-header">
-        <img src="../assets/logo.png" alt="TrailMix Logo" class="app-logo">
-        <h2>TrailMix</h2>
-      </div>
+    <!-- Sidebar (Left Column) -->
+    <aside class="w-80 border-r border-white/5 bg-[#0e1115] flex flex-col flex-shrink-0 h-full p-4">
       
-      <div class="sidebar-menu">
-        <button id="nav-dashboard" class="sidebar-btn active">
-          <span class="icon">📊</span> Dashboard
-        </button>
-        <button id="nav-calendar" class="sidebar-btn">
-          <span class="icon">📅</span> Calendar
-        </button>
-        <button id="nav-action-items" class="sidebar-btn">
-          <span class="icon">📋</span> Action Items
-        </button>
-        <button id="nav-history" class="sidebar-btn">
-          <span class="icon">📜</span> Call History
-        </button>
-        <button id="nav-settings" class="sidebar-btn">
-          <span class="icon">⚙️</span> Settings
+      <!-- Brand Header -->
+      <div class="flex items-center gap-3 mb-6 pb-2 border-b border-white/5">
+        <img src="../assets/logo.png" alt="TrailMix Logo" class="w-8 h-8 rounded-lg shadow-md shadow-trail-500/10">
+        <div>
+          <h2 class="text-md font-bold tracking-tight bg-gradient-to-r from-white via-trail-200 to-trail-500 bg-clip-text text-transparent">TrailMix</h2>
+          <p class="text-[10px] text-slate-500 font-medium tracking-wide uppercase">Privacy Meeting Assistant</p>
+        </div>
+      </div>
+
+      <!-- Navigation Map Buttons -->
+      <div class="flex flex-col gap-1 mb-4">
+        <button id="nav-dashboard" class="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium rounded-lg text-trail-400 bg-trail-500/10 hover:text-white transition group">
+          <span>📝</span>
+          <span>Active Notebook</span>
         </button>
       </div>
 
-      <div class="sidebar-history-section">
-        <div class="sidebar-history-header" style="position: relative;">
-          <h3>Recent Transcriptions</h3>
-          <button id="btn-history-menu" class="icon-btn-toggle" title="History Menu">☰</button>
-          
-          <!-- History Menu Dropdown -->
-          <div id="history-menu-dropdown" class="history-dropdown hidden">
-            <button id="menu-opt-multiselect" class="dropdown-item">☑️ Select Multiple</button>
-            <div class="dropdown-divider"></div>
-            <div class="dropdown-header">Sort By</div>
-            <button id="menu-opt-sort-newest" class="dropdown-item active-sort">📅 Date: Newest First</button>
-            <button id="menu-opt-sort-oldest" class="dropdown-item">📅 Date: Oldest First</button>
-            <button id="menu-opt-sort-title-asc" class="dropdown-item">🔤 Title: A-Z</button>
-            <button id="menu-opt-sort-title-desc" class="dropdown-item">🔤 Title: Z-A</button>
-          </div>
+      <!-- Campfire Preserves (Folders List) -->
+      <div class="flex flex-col flex-shrink-0 mb-4">
+        <div class="flex items-center justify-between text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2 px-1">
+          <span>📁 Campfire Preserves</span>
+          <button id="btn-add-folder" class="text-slate-500 hover:text-white transition text-xs" title="Add Folder">+</button>
         </div>
-        <div class="sidebar-search-container" style="margin-bottom: 12px; padding: 0 4px;">
-          <input type="text" id="input-sidebar-search" placeholder="Search transcripts or #tag..." class="input-text" style="width: 100%; font-size: 11px; padding: 6px 8px; box-sizing: border-box;">
-        </div>
-        <div id="sidebar-bulk-actions" class="bulk-actions-bar hidden">
-          <span id="bulk-select-count">0 selected</span>
-          <div class="bulk-buttons">
-            <button id="btn-bulk-merge" class="bulk-btn" title="Merge Selected">🔗</button>
-            <button id="btn-bulk-export" class="bulk-btn" title="Export Selected">📤</button>
-            <button id="btn-bulk-delete" class="bulk-btn delete" title="Delete Selected">🗑️</button>
-            <button id="btn-bulk-cancel" class="bulk-btn" title="Cancel">❌</button>
-          </div>
-        </div>
-        <div id="sidebar-calls-list" class="calls-list">
-          <!-- Calls list will be dynamically rendered here -->
-          <div class="empty-state">No calls transcribed yet.</div>
+        <div id="sidebar-folders-list" class="flex flex-col gap-1 max-h-[140px] overflow-y-auto pr-1">
+          <!-- Dynamically populated folders list -->
         </div>
       </div>
-      
-      <div class="sidebar-footer">
-        <div class="status-indicator">
-          <span class="indicator-dot online"></span>
-          <span>Local Engine Active</span>
+
+      <!-- Recent Transcriptions List -->
+      <div class="flex-grow flex flex-col overflow-hidden">
+        <div class="flex items-center justify-between text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2 px-1 relative">
+          <span>📜 Historical Preserves</span>
+          <button id="btn-history-menu" class="text-slate-500 hover:text-white transition text-xs" title="History Menu">☰</button>
+          
+          <!-- Hamburger dropdown menu -->
+          <div id="history-menu-dropdown" class="hidden absolute right-0 top-6 w-48 bg-[#181d24] border border-white/10 rounded-lg shadow-xl z-50 p-1">
+            <button id="menu-opt-multiselect" class="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 rounded transition">☑️ Select Multiple</button>
+            <div class="h-[1px] bg-white/5 my-1"></div>
+            <div class="px-3 py-1 text-[9px] font-semibold text-slate-500 uppercase tracking-wider">Sort By</div>
+            <button id="menu-opt-sort-newest" class="w-full text-left px-3 py-1.5 text-xs text-trail-400 bg-trail-500/5 hover:bg-slate-800 rounded transition font-medium">📅 Date: Newest First</button>
+            <button id="menu-opt-sort-oldest" class="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 rounded transition">📅 Date: Oldest First</button>
+            <button id="menu-opt-sort-title-asc" class="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 rounded transition">🔤 Title: A-Z</button>
+            <button id="menu-opt-sort-title-desc" class="w-full text-left px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800 rounded transition">🔤 Title: Z-A</button>
+          </div>
         </div>
+
+        <!-- Search Bar -->
+        <div class="mb-2">
+          <input type="text" id="input-sidebar-search" placeholder="Search notes or #tag..." class="w-full text-xs bg-slate-900/50 border border-white/5 focus:border-trail-500/30 rounded-lg px-2.5 py-1.5 text-white placeholder-slate-500 focus:outline-none transition">
+        </div>
+
+        <!-- Bulk Actions Bar -->
+        <div id="sidebar-bulk-actions" class="hidden flex items-center justify-between bg-slate-900/90 border border-trail-500/20 px-2 py-1.5 rounded-lg mb-2 text-xs">
+          <span id="bulk-select-count" class="text-trail-400 font-medium">0 selected</span>
+          <div class="flex items-center gap-1">
+            <button id="btn-bulk-merge" class="p-1 hover:bg-slate-800 rounded text-slate-300" title="Merge Selected">🔗</button>
+            <button id="btn-bulk-export" class="p-1 hover:bg-slate-800 rounded text-slate-300" title="Export Selected">📤</button>
+            <button id="btn-bulk-delete" class="p-1 hover:bg-red-500/10 hover:text-red-400 rounded text-slate-300" title="Delete Selected">🗑️</button>
+            <button id="btn-bulk-cancel" class="p-1 hover:bg-slate-800 rounded text-slate-300" title="Cancel">❌</button>
+          </div>
+        </div>
+
+        <!-- Scrollable Call History Sidebar List -->
+        <div id="sidebar-calls-list" class="flex-grow overflow-y-auto flex flex-col gap-1.5 pr-1">
+          <!-- Dynamically populated history notes list -->
+          <div class="text-center text-xs text-slate-500 py-8">No call notes created yet.</div>
+        </div>
+      </div>
+
+      <!-- Navigation & settings (Trail Map & General) -->
+      <div class="flex flex-col gap-1 border-t border-white/5 pt-3 mt-3">
+        <button id="nav-calendar" class="w-full flex items-center gap-2.5 px-3 py-1.5 text-xs font-medium rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/30 transition">
+          <span>📅</span>
+          <span>Trail Map Timeline</span>
+        </button>
+        <button id="nav-action-items" class="w-full flex items-center gap-2.5 px-3 py-1.5 text-xs font-medium rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/30 transition">
+          <span>📋</span>
+          <span>Action Items Checklist</span>
+        </button>
+        <button id="nav-settings" class="w-full flex items-center gap-2.5 px-3 py-1.5 text-xs font-medium rounded-lg text-slate-400 hover:text-white hover:bg-slate-800/30 transition">
+          <span>⚙️</span>
+          <span>System Settings</span>
+        </button>
+      </div>
+
+      <!-- Sidebar Footer -->
+      <div class="flex items-center gap-2 border-t border-white/5 pt-3 mt-3 text-[10px] text-slate-500">
+        <div class="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-md shadow-emerald-500/40"></div>
+        <span>Local AI Engine Active</span>
       </div>
     </aside>
 
-    <!-- Main Content Area -->
-    <main class="content-area">
+    <!-- Main Workspace (Center Canvas) -->
+    <main class="flex-grow bg-[#090b0d] h-full overflow-hidden flex flex-col relative">
       
-      <!-- Dashboard Tab -->
-      <section id="tab-dashboard" class="tab-pane active">
-        <div class="dashboard-header">
-          <div>
-            <h1>Live Transcription</h1>
-            <p class="subtitle">100% Offline speech-to-text and intelligence engine</p>
+      <!-- active dashboard notebook tab -->
+      <section id="tab-dashboard" class="tab-pane active flex flex-col h-full w-full overflow-hidden">
+        
+        <!-- Notebook Canvas Top Header Toolbar -->
+        <header class="flex items-center justify-between border-b border-white/5 px-6 py-4 flex-shrink-0">
+          <div class="min-w-0">
+            <h1 id="rec-title" class="text-lg font-bold text-white tracking-tight truncate">New Notes Session</h1>
+            <p id="rec-timer" class="text-xs text-slate-400">Ready to transcribe</p>
           </div>
-          <div class="devices-picker">
-            <span class="device-badge">🎤 Mic: <span id="label-mic-device">Loading...</span></span>
-            <span class="device-badge">🔊 System: <span id="label-sys-device">Loading...</span></span>
+          
+          <!-- Actions & Toolbar Buttons -->
+          <div class="flex items-center gap-2">
+            <!-- Move to Folder Selector -->
+            <select id="select-move-folder" class="bg-slate-900 border border-white/5 rounded-lg px-2.5 py-1.5 text-xs text-slate-300 focus:outline-none focus:border-trail-500/30 hover:bg-slate-800 transition cursor-pointer">
+              <!-- Dynamically populated options -->
+            </select>
+            <!-- Single note Export Obsidian -->
+            <button id="btn-export-obsidian-note" class="px-3 py-1.5 text-xs bg-slate-900 hover:bg-slate-800 border border-white/5 text-slate-300 rounded-lg flex items-center gap-1.5 transition" title="Export this Note to Obsidian Vault">
+              <span>📤</span> Export Vault
+            </button>
+            <!-- Toggle Drawer -->
+            <button id="btn-toggle-live-trail" class="px-3 py-1.5 text-xs bg-slate-900 hover:bg-slate-800 border border-white/5 text-slate-300 rounded-lg flex items-center gap-1.5 transition" title="Toggle Live Trail Transcript Drawer">
+              <span>📜</span> Live Trail
+            </button>
+          </div>
+        </header>
+
+        <!-- Mix-In Controls (Recording pill panel) -->
+        <div class="mx-6 mt-4 p-3 bg-slate-900/40 border border-white/5 rounded-xl flex items-center justify-between flex-shrink-0">
+          <div class="flex items-center gap-3">
+            <div id="rec-indicator" class="w-2.5 h-2.5 rounded-full bg-slate-600"></div>
+            <div class="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+              <span>Mix-In Capture:</span>
+              <span id="label-mic-device" class="text-[10px] text-slate-500">Mic Loading...</span>
+              <span class="text-slate-600">|</span>
+              <span id="label-sys-device" class="text-[10px] text-slate-500">Sys Audio Loading...</span>
+            </div>
+          </div>
+          
+          <div class="flex items-center gap-2">
+            <button id="btn-record-toggle" class="start px-3 py-1.5 text-xs font-semibold rounded-lg bg-trail-500 text-white hover:bg-trail-400 transition flex items-center gap-1.5 moss-glow">
+              <span>⏺</span> New Transcript
+            </button>
+            <button id="btn-pause-toggle" class="pause hidden px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 transition flex items-center gap-1.5">
+              <span>⏸</span> Pause
+            </button>
+            <button id="btn-resume-past" class="resume hidden px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 transition flex items-center gap-1.5">
+              <span>⏯</span> Resume
+            </button>
           </div>
         </div>
 
-        <div class="rec-control-panel card glassmorphic">
-          <div class="rec-status-details">
-            <div id="rec-indicator" class="rec-indicator-static"></div>
-            <div class="rec-info-text">
-              <h3 id="rec-title">Engine Idle</h3>
-              <span id="rec-timer">00:00</span>
-            </div>
-          </div>
-          <div class="rec-actions" style="display: flex; gap: 10px;">
-            <button id="btn-record-toggle" class="btn-record start">
-              <span class="btn-icon">⏺</span> New Transcript
-            </button>
-            <button id="btn-pause-toggle" class="btn-record pause hidden">
-              <span class="btn-icon">⏸</span> Pause
-            </button>
-            <button id="btn-resume-past" class="btn-record resume hidden">
-              <span class="btn-icon">⏯</span> Resume
-            </button>
-          </div>
+        <!-- Tabbed view header for Note Canvas -->
+        <div class="mx-6 mt-4 border-b border-white/5 flex gap-4 text-xs font-medium flex-shrink-0">
+          <button id="btn-show-mix" class="active border-b-2 border-trail-500 text-white pb-2 px-1 focus:outline-none transition">✍️ Manual Jots</button>
+          <button id="btn-show-summary" class="border-b-2 border-transparent text-slate-400 hover:text-slate-200 pb-2 px-1 focus:outline-none transition">💡 Blended Notes</button>
+          <button id="btn-show-actions" class="border-b-2 border-transparent text-slate-400 hover:text-slate-200 pb-2 px-1 focus:outline-none transition">📌 Action Items</button>
         </div>
 
-        <div class="split-view">
-          <!-- Live Transcript Pane -->
-          <div class="transcript-pane card glassmorphic">
-            <div class="pane-header">
-              <h2>Transcript</h2>
-              <span class="transcript-badge">No audio saved in files</span>
-            </div>
-            <div id="transcript-container" class="transcript-container">
-              <div class="transcript-empty-state">
-                <span class="empty-icon">🎧</span>
-                <p>Click "New Transcript" or select a past session from the history sidebar to begin.</p>
-              </div>
-            </div>
-            <!-- Jump to Latest Floating Button -->
-            <button id="btn-jump-latest" class="btn-jump-latest hidden">
-              <span>↓ Jump to latest</span>
-            </button>
-          </div>
-
-          <!-- Summarization Pane -->
-          <div class="analysis-pane card glassmorphic">
-            <div class="pane-header">
-              <h2>AI Summaries</h2>
-              <span class="ai-badge">Offline Model</span>
+        <!-- Notepad Canvas Content -->
+        <div class="flex-grow overflow-y-auto px-6 py-4 flex flex-col">
+          
+          <!-- Manual Jots View (Human in the Loop Canvas) -->
+          <div id="mix-content" class="flex flex-col gap-4 flex-grow">
+            <!-- Raw Notepad Textarea -->
+            <div class="flex flex-col flex-grow min-h-[180px]">
+              <textarea id="textarea-mix-jots" class="notion-textarea flex-grow bg-transparent text-slate-100 placeholder-slate-600 text-[14px] leading-relaxed resize-none w-full py-2" placeholder="Jot down quick thoughts, shorthand, fragments, or talking points. The AI will cross-reference these to enhance details in the Blended Notes..."></textarea>
             </div>
             
-            <div class="analysis-tabs">
-              <button id="btn-show-summary" class="analysis-tab-btn active">Highlights</button>
-              <button id="btn-show-actions" class="analysis-tab-btn">Action Items</button>
-              <button id="btn-show-mix" class="analysis-tab-btn">Mix Notes</button>
+            <!-- Enhance Note Trigger and Preview Divider -->
+            <div class="flex justify-between items-center border-t border-white/5 pt-4">
+              <span class="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">✨ Blended Preview</span>
+              <button id="btn-mix-enhance" class="px-4 py-2 text-xs font-bold rounded-lg bg-trail-500 text-white hover:bg-trail-400 transition flex items-center gap-1.5 shadow-md shadow-trail-500/10">
+                ✨ Mix & Enhance
+              </button>
             </div>
-
-            <div class="analysis-content">
-              <div id="summary-content" class="analysis-text">
-                <p class="placeholder-text">AI Highlights will be generated automatically at the end of the transcription session.</p>
-              </div>
-              <div id="action-content" class="analysis-text hidden">
-                <p class="placeholder-text">Action items will be extracted at the end of the transcription session.</p>
-              </div>
-              <div id="mix-content" class="analysis-text hidden" style="display: flex; flex-direction: column; gap: 12px; height: 100%;">
-                <div class="mix-editor-container" style="display: flex; flex-direction: column; gap: 6px; flex-grow: 1; min-height: 140px;">
-                  <label for="textarea-mix-jots" style="font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Your Rough Jots</label>
-                  <textarea id="textarea-mix-jots" class="input-chat" style="flex-grow: 1; resize: none; font-family: inherit; font-size: 12px; line-height: 1.5; padding: 10px;" placeholder="Jot down quick thoughts, shorthand, or talking points during the meeting..."></textarea>
-                </div>
-                
-                <div style="display: flex; justify-content: flex-end; gap: 8px; align-items: center; margin-top: 4px;">
-                  <button id="btn-mix-enhance" class="btn-primary" style="font-size: 12px; padding: 8px 14px; font-weight: 600; display: flex; align-items: center; gap: 6px;">
-                    ✨ Mix & Enhance
-                  </button>
-                </div>
-                
-                <div class="mix-enhanced-container" style="display: flex; flex-direction: column; gap: 6px; flex-grow: 1; min-height: 140px; border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 12px;">
-                  <label style="font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Enhanced Notes Preview</label>
-                  <div id="mix-enhanced-preview" class="analysis-text" style="flex-grow: 1; overflow-y: auto; padding: 10px; background: rgba(0, 0, 0, 0.15); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 6px; min-height: 120px;">
-                    <p class="placeholder-text">Your enhanced notes will display here after you click "Mix & Enhance".</p>
-                  </div>
-                </div>
-              </div>
+            
+            <!-- Enhanced Preview Area -->
+            <div id="mix-enhanced-preview" class="p-4 rounded-xl border border-white/5 bg-slate-900/10 min-h-[140px] text-xs leading-relaxed text-slate-300 overflow-y-auto">
+              <p class="text-slate-500 italic">Enhanced notes matching transcript context to your anchors will render here after clicking "Mix & Enhance".</p>
             </div>
           </div>
+
+          <!-- Highlights Summary View -->
+          <div id="summary-content" class="hidden flex flex-col gap-2 prose prose-invert text-xs max-w-none text-slate-300">
+            <p class="text-slate-500 italic">No summary generated. Start transcription or select a session first.</p>
+          </div>
+
+          <!-- Action Items View -->
+          <div id="action-content" class="hidden flex flex-col gap-2 prose prose-invert text-xs max-w-none text-slate-300">
+            <p class="text-slate-500 italic">No action items extracted. Start transcription or select a session first.</p>
+          </div>
+
         </div>
       </section>
 
-      <!-- Calendar Tab -->
-      <section id="tab-calendar" class="tab-pane">
-        <div class="tab-header">
-          <h1>Deadline Calendar</h1>
-          <p>Manage date-specific deadlines extracted offline from call context</p>
+      <!-- Calendar Tab (Trail Map) -->
+      <section id="tab-calendar" class="tab-pane flex flex-col h-full w-full p-6 overflow-y-auto">
+        <div class="mb-6">
+          <h1 class="text-lg font-bold text-white tracking-tight">Deadline Calendar</h1>
+          <p class="text-xs text-slate-400">Deadlines extracted from call context</p>
         </div>
         
-        <div class="calendar-controls-bar">
-          <div class="view-selectors">
-            <button id="btn-calendar-grid-view" class="view-btn active">📅 Calendar View</button>
-            <button id="btn-calendar-list-view" class="view-btn">📋 List View</button>
-            <button id="btn-calendar-omitted-view" class="view-btn">🙈 Omitted Deadlines</button>
+        <div class="flex items-center justify-between mb-4 flex-wrap gap-2 bg-slate-900/40 p-3 rounded-lg border border-white/5 text-xs">
+          <div class="flex gap-2">
+            <button id="btn-calendar-grid-view" class="active px-3 py-1.5 rounded-lg bg-trail-500 text-white font-medium">📅 Calendar View</button>
+            <button id="btn-calendar-list-view" class="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white transition">📋 List View</button>
+            <button id="btn-calendar-omitted-view" class="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white transition">🙈 Omitted</button>
           </div>
           
-          <div id="calendar-sort-controls" class="sort-controls hidden">
-            <label for="select-deadline-sort">Sort Order:</label>
-            <select id="select-deadline-sort" class="input-select sort-select">
-              <option value="asc">Ascending (Soonest First)</option>
-              <option value="desc">Descending (Latest First)</option>
+          <div id="calendar-sort-controls" class="hidden flex items-center gap-2">
+            <span class="text-slate-400">Sort:</span>
+            <select id="select-deadline-sort" class="bg-slate-900 border border-white/5 rounded px-2 py-1 text-slate-300 focus:outline-none">
+              <option value="asc">Soonest First</option>
+              <option value="desc">Latest First</option>
             </select>
           </div>
         </div>
 
-        <div class="calendar-layout-container">
-          <!-- Month Grid View -->
-          <div id="calendar-grid-container" class="card glassmorphic calendar-card">
-            <div class="calendar-grid-header">
-              <button id="btn-prev-month" class="month-nav-btn">&lt;</button>
-              <h2 id="calendar-month-year-label">June 2026</h2>
-              <button id="btn-next-month" class="month-nav-btn">&gt;</button>
-            </div>
-            <div class="calendar-month-grid" id="calendar-month-grid">
-              <!-- Grid rendered dynamically -->
-            </div>
+        <!-- Month Grid View -->
+        <div id="calendar-grid-container" class="flex flex-col bg-slate-900/20 border border-white/5 rounded-xl p-4">
+          <div class="flex items-center justify-between mb-4">
+            <button id="btn-prev-month" class="px-2 py-1 text-slate-400 hover:text-white transition">&lt; Previous</button>
+            <h2 id="calendar-month-year-label" class="text-sm font-semibold text-white">June 2026</h2>
+            <button id="btn-next-month" class="px-2 py-1 text-slate-400 hover:text-white transition">Next &gt;</button>
           </div>
+          <div class="grid grid-cols-7 gap-1 border-t border-l border-white/5" id="calendar-month-grid">
+            <!-- Grid rendered dynamically -->
+          </div>
+        </div>
 
-          <!-- List View -->
-          <div id="calendar-list-container" class="card glassmorphic calendar-card hidden">
-            <h2>Upcoming Deadlines List</h2>
-            <div id="calendar-deadlines-list" class="deadlines-list-wrapper">
-              <!-- Dynamically populated -->
-            </div>
-          </div>
+        <!-- List View -->
+        <div id="calendar-list-container" class="hidden flex-col gap-4">
+          <div id="calendar-deadlines-list" class="flex flex-col gap-2"></div>
+        </div>
 
-          <!-- Omitted Deadlines View -->
-          <div id="calendar-omitted-container" class="card glassmorphic calendar-card hidden">
-            <h2>Omitted Deadlines</h2>
-            <div id="calendar-omitted-list" class="deadlines-list-wrapper">
-              <!-- Dynamically populated -->
-            </div>
-          </div>
+        <!-- Omitted Deadlines View -->
+        <div id="calendar-omitted-container" class="hidden flex-col gap-4">
+          <div id="calendar-omitted-list" class="flex flex-col gap-2"></div>
         </div>
       </section>
 
       <!-- Action Items Tab -->
-      <section id="tab-action-items" class="tab-pane">
-        <div class="tab-header">
-          <h1>Action Items Checklist</h1>
-          <p>Actionable next steps extracted from your transcriptions with full conversation context</p>
+      <section id="tab-action-items" class="tab-pane flex flex-col h-full w-full p-6 overflow-y-auto">
+        <div class="mb-6">
+          <h1 class="text-lg font-bold text-white tracking-tight">Action Items Checklist</h1>
+          <p class="text-xs text-slate-400">Extracted next steps from meeting transcripts sorted by owner</p>
         </div>
-        <div class="action-items-container">
-          <div class="card glassmorphic action-items-card">
-            <h2>📋 Extracted Action Items</h2>
-            <div id="action-items-list" class="action-checklist-wrapper">
-              <!-- Dynamically populated -->
-            </div>
-          </div>
+        
+        <div class="bg-slate-900/20 border border-white/5 rounded-xl p-5">
+          <div id="action-items-list" class="flex flex-col gap-3"></div>
         </div>
       </section>
 
       <!-- History Tab -->
-      <section id="tab-history" class="tab-pane">
-        <div class="tab-header">
-          <h1>Call History</h1>
-          <p>Review and search past local transcriptions</p>
+      <section id="tab-history" class="tab-pane flex flex-col h-full w-full p-6 overflow-y-auto">
+        <div class="mb-6">
+          <h1 class="text-lg font-bold text-white tracking-tight">Call History Grid</h1>
+          <p class="text-xs text-slate-400">Past local transcript archives</p>
         </div>
-        <div class="history-grid" id="history-grid">
-          <!-- Dynamically populated -->
+        <div id="history-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <!-- Dynamically populated grid -->
         </div>
       </section>
 
       <!-- Settings Tab -->
-      <section id="tab-settings" class="tab-pane">
-        <div class="tab-header">
-          <h1>Settings</h1>
-          <p>Configure Offline Models and Privacy Credentials</p>
+      <section id="tab-settings" class="tab-pane flex flex-col h-full w-full p-6 overflow-y-auto">
+        <div class="mb-6">
+          <h1 class="text-lg font-bold text-white tracking-tight">System Settings</h1>
+          <p class="text-xs text-slate-400">Configure Offline AI engines and local folder options</p>
         </div>
         
-        <div class="settings-grid">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 pb-8">
+          
           <!-- Hardware Recommendations -->
-          <div class="card glassmorphic settings-card">
-            <h2>Hardware Profiler</h2>
-            <div class="hardware-info-list">
-              <div class="hw-item"><strong>CPU:</strong> <span id="hw-cpu">Loading...</span></div>
-              <div class="hw-item"><strong>Memory:</strong> <span id="hw-ram">Loading...</span></div>
-              <div class="hw-item"><strong>GPU:</strong> <span id="hw-gpu">Loading...</span></div>
-              <div class="hw-item highlight">
-                <strong>Recommended Model:</strong> 
-                <span id="hw-recommendation" class="badge-rec">Analyzing...</span>
+          <div class="bg-slate-900/20 border border-white/5 rounded-xl p-5 flex flex-col gap-3">
+            <h2 class="text-sm font-semibold text-white">Hardware Profiler</h2>
+            <div class="flex flex-col gap-1.5 text-xs text-slate-400">
+              <div class="flex justify-between"><span>CPU:</span> <span id="hw-cpu" class="text-white font-medium">Loading...</span></div>
+              <div class="flex justify-between"><span>RAM:</span> <span id="hw-ram" class="text-white font-medium">Loading...</span></div>
+              <div class="flex justify-between"><span>GPU:</span> <span id="hw-gpu" class="text-white font-medium">Loading...</span></div>
+              <div class="flex justify-between items-center mt-2 pt-2 border-t border-white/5">
+                <span>Recommended Whisper:</span>
+                <span id="hw-recommendation" class="px-2 py-0.5 rounded text-[10px] font-bold bg-trail-500/10 text-trail-400">Analyzing...</span>
               </div>
             </div>
           </div>
 
           <!-- Model Manager -->
-          <div class="card glassmorphic settings-card">
-            <h2>Local AI Models</h2>
+          <div class="bg-slate-900/20 border border-white/5 rounded-xl p-5 flex flex-col gap-3">
+            <h2 class="text-sm font-semibold text-white">Local AI Models</h2>
             
-            <div class="settings-field">
-              <label for="select-whisper-model">Whisper Transcription Model</label>
-              <select id="select-whisper-model" class="input-select">
-                <option value="ggml-tiny.bin">Whisper Tiny (75 MB - Ultra Fast)</option>
+            <div class="flex flex-col gap-1.5">
+              <label for="select-whisper-model" class="text-[11px] font-semibold text-slate-400">Transcription Model</label>
+              <select id="select-whisper-model" class="w-full text-xs bg-slate-900 border border-white/5 rounded-lg p-2 text-white focus:outline-none">
+                <option value="ggml-tiny.bin">Whisper Tiny (75 MB - Fast)</option>
                 <option value="ggml-base.bin" selected>Whisper Base (140 MB - Balanced)</option>
+                <option value="ggml-large-v3-turbo.bin">Whisper Large v3 Turbo (800 MB - Highly Accurate)</option>
               </select>
-              <p class="field-desc">Smaller models run faster; larger models offer better accuracy.</p>
             </div>
 
-            <div class="settings-field">
-              <label for="select-llm-model">Ollama Summarization Model</label>
-              <select id="select-llm-model" class="input-select">
-                <!-- Dynamically loaded from Ollama tags -->
+            <div class="flex flex-col gap-1.5">
+              <label for="select-llm-model" class="text-[11px] font-semibold text-slate-400">Ollama LLM Model</label>
+              <select id="select-llm-model" class="w-full text-xs bg-slate-900 border border-white/5 rounded-lg p-2 text-white focus:outline-none">
+                <!-- Populated dynamically -->
               </select>
-              <p class="field-desc">Choose which local Ollama model to use for summarization and chat.</p>
             </div>
 
-            <div class="settings-actions">
-              <button id="btn-download-whisper" class="btn-secondary">Download Selected Whisper Model</button>
-            </div>
+            <button id="btn-download-whisper" class="mt-2 w-full py-2 text-xs font-semibold bg-slate-800 hover:bg-slate-700 border border-white/5 text-slate-200 rounded-lg transition">
+              Download Selected Whisper Model
+            </button>
             
             <!-- Download progress bar -->
-            <div id="download-progress-container" class="download-progress-container hidden">
-              <div class="progress-bar-label">Downloading Model: <span id="download-progress-percent">0%</span></div>
-              <div class="progress-bar-bg">
-                <div id="download-progress-fill" class="progress-bar-fill"></div>
+            <div id="download-progress-container" class="hidden flex flex-col gap-1.5 mt-2 bg-slate-900 p-2.5 rounded-lg border border-white/5">
+              <div class="flex justify-between text-[10px] text-slate-400 font-semibold">
+                <span>Downloading:</span>
+                <span id="download-progress-percent">0%</span>
               </div>
-              <pre id="download-progress-log" class="download-log"></pre>
+              <div class="w-full h-1 bg-slate-800 rounded overflow-hidden">
+                <div id="download-progress-fill" class="h-full bg-trail-500" style="width: 0%;"></div>
+              </div>
+              <pre id="download-progress-log" class="text-[9px] text-slate-500 overflow-x-auto whitespace-pre-line"></pre>
             </div>
           </div>
 
           <!-- Audio Devices & Routing -->
-          <div class="card glassmorphic settings-card">
-            <h2>Audio Devices & Routing</h2>
-            <div class="settings-field">
-              <label for="select-mic-device">Microphone (Input Device)</label>
-              <select id="select-mic-device" class="input-select">
-                <option value="default" selected>Default Active Microphone</option>
+          <div class="bg-slate-900/20 border border-white/5 rounded-xl p-5 flex flex-col gap-3">
+            <h2 class="text-sm font-semibold text-white">Audio Capture & VAD</h2>
+            
+            <div class="flex flex-col gap-1.5">
+              <label for="select-mic-device" class="text-[11px] font-semibold text-slate-400">Microphone (Input Device)</label>
+              <select id="select-mic-device" class="w-full text-xs bg-slate-900 border border-white/5 rounded-lg p-2 text-white focus:outline-none">
+                <option value="default">Default Active Microphone</option>
               </select>
-              <p class="field-desc">Select which local physical microphone to capture.</p>
             </div>
 
-            <div class="settings-field">
-              <label for="select-sys-device">System Audio (Output Device)</label>
-              <select id="select-sys-device" class="input-select">
-                <option value="default" selected>Default Active Output Monitor</option>
+            <div class="flex flex-col gap-1.5">
+              <label for="select-sys-device" class="text-[11px] font-semibold text-slate-400">System Audio (Loopback Monitor)</label>
+              <select id="select-sys-device" class="w-full text-xs bg-slate-900 border border-white/5 rounded-lg p-2 text-white focus:outline-none">
+                <option value="default">Default Active Monitor Device</option>
               </select>
-              <p class="field-desc">Select which system device monitor to capture inbound calls or desktop audio.</p>
             </div>
 
-            <div class="settings-field" style="margin-top: 10px;">
-              <label class="checkbox-container">
-                <input type="checkbox" id="check-noise-cancel" checked>
-                <span class="checkmark"></span>
-                Enable acoustic noise/echo cancellation
-              </label>
-              <p class="field-desc" style="margin-left: 24px;">Automatically filters system speaker playback from being registered by your microphone to prevent transcribing desktop audio twice.</p>
+            <label class="flex items-center gap-2 cursor-pointer mt-2 text-xs text-slate-300">
+              <input type="checkbox" id="check-noise-cancel" checked class="rounded border-white/5 bg-slate-900 text-trail-500 focus:ring-0">
+              <span>Enable acoustic noise cancellation</span>
+            </label>
+          </div>
+
+          <!-- User Profile Settings -->
+          <div class="bg-slate-900/20 border border-white/5 rounded-xl p-5 flex flex-col gap-3">
+            <h2 class="text-sm font-semibold text-white">User Offline Profile</h2>
+            
+            <div class="flex flex-col gap-1.5">
+              <label for="input-user-name" class="text-[11px] font-semibold text-slate-400">Your Name</label>
+              <input type="text" id="input-user-name" class="w-full text-xs bg-slate-900 border border-white/5 focus:border-trail-500/30 rounded-lg p-2 text-white focus:outline-none placeholder-slate-600 transition" placeholder="e.g. John Doe">
+              <p class="text-[10px] text-slate-500 mt-1 leading-relaxed">Solely processed locally by your offline Ollama model to accurately map speaker turns in transcripts.</p>
             </div>
           </div>
 
-          <!-- User Profile -->
-          <div class="card glassmorphic settings-card">
-            <h2>User Profile</h2>
-            <div class="settings-field">
-              <label for="input-user-name">Your Name</label>
-              <input type="text" id="input-user-name" class="input-text" placeholder="Enter your name">
-              <p class="field-desc">Your name is saved 100% offline on this machine and is never sent to external servers. It is solely used by the local LLM to understand context when labeling other speakers in transcripts.</p>
-            </div>
+          <!-- Deadlines Timeline (Trail Map Settings) -->
+          <div class="bg-slate-900/20 border border-white/5 rounded-xl p-5 flex flex-col gap-3">
+            <h2 class="text-sm font-semibold text-white">Timeline & Deadlines</h2>
+            
+            <label class="flex items-center gap-2 cursor-pointer text-xs text-slate-300">
+              <input type="checkbox" id="check-color-deadlines" class="rounded border-white/5 bg-slate-900 text-trail-500 focus:ring-0">
+              <span>Color-code deadlines as dates approach</span>
+            </label>
+            <p class="text-[10px] text-slate-500 leading-relaxed">Color-codes calendar milestones depending on urgency (Critical, Overdue, Warning, Safe).</p>
           </div>
 
-          <!-- Timeline & Calendar -->
-          <div class="card glassmorphic settings-card">
-            <h2>Timeline & Calendar</h2>
-            <div class="settings-field">
-              <label class="checkbox-container">
-                <input type="checkbox" id="check-color-deadlines">
-                <span class="checkmark"></span>
-                Color-code upcoming deadlines as dates approach
-              </label>
-              <p class="field-desc" style="margin-left: 24px;">Visually highlight deadlines (overdue in red, critical in orange, warnings in yellow, safe in green).</p>
-            </div>
-          </div>
-
-          <!-- Transcript Storage -->
-          <div class="card glassmorphic settings-card">
-            <h2>Transcript Storage</h2>
-            <div class="settings-field">
-              <label for="input-storage-path">Save Location</label>
-              <div style="display: flex; gap: 8px;">
-                <input type="text" id="input-storage-path" class="input-text" readonly placeholder="Default directory" style="flex: 1;">
-                <button id="btn-browse-storage" class="btn-secondary" style="white-space: nowrap; padding: 8px 14px;">Browse...</button>
+          <!-- Transcript Storage Path Settings -->
+          <div class="bg-slate-900/20 border border-white/5 rounded-xl p-5 flex flex-col gap-3">
+            <h2 class="text-sm font-semibold text-white">Transcript Storage Path</h2>
+            
+            <div class="flex flex-col gap-1.5">
+              <label for="input-storage-path" class="text-[11px] font-semibold text-slate-400">Custom Storage Folder</label>
+              <div class="flex gap-2">
+                <input type="text" id="input-storage-path" class="flex-grow w-full text-xs bg-slate-900 border border-white/5 rounded-lg p-2 text-slate-400 focus:outline-none" readonly placeholder="Default (~/.local/share/trailmix/)">
+                <button id="btn-browse-storage" class="px-3 text-xs bg-slate-800 hover:bg-slate-700 border border-white/5 text-slate-200 rounded-lg transition font-medium">Browse...</button>
               </div>
-              <p class="field-desc">Select the directory where TrailMix will save your `.trail` transcript files.</p>
             </div>
           </div>
 
           <!-- Security and Encryption -->
-          <div class="card glassmorphic settings-card">
-            <h2>Security & Encryption</h2>
-            <div class="settings-field">
-              <label class="checkbox-container">
-                <input type="checkbox" id="check-encrypt-default">
-                <span class="checkmark"></span>
-                Encrypt new calls by default
-              </label>
+          <div class="bg-slate-900/20 border border-white/5 rounded-xl p-5 flex flex-col gap-3">
+            <h2 class="text-sm font-semibold text-white">Security & Passphrase</h2>
+            
+            <label class="flex items-center gap-2 cursor-pointer text-xs text-slate-300">
+              <input type="checkbox" id="check-encrypt-default" class="rounded border-white/5 bg-slate-900 text-trail-500 focus:ring-0">
+              <span>Encrypt new calls by default</span>
+            </label>
+
+            <div class="flex flex-col gap-1.5">
+              <label for="input-encrypt-password" class="text-[11px] font-semibold text-slate-400">Default Shareable Encryption Password</label>
+              <input type="password" id="input-encrypt-password" class="w-full text-xs bg-slate-900 border border-white/5 focus:border-trail-500/30 rounded-lg p-2 text-white focus:outline-none transition" placeholder="Passphrase for AES-256 encryption">
             </div>
-            <div class="settings-field">
-              <label for="input-encrypt-password">Encryption Password / Shareable Key</label>
-              <input type="password" id="input-encrypt-password" class="input-text" placeholder="Enter security passphrase">
-              <p class="field-desc">This password will derive an AES-256 key to secure calls. Share this key to let recipients decrypt the call file.</p>
-            </div>
-            <button id="btn-save-settings" class="btn-primary" style="margin-top: 15px; width: 100%;">Save Settings</button>
+
+            <button id="btn-save-settings" class="mt-2 w-full py-2.5 text-xs font-semibold bg-trail-500 text-white hover:bg-trail-400 rounded-lg transition moss-glow">
+              Save Settings
+            </button>
           </div>
+
         </div>
       </section>
 
     </main>
 
-    <!-- Floating AI Chat Toggle Button (only visible when chat panel is closed) -->
-    <button id="btn-chat-sidebar-toggle" class="chat-sidebar-toggle-btn" title="Open AI Assistant">
-      <span class="chat-toggle-icon">💬</span> Ask AI
-    </button>
-
-    <!-- AI Chat Agent Widget (Collapsible Drawer) -->
-    <div id="chat-agent-widget" class="chat-widget closed">
-      <div id="chat-header" class="chat-header">
-        <div class="chat-title">
-          <span class="chat-icon">💬</span>
-          <div>
-            <h4>TrailMix AI Assistant</h4>
-            <span>Ask anything about the active call</span>
-          </div>
+    <!-- Collapsible Live Trail Drawer (Right Column) -->
+    <div id="live-trail-drawer" class="w-96 border-l border-white/5 bg-[#0e1115] flex flex-col flex-shrink-0 h-full p-4 hidden">
+      <div class="flex items-center justify-between pb-3 border-b border-white/5 mb-4">
+        <div>
+          <h2 class="text-sm font-bold text-white flex items-center gap-1.5">
+            <span>📜</span> Live Trail Transcript
+          </h2>
+          <p class="text-[10px] text-slate-500">Real-time stereo speaker tracks</p>
         </div>
-        <button id="btn-chat-toggle" class="chat-toggle-btn">▲</button>
+        <button id="btn-close-live-trail" class="text-slate-500 hover:text-white text-xs">❌ Close</button>
       </div>
 
-      <div class="chat-body">
-        <div class="chat-shortcuts">
-          <button id="btn-chat-miss" class="btn-shortcut">⏱️ What'd I miss?</button>
-          <button id="btn-chat-action" class="btn-shortcut">📋 Action items?</button>
+      <!-- Transcript Container -->
+      <div class="flex-grow overflow-y-auto flex flex-col gap-3 pr-1 relative" id="transcript-container">
+        <!-- Transcript segments populated dynamically -->
+        <div class="text-center text-xs text-slate-500 py-16">
+          <span>🎧 Waiting for recording or past session load...</span>
+        </div>
+      </div>
+
+      <!-- Float Jump Button -->
+      <button id="btn-jump-latest" class="hidden absolute bottom-6 right-8 px-3 py-1.5 rounded-full bg-trail-500 text-white text-xs font-semibold hover:bg-trail-400 shadow-lg transition duration-200">
+        ↓ Jump to latest
+      </button>
+    </div>
+
+    <!-- AI Chat Agent Sidebar Panel (Right Collapsible Drawer) -->
+    <div id="chat-agent-widget" class="w-80 border-l border-white/5 bg-[#0e1115] flex flex-col flex-shrink-0 h-full p-4 hidden">
+      <div class="flex items-center justify-between pb-3 border-b border-white/5 mb-3">
+        <div class="flex items-center gap-2">
+          <span class="text-xs">💬</span>
+          <h4 class="text-xs font-bold text-white">AI Assistant</h4>
+        </div>
+        <button id="btn-chat-toggle" class="text-slate-500 hover:text-white text-xs" title="Collapse chat">✕</button>
+      </div>
+
+      <div class="flex-grow flex flex-col overflow-hidden">
+        <!-- Shortcuts -->
+        <div class="flex gap-1 mb-2 flex-wrap">
+          <button id="btn-chat-miss" class="px-2 py-1 text-[9px] font-semibold bg-slate-900 border border-white/5 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition">What'd I miss?</button>
+          <button id="btn-chat-action" class="px-2 py-1 text-[9px] font-semibold bg-slate-900 border border-white/5 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition">Checklist?</button>
         </div>
         
-        <div id="chat-messages" class="chat-messages">
-          <div class="msg system">
-            Hi! I am your offline assistant. Ask me questions like "What was the conclusion on the budget?" or click the shortcuts above to query the transcript.
+        <!-- Chat history messages -->
+        <div id="chat-messages" class="flex-grow overflow-y-auto flex flex-col gap-2.5 mb-2 pr-1 text-xs">
+          <div class="msg system bg-slate-900/40 p-2.5 rounded-lg border border-white/5 text-slate-400 leading-relaxed">
+            Hi! I am your offline companion. You can ask me to compile summaries or search topics across all your preserves.
           </div>
         </div>
       </div>
 
-      <div class="chat-footer">
-        <input type="text" id="input-chat-query" placeholder="Ask a question..." class="input-chat">
-        <button id="btn-chat-send" class="btn-chat-send">Send</button>
+      <!-- Chat input footer -->
+      <div class="flex gap-1.5 border-t border-white/5 pt-3">
+        <input type="text" id="input-chat-query" placeholder="Ask questions about your notes..." class="flex-grow text-xs bg-slate-900 border border-white/5 rounded-lg p-2 text-white placeholder-slate-600 focus:outline-none">
+        <button id="btn-chat-send" class="px-3 py-2 text-xs font-semibold bg-trail-500 text-white rounded-lg hover:bg-trail-400 transition">Send</button>
       </div>
     </div>
+
+    <!-- Floating AI Chat button (displays when chat sidebar is closed) -->
+    <button id="btn-chat-sidebar-toggle" class="absolute bottom-6 right-6 p-3 rounded-full bg-trail-500 text-white hover:bg-trail-400 transition shadow-lg flex items-center gap-1.5 text-xs font-semibold z-40 moss-glow">
+      <span>💬</span> Ask AI
+    </button>
 
   </div>
 
   <!-- Password Entry Modal -->
-  <div id="password-modal" class="modal hidden">
-    <div class="modal-content glassmorphic">
-      <h2>Locked Session</h2>
-      <p>This TrailMix call session is encrypted. Enter the password or shareable security key to decrypt it.</p>
+  <div id="password-modal" class="modal hidden fixed inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-[3000]">
+    <div class="modal-content w-96 p-6 rounded-xl border border-trail-500/20 bg-[#12161c] shadow-2xl flex flex-col gap-4">
+      <h2 class="text-sm font-bold text-white">🔒 Locked Session</h2>
+      <p class="text-xs text-slate-400 leading-relaxed">This TrailMix note file is encrypted. Enter the shareable decryption key to read it.</p>
       
-      <div class="modal-field">
-        <input type="password" id="modal-password-input" class="input-text" placeholder="Enter decryption key">
-      </div>
+      <input type="password" id="modal-password-input" class="w-full text-xs bg-slate-950 border border-white/5 rounded-lg p-2.5 text-white focus:outline-none focus:border-trail-500/30" placeholder="Passphrase">
       
-      <div id="modal-error-message" class="modal-error hidden">
+      <div id="modal-error-message" class="modal-error hidden text-xs text-red-400 font-semibold">
         Incorrect passphrase. Please try again.
       </div>
       
-      <div class="modal-actions">
-        <button id="btn-modal-cancel" class="btn-secondary">Cancel</button>
-        <button id="btn-modal-decrypt" class="btn-primary">Decrypt File</button>
+      <div class="flex justify-end gap-2 mt-2">
+        <button id="btn-modal-cancel" class="px-3 py-2 text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition">Cancel</button>
+        <button id="btn-modal-decrypt" class="px-3 py-2 text-xs font-semibold bg-trail-500 text-white hover:bg-trail-400 rounded-lg transition">Decrypt File</button>
       </div>
     </div>
   </div>

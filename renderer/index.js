@@ -4,6 +4,7 @@ const isMiniMode = urlParams.get('mode') === 'mini';
 
 // Active Session Cache
 let activeSession = null;
+let activeFolderId = 'all';
 let recordingInterval = null;
 let recordingSeconds = 0;
 
@@ -384,8 +385,12 @@ if (isMiniMode) {
   ];
 
   function getSpeakerColor(speakerName) {
-    if (speakerName.toLowerCase() === 'you') {
+    const nameLower = speakerName.toLowerCase();
+    if (nameLower === 'you' || nameLower === 'me') {
       return 'var(--primary)';
+    }
+    if (nameLower === 'speaker 1' || nameLower === 'them') {
+      return '#3d8bff';
     }
     if (!speakerColors[speakerName]) {
       const index = (Object.keys(speakerColors).length % (colorPalette.length - 1)) + 1;
@@ -398,6 +403,9 @@ if (isMiniMode) {
     const lastLineDiv = transcriptContainer.lastElementChild;
     let merged = false;
     
+    const isMe = segment.speaker.toLowerCase() === 'you' || segment.speaker.toLowerCase() === 'me';
+    const displaySpeakerName = isMe ? 'Me' : (segment.speaker.toLowerCase() === 'speaker 1' ? 'Them' : segment.speaker);
+    
     if (lastLineDiv && lastLineDiv.classList.contains('transcript-line')) {
       const speakerSpan = lastLineDiv.querySelector('.line-speaker');
       const textDiv = lastLineDiv.querySelector('.line-text');
@@ -407,7 +415,7 @@ if (isMiniMode) {
         const lastTimestampMs = parseInt(lastLineDiv.getAttribute('data-timestamp-ms') || '0', 10);
         const timeDiffMs = segment.timestampMs - lastTimestampMs;
         
-        if (lastSpeaker.toLowerCase() === segment.speaker.toLowerCase() && timeDiffMs < 8000) {
+        if (lastSpeaker.toLowerCase() === displaySpeakerName.toLowerCase() && timeDiffMs < 8000) {
           textDiv.textContent += ' ' + segment.text;
           lastLineDiv.setAttribute('data-timestamp-ms', segment.timestampMs);
           lastLineDiv.classList.add(`subline-${segment.id}`);
@@ -421,15 +429,14 @@ if (isMiniMode) {
       lineDiv.id = `line-${segment.id}`;
       lineDiv.setAttribute('data-timestamp-ms', segment.timestampMs);
       
-      const isYou = segment.speaker.toLowerCase() === 'you';
-      lineDiv.className = `transcript-line ${isYou ? 'align-left' : 'align-right'}`;
+      lineDiv.className = `transcript-line ${isMe ? 'align-left' : 'align-right'}`;
       
-      const speakerClass = isYou ? 'you' : 'inbound';
-      const speakerColor = getSpeakerColor(segment.speaker);
+      const speakerClass = isMe ? 'you' : 'inbound';
+      const speakerColor = getSpeakerColor(displaySpeakerName);
       
       lineDiv.innerHTML = `
         <div class="line-meta">
-          <span class="line-speaker ${speakerClass}" style="color: ${speakerColor}">${segment.speaker}</span>
+          <span class="line-speaker ${speakerClass}" style="color: ${speakerColor}">${displaySpeakerName}</span>
           <span class="line-time">${segment.timestamp}</span>
         </div>
         <div class="line-text">${segment.text}</div>
@@ -819,6 +826,11 @@ if (isMiniMode) {
       
       let filteredCalls = calls;
       
+      // Filter by active folder
+      if (activeFolderId && activeFolderId !== 'all') {
+        filteredCalls = filteredCalls.filter(c => c.folder_id === activeFolderId);
+      }
+      
       // Sort calls
       if (historySortOrder === 'date-newest') {
         filteredCalls.sort((a, b) => (b.mtimeMs || 0) - (a.mtimeMs || 0));
@@ -829,12 +841,13 @@ if (isMiniMode) {
       } else if (historySortOrder === 'title-desc') {
         filteredCalls.sort((a, b) => (b.title || '').localeCompare(a.title || ''));
       }
+      
       if (searchTerm) {
         if (searchTerm.startsWith('#')) {
           const targetTag = searchTerm.substring(1);
-          filteredCalls = calls.filter(c => c.tags && c.tags.some(t => t.toLowerCase() === targetTag));
+          filteredCalls = filteredCalls.filter(c => c.tags && c.tags.some(t => t.toLowerCase() === targetTag));
         } else {
-          filteredCalls = calls.filter(c => 
+          filteredCalls = filteredCalls.filter(c => 
             (c.title && c.title.toLowerCase().includes(searchTerm)) ||
             (c.summary && c.summary.toLowerCase().includes(searchTerm)) ||
             (c.description && c.description.toLowerCase().includes(searchTerm)) ||
@@ -844,26 +857,28 @@ if (isMiniMode) {
       }
       
       if (filteredCalls.length === 0) {
-        sidebarCallsList.innerHTML = '<div class="empty-state">No matching calls.</div>';
-        historyGrid.innerHTML = '<div class="empty-state">No matching calls.</div>';
+        sidebarCallsList.innerHTML = '<div class="text-center text-xs text-slate-500 py-6">No matching calls.</div>';
+        historyGrid.innerHTML = '<div class="text-center text-xs text-slate-500 py-6">No matching calls.</div>';
         return;
       }
       
       filteredCalls.forEach((call) => {
         // Sidebar list
         const item = document.createElement('div');
-        item.className = 'call-list-item';
         
         // Highlight active past transcript
         const isSelected = activeSession && activeSession.id === call.id;
-        if (isSelected) {
-          item.classList.add('selected');
-        }
+        item.className = `group flex items-start gap-2.5 p-3 rounded-lg border cursor-pointer transition ${
+          isSelected 
+            ? 'bg-trail-500/10 border-trail-500/20 text-white moss-glow' 
+            : 'border-white/5 bg-slate-900/10 hover:bg-slate-900/30 text-slate-300'
+        }`;
+        
         item.setAttribute('data-callid', call.id);
         
         let checkboxHtml = '';
         if (isMultiSelectMode) {
-          checkboxHtml = `<input type="checkbox" class="call-item-checkbox" data-filepath="${call.filePath}">`;
+          checkboxHtml = `<input type="checkbox" class="call-item-checkbox mt-1 rounded bg-slate-950 border-white/10 text-trail-500 focus:ring-0" data-filepath="${call.filePath}">`;
         }
         
         const tagline = call.title || 'Meeting Session';
@@ -875,14 +890,14 @@ if (isMiniMode) {
         const suggestedTags = call.suggestedTags || [];
         
         if (tags.length > 0 || suggestedTags.length > 0) {
-          tagsHtml = `<div class="call-tags-container" style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px;">`;
+          tagsHtml = `<div class="call-tags-container flex flex-wrap gap-1 mt-2">`;
           tags.forEach(tag => {
-            tagsHtml += `<span class="tag-pill" style="background: rgba(164,198,57,0.12); border: 1px solid rgba(164,198,57,0.25); color: var(--primary); border-radius: 4px; padding: 1px 5px; font-size: 9px; display: inline-flex; align-items: center;">#${tag}</span>`;
+            tagsHtml += `<span class="tag-pill bg-trail-500/10 border border-trail-500/20 text-trail-400 rounded px-1.5 py-0.5 text-[9px] font-medium">#${tag}</span>`;
           });
           
           if (!isMultiSelectMode) {
             suggestedTags.forEach(tag => {
-              tagsHtml += `<span class="suggested-tag-pill" data-tag="${tag}" style="background: rgba(255,255,255,0.03); border: 1px dashed rgba(255,255,255,0.25); color: var(--text-muted); border-radius: 4px; padding: 1px 5px; font-size: 9px; display: inline-flex; align-items: center; cursor: pointer; transition: all 0.2s;">+ ${tag}</span>`;
+              tagsHtml += `<span class="suggested-tag-pill bg-white/5 border border-dashed border-white/20 text-slate-400 hover:text-white rounded px-1.5 py-0.5 text-[9px] font-medium cursor-pointer transition" data-tag="${tag}">+ ${tag}</span>`;
             });
           }
           tagsHtml += `</div>`;
@@ -890,9 +905,12 @@ if (isMiniMode) {
         
         item.innerHTML = `
           ${checkboxHtml}
-          <div class="call-item-details" style="flex: 1; cursor: pointer;">
-            <div class="call-item-title">${call.encrypted ? '🔒 ' : ''}${tagline}</div>
-            <div class="call-item-date">${call.date}</div>
+          <div class="call-item-details flex-1 min-w-0 cursor-pointer">
+            <div class="flex items-center justify-between">
+              <div class="call-item-title font-semibold text-xs truncate group-hover:text-white transition">${call.encrypted ? '🔒 ' : ''}${tagline}</div>
+            </div>
+            <div class="call-item-date text-[9px] text-slate-500 mt-0.5 font-medium">${call.date}</div>
+            <div class="call-item-desc text-[10px] text-slate-400 mt-1 line-clamp-2 leading-relaxed break-words">${description}</div>
             ${tagsHtml}
           </div>
         `;
@@ -941,7 +959,6 @@ if (isMiniMode) {
             globalTooltip.style.top = `${top}px`;
             globalTooltip.style.transform = 'translateY(-50%)';
             globalTooltip.classList.remove('hidden');
-            // Force reflow
             globalTooltip.offsetHeight;
             globalTooltip.classList.add('visible');
           }, 1000);
@@ -1014,17 +1031,17 @@ if (isMiniMode) {
         
         sidebarCallsList.appendChild(item);
 
-        // History tab grid (only render if we are in show all mode to avoid confusing grid results)
+        // History tab grid
         if (!relatedCallsList) {
           const card = document.createElement('div');
-          card.className = 'history-card glassmorphic';
+          card.className = 'history-card glassmorphic p-4 rounded-xl border border-white/5 bg-slate-900/20 hover:bg-slate-900/40 hover:border-trail-500/20 cursor-pointer transition flex flex-col gap-2';
           card.innerHTML = `
-            <div class="history-card-header">
-              <h3>${call.title}</h3>
-              ${call.encrypted ? '<span class="lock-badge">🔒 Encrypted</span>' : ''}
+            <div class="flex justify-between items-start gap-2">
+              <h3 class="text-sm font-bold text-white leading-tight">${call.title}</h3>
+              ${call.encrypted ? '<span class="px-2 py-0.5 rounded text-[9px] font-bold bg-amber-500/10 text-amber-400">🔒 Locked</span>' : ''}
             </div>
-            <div class="call-item-date">${call.date}</div>
-            <p class="history-card-desc">${call.encrypted ? 'This session is encrypted. Enter credentials to unlock.' : (call.summary || 'No summary available.')}</p>
+            <div class="text-[10px] text-slate-500 font-semibold">${call.date}</div>
+            <p class="text-xs text-slate-400 line-clamp-3 leading-relaxed">${call.encrypted ? 'Encrypted session' : (call.summary || 'No summary available.')}</p>
           `;
           card.addEventListener('click', () => {
             tabs.forEach(t => {
@@ -1045,7 +1062,186 @@ if (isMiniMode) {
     });
   }
 
+  // Folders Rendering and Management (v0.2)
+  function renderFolders() {
+    window.api.getFolders().then((folders) => {
+      const folderList = document.getElementById('sidebar-folders-list');
+      if (!folderList) return;
+      folderList.innerHTML = '';
+
+      // All Preserves default item
+      const allItem = document.createElement('div');
+      allItem.className = `folder-list-item flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer transition text-xs ${
+        activeFolderId === 'all' 
+          ? 'bg-trail-500/10 text-trail-400 font-semibold border border-trail-500/20' 
+          : 'text-slate-400 border border-transparent hover:bg-slate-800/30 hover:text-slate-200'
+      }`;
+      allItem.innerHTML = `
+        <div class="flex items-center gap-2">
+          <span>📂</span>
+          <span>All Preserves</span>
+        </div>
+      `;
+      allItem.addEventListener('click', () => {
+        activeFolderId = 'all';
+        renderFolders();
+        loadHistoryList();
+      });
+      folderList.appendChild(allItem);
+
+      // Render database folders
+      folders.forEach(folder => {
+        const item = document.createElement('div');
+        const isSelected = activeFolderId === folder.id;
+        item.className = `folder-list-item flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer transition text-xs ${
+          isSelected 
+            ? 'bg-trail-500/10 text-trail-400 font-semibold border border-trail-500/20' 
+            : 'text-slate-400 border border-transparent hover:bg-slate-800/30 hover:text-slate-200'
+        }`;
+        
+        item.innerHTML = `
+          <div class="flex items-center gap-2 flex-grow truncate">
+            <span>📁</span>
+            <span class="truncate">${folder.name}</span>
+          </div>
+          <div class="flex items-center gap-1.5 folder-actions opacity-60 hover:opacity-100 transition">
+            <button class="btn-folder-export p-0.5 text-slate-400 hover:text-trail-400 transition" title="Export Folder to Obsidian" data-folderid="${folder.id}">📤</button>
+            <button class="btn-folder-delete p-0.5 text-slate-400 hover:text-red-400 transition" title="Delete Folder" data-folderid="${folder.id}">🗑️</button>
+          </div>
+        `;
+        
+        item.addEventListener('click', (e) => {
+          if (e.target.closest('.folder-actions')) return;
+          activeFolderId = folder.id;
+          renderFolders();
+          loadHistoryList();
+        });
+
+        // Delete Folder
+        item.querySelector('.btn-folder-delete').addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (confirm(`Delete folder "${folder.name}"? Notes inside will not be deleted but will become uncategorized.`)) {
+            window.api.deleteFolder(folder.id).then(() => {
+              if (activeFolderId === folder.id) activeFolderId = 'all';
+              renderFolders();
+              loadHistoryList();
+            });
+          }
+        });
+
+        // Export Folder to Obsidian
+        item.querySelector('.btn-folder-export').addEventListener('click', (e) => {
+          e.stopPropagation();
+          window.api.selectDirectory().then(dir => {
+            if (dir) {
+              window.api.exportObsidian(folder.id, dir).then(res => {
+                if (res.success) {
+                  alert(`Successfully exported ${res.count} notes to your Obsidian vault at: ${dir}`);
+                } else {
+                  alert(`Export failed: ${res.error}`);
+                }
+              });
+            }
+          });
+        });
+
+        folderList.appendChild(item);
+      });
+      
+      // Update the Move-To dropdown inside the active call view
+      updateMoveFolderDropdown(folders);
+    });
+  }
+
+  function updateMoveFolderDropdown(folders) {
+    const dropdown = document.getElementById('select-move-folder');
+    if (!dropdown) return;
+    dropdown.innerHTML = '<option value="">📁 Move to Folder...</option>';
+    
+    folders.forEach(f => {
+      const opt = document.createElement('option');
+      opt.value = f.id;
+      opt.textContent = f.name;
+      if (activeSession && activeSession.folder_id === f.id) {
+        opt.selected = true;
+      }
+      dropdown.appendChild(opt);
+    });
+  }
+
+  // Bind dropdown movement change
+  const selectMoveFolder = document.getElementById('select-move-folder');
+  if (selectMoveFolder) {
+    selectMoveFolder.addEventListener('change', () => {
+      if (!activeSession || activeSession.id === 'live') return;
+      const folderId = selectMoveFolder.value;
+      window.api.moveToFolder(activeSession.id, folderId || null).then(res => {
+        if (res.success) {
+          activeSession.folder_id = folderId || null;
+          loadHistoryList();
+        } else {
+          alert('Error moving note: ' + res.error);
+        }
+      });
+    });
+  }
+
+  // Add Folder Button
+  const btnAddFolder = document.getElementById('btn-add-folder');
+  if (btnAddFolder) {
+    btnAddFolder.addEventListener('click', () => {
+      const name = prompt("Enter new folder name:");
+      if (name && name.trim()) {
+        window.api.createFolder(name.trim()).then(res => {
+          if (res.success) {
+            renderFolders();
+          } else {
+            alert("Error creating folder: " + res.error);
+          }
+        });
+      }
+    });
+  }
+
+  // Single note Obsidian export
+  const btnExportObsidianNote = document.getElementById('btn-export-obsidian-note');
+  if (btnExportObsidianNote) {
+    btnExportObsidianNote.addEventListener('click', () => {
+      if (!activeSession || activeSession.id === 'live') {
+        alert("Please select a saved call session first.");
+        return;
+      }
+      window.api.selectDirectory().then(dir => {
+        if (dir) {
+          window.api.exportObsidian(activeSession.id, dir).then(res => {
+            if (res.success) {
+              alert("Successfully exported note to your Obsidian vault!");
+            } else {
+              alert("Failed to export: " + res.error);
+            }
+          });
+        }
+      });
+    });
+  }
+
+  // Collapsible Live Trail drawer toggle
+  const btnToggleLiveTrail = document.getElementById('btn-toggle-live-trail');
+  const btnCloseLiveTrail = document.getElementById('btn-close-live-trail');
+  const liveTrailDrawer = document.getElementById('live-trail-drawer');
+
+  if (btnToggleLiveTrail && liveTrailDrawer) {
+    btnToggleLiveTrail.addEventListener('click', () => {
+      liveTrailDrawer.classList.toggle('hidden');
+    });
+  }
+  if (btnCloseLiveTrail && liveTrailDrawer) {
+    btnCloseLiveTrail.addEventListener('click', () => {
+      liveTrailDrawer.classList.add('hidden');
+    });
+  }
   // Initial load
+  renderFolders();
   loadHistoryList();
   renderCalendar();
   renderActionItems();
@@ -1538,22 +1734,19 @@ if (isMiniMode) {
 
   function toggleChatSidebar(isOpen) {
     if (isOpen) {
-      chatAgentWidget.classList.remove('closed');
+      chatAgentWidget.classList.remove('hidden');
       btnChatSidebarToggle.classList.add('hidden');
-      btnChatToggle.textContent = '▶';
     } else {
-      chatAgentWidget.classList.add('closed');
+      chatAgentWidget.classList.add('hidden');
       btnChatSidebarToggle.classList.remove('hidden');
-      btnChatToggle.textContent = '◀';
     }
   }
 
-  chatHeader.addEventListener('click', (e) => {
-    if (e.target !== btnChatMiss && e.target !== btnChatAction) {
-      const isClosed = chatAgentWidget.classList.contains('closed');
-      toggleChatSidebar(isClosed);
-    }
-  });
+  if (btnChatToggle) {
+    btnChatToggle.addEventListener('click', () => {
+      toggleChatSidebar(false);
+    });
+  }
 
   btnChatSidebarToggle.addEventListener('click', () => {
     toggleChatSidebar(true);

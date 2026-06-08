@@ -80,5 +80,12 @@ contextBridge.exposeInMainWorld('api', {
   // Chat Agent
   chatQuery: (query, transcriptText) => ipcRenderer.invoke('chat:query', query, transcriptText),
   saveCallSilently: (callData) => ipcRenderer.invoke('calls:save-silently', callData),
-  mixEnhance: (jots, transcriptText) => ipcRenderer.invoke('chat:mix-enhance', jots, transcriptText)
+  mixEnhance: (jots, transcriptText) => ipcRenderer.invoke('chat:mix-enhance', jots, transcriptText),
+
+  // Folders & Obsidian Export (v0.2)
+  getFolders: () => ipcRenderer.invoke('folders:get'),
+  createFolder: (name) => ipcRenderer.invoke('folders:create', name),
+  deleteFolder: (id) => ipcRenderer.invoke('folders:delete', id),
+  moveToFolder: (sessionId, folderId) => ipcRenderer.invoke('calls:move-to-folder', sessionId, folderId),
+  exportObsidian: (folderId, exportDir) => ipcRenderer.invoke('calls:export-obsidian', folderId, exportDir)
 });
