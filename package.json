@@ -1,8 +1,28 @@
 {
   "name": "trailmix",
-  "version": "0.6.0",
+  "version": "0.3.1",
   "description": "Local-first, privacy-centric AI note-taking and transcription desktop application",
   "main": "main.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ConniptionFit/TrailMix.git"
+  },
+  "homepage": "https://github.com/ConniptionFit/TrailMix#readme",
+  "bugs": {
+    "url": "https://github.com/ConniptionFit/TrailMix/issues"
+  },
+  "files": [
+    "README.md",
+    "CHANGELOG.md",
+    "main.js",
+    "preload.js",
+    "encryption.js",
+    "lib/",
+    "services/",
+    "workers/",
+    "renderer/",
+    "scripts/"
+  ],
   "scripts": {
     "start": "electron .",
     "package": "electron-builder"
