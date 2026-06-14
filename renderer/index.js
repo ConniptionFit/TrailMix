@@ -44,8 +44,184 @@ if (isMiniMode) {
   mainApp.classList.remove('hidden');
   miniWidget.classList.add('hidden');
   globalTooltip = document.getElementById('global-tooltip');
-  
-  miniWidget.classList.add('hidden');
+
+  function formatTimerSeconds(totalSeconds) {
+    const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
+    const seconds = (totalSeconds % 60).toString().padStart(2, '0');
+    return `${minutes}:${seconds}`;
+  }
+
+  function formatGapDuration(timeDiffMs) {
+    const minutes = Math.floor(timeDiffMs / 60000);
+    const seconds = Math.floor((timeDiffMs % 60000) / 1000);
+    let text = '';
+    if (minutes > 0) text += `${minutes}m `;
+    text += `${seconds}s`;
+    return text;
+  }
+
+  function getSegmentTimestampMs(segment) {
+    return segment.wallTimeMs || segment.timestampMs;
+  }
+
+  function applySpeakerLabelMapping(transcript, mapping) {
+    let updatedAny = false;
+
+    transcript.forEach((segment, index) => {
+      let label = mapping[segment.id];
+      if (!label) {
+        label = mapping[(index + 1).toString()] || mapping[index + 1];
+      }
+
+      if (!label) return;
+
+      if (label !== 'You' && segment.speaker.toLowerCase() === 'you') {
+        return;
+      }
+
+      if (segment.speaker !== label) {
+        segment.speaker = label;
+        updatedAny = true;
+      }
+    });
+
+    return updatedAny;
+  }
+
+  function getDisplaySpeakerName(speakerName) {
+    const normalizedSpeaker = speakerName.toLowerCase();
+    if (normalizedSpeaker === 'you' || normalizedSpeaker === 'me') {
+      return 'Me';
+    }
+    if (normalizedSpeaker === 'speaker 1') {
+      return 'Them';
+    }
+    return speakerName;
+  }
+
+  const llmStreamBuffers = new Map();
+  const llmStreamRenderTimers = new Map();
+  const llmStreamWaiters = new Map();
+
+  window.api.onLlmStreamChunk((payload) => {
+    const waiter = llmStreamWaiters.get(payload.requestId);
+    if (!waiter) return;
+
+    if (payload.token) {
+      const nextBuffer = (llmStreamBuffers.get(payload.requestId) || '') + payload.token;
+      llmStreamBuffers.set(payload.requestId, nextBuffer);
+
+      if (!llmStreamRenderTimers.has(payload.requestId)) {
+        llmStreamRenderTimers.set(payload.requestId, requestAnimationFrame(() => {
+          llmStreamRenderTimers.delete(payload.requestId);
+          waiter.onUpdate(llmStreamBuffers.get(payload.requestId) || '');
+        }));
+      }
+    }
+
+    if (payload.done) {
+      const finalText = payload.fullResponse || llmStreamBuffers.get(payload.requestId) || '';
+      llmStreamBuffers.delete(payload.requestId);
+      llmStreamRenderTimers.delete(payload.requestId);
+      llmStreamWaiters.delete(payload.requestId);
+      waiter.onUpdate(finalText);
+
+      if (payload.error) {
+        waiter.reject(new Error(payload.error));
+      } else {
+        waiter.resolve(finalText);
+      }
+    }
+  });
+
+  function normalizeEditorDocument(session) {
+    if (!session) {
+      return { version: 1, mode: 'plain', plainText: '', spans: [], enhancedAt: null };
+    }
+
+    if (session.editorDocument) {
+      let rawDocument = session.editorDocument;
+      if (typeof rawDocument === 'string') {
+        try {
+          rawDocument = JSON.parse(rawDocument);
+        } catch (err) {
+          rawDocument = null;
+        }
+      }
+
+      if (rawDocument?.mode === 'mixed' && Array.isArray(rawDocument.spans) && rawDocument.spans.length > 0) {
+        return rawDocument;
+      }
+
+      return {
+        version: 1,
+        mode: 'plain',
+        plainText: rawDocument?.plainText || session.mixNotes || '',
+        spans: [],
+        enhancedAt: null
+      };
+    }
+
+    return {
+      version: 1,
+      mode: 'plain',
+      plainText: session.mixNotes || '',
+      spans: [],
+      enhancedAt: null
+    };
+  }
+
+  function syncSessionFromEditorDocument(session, document) {
+    session.mixNotes = document.plainText || '';
+    session.editorDocument = document;
+    if (document.mode !== 'mixed') {
+      session.enhancedNotes = '';
+    }
+    return session;
+  }
+
+  function waitForLlmStream(requestId, onUpdate) {
+    return new Promise((resolve, reject) => {
+      llmStreamBuffers.set(requestId, '');
+      llmStreamWaiters.set(requestId, { onUpdate, resolve, reject });
+    });
+  }
+
+  function initThemeToggle() {
+    const btnDark = document.getElementById('btn-theme-dark');
+    const btnLight = document.getElementById('btn-theme-light');
+    if (!btnDark || !btnLight) return;
+
+    function applyTheme(theme) {
+      document.documentElement.setAttribute('data-theme', theme);
+      localStorage.setItem('trailmix-theme', theme);
+      btnDark.classList.toggle('active', theme === 'dark');
+      btnLight.classList.toggle('active', theme === 'light');
+    }
+
+    const savedTheme = localStorage.getItem('trailmix-theme') || 'dark';
+    applyTheme(savedTheme);
+
+    btnDark.addEventListener('click', () => applyTheme('dark'));
+    btnLight.addEventListener('click', () => applyTheme('light'));
+  }
+
+  function initTrailSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const toggle = document.getElementById('btn-trail-toggle');
+    if (!sidebar || !toggle) return;
+
+    const savedCollapsed = localStorage.getItem('trailmix-trail-collapsed') === 'true';
+    if (savedCollapsed) sidebar.classList.add('collapsed');
+
+    toggle.addEventListener('click', () => {
+      sidebar.classList.toggle('collapsed');
+      localStorage.setItem('trailmix-trail-collapsed', sidebar.classList.contains('collapsed'));
+    });
+  }
+
+  initThemeToggle();
+  initTrailSidebar();
   
   // Navigation Tabs
   const navDashboard = document.getElementById('nav-dashboard');
@@ -153,10 +329,8 @@ if (isMiniMode) {
       document.getElementById('summary-content').innerHTML = '<p class="placeholder-text">AI Highlights will be generated automatically at the end of the transcription session.</p>';
       document.getElementById('action-content').innerHTML = '<p class="placeholder-text">Action items will be extracted at the end of the transcription session.</p>';
       
-      const textareaMixJots = document.getElementById('textarea-mix-jots');
-      const mixEnhancedPreview = document.getElementById('mix-enhanced-preview');
-      if (textareaMixJots) textareaMixJots.value = '';
-      if (mixEnhancedPreview) mixEnhancedPreview.innerHTML = '<p class="placeholder-text">Your enhanced notes will display here after you click "Mix & Enhance".</p>';
+      if (jotEditor) jotEditor.resetPlain();
+      if (editorLegend) editorLegend.classList.add('hidden');
       
       lastSegmentTimeMs = null;
       window.api.startRecording().then(sessionId => {
@@ -218,9 +392,7 @@ if (isMiniMode) {
       clearInterval(recordingInterval);
       recordingInterval = setInterval(() => {
         recordingSeconds++;
-        const m = Math.floor(recordingSeconds / 60).toString().padStart(2, '0');
-        const s = (recordingSeconds % 60).toString().padStart(2, '0');
-        recTimer.textContent = `${m}:${s}`;
+        recTimer.textContent = formatTimerSeconds(recordingSeconds);
       }, 1000);
       
       if (!activeSession || activeSession.id === 'live') {
@@ -289,16 +461,11 @@ if (isMiniMode) {
     if (emptyState) emptyState.remove();
     
     // Render visual gap divider if a large silence/break occurred (> 30 seconds)
-    const currentSegmentTime = segment.wallTimeMs || segment.timestampMs;
+    const currentSegmentTime = getSegmentTimestampMs(segment);
     if (lastSegmentTimeMs !== null) {
       const timeDiff = currentSegmentTime - lastSegmentTimeMs;
       if (timeDiff > 30000) {
-        const m = Math.floor(timeDiff / 60000);
-        const s = Math.floor((timeDiff % 60000) / 1000);
-        let gapText = '';
-        if (m > 0) gapText += `${m}m `;
-        gapText += `${s}s`;
-        appendBreakDivider(gapText);
+        appendBreakDivider(formatGapDuration(timeDiff));
       }
     }
     
@@ -317,57 +484,13 @@ if (isMiniMode) {
   // Speaker Label Updates Listener
   window.api.onSpeakerLabelsUpdated((mapping) => {
     console.log('Received speaker labels mapping update:', mapping);
-    if (!activeSession || !activeSession.transcript) return;
-    
-    let updatedAny = false;
-    activeSession.transcript.forEach((seg, index) => {
-      // mapping could have segment IDs or turn indices (1-based string or integer)
-      let label = mapping[seg.id];
-      if (!label) {
-        label = mapping[(index + 1).toString()] || mapping[index + 1];
-      }
-      
-      if (label) {
-        if (label !== 'You' && seg.speaker.toLowerCase() === 'you') {
-          // ignore mapping if it tries to overwrite You
-        } else if (seg.speaker !== label) {
-          seg.speaker = label;
-          updatedAny = true;
-        }
-      }
-    });
-    
-    if (updatedAny) {
-      console.log('Speakers updated. Re-rendering transcript pane to split/merge bubbles...');
-      const currentScrollTop = transcriptContainer.scrollTop;
-      const wasAtBottom = (transcriptContainer.scrollHeight - transcriptContainer.scrollTop - transcriptContainer.clientHeight) < 50;
-      
-      transcriptContainer.innerHTML = '';
-      let lastTime = null;
-      activeSession.transcript.forEach((seg) => {
-        const segTime = seg.wallTimeMs || seg.timestampMs;
-        if (lastTime !== null) {
-          const timeDiff = segTime - lastTime;
-          if (timeDiff > 30000) {
-            const m = Math.floor(timeDiff / 60000);
-            const s = Math.floor((timeDiff % 60000) / 1000);
-            let gapText = '';
-            if (m > 0) gapText += `${m}m `;
-            gapText += `${s}s`;
-            appendBreakDivider(gapText);
-          }
-        }
-        appendTranscriptLine(seg);
-        lastTime = segTime;
-      });
-      lastSegmentTimeMs = lastTime;
-      
-      if (wasAtBottom) {
-        transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
-      } else {
-        transcriptContainer.scrollTop = currentScrollTop;
-      }
-    }
+    if (!activeSession?.transcript) return;
+
+    const updatedAny = applySpeakerLabelMapping(activeSession.transcript, mapping);
+    if (!updatedAny) return;
+
+    console.log('Speakers updated. Re-rendering transcript pane to split/merge bubbles...');
+    lastSegmentTimeMs = renderTranscriptWithBreaks(activeSession.transcript, { preserveScroll: true });
   });
 
   const speakerColors = {};
@@ -404,7 +527,7 @@ if (isMiniMode) {
     let merged = false;
     
     const isMe = segment.speaker.toLowerCase() === 'you' || segment.speaker.toLowerCase() === 'me';
-    const displaySpeakerName = isMe ? 'Me' : (segment.speaker.toLowerCase() === 'speaker 1' ? 'Them' : segment.speaker);
+    const displaySpeakerName = getDisplaySpeakerName(segment.speaker);
     
     if (lastLineDiv && lastLineDiv.classList.contains('transcript-line')) {
       const speakerSpan = lastLineDiv.querySelector('.line-speaker');
@@ -450,6 +573,37 @@ if (isMiniMode) {
     }
   }
 
+  function renderTranscriptWithBreaks(transcript, options = {}) {
+    const { preserveScroll = false } = options;
+    const currentScrollTop = transcriptContainer.scrollTop;
+    const wasAtBottom = (transcriptContainer.scrollHeight - transcriptContainer.scrollTop - transcriptContainer.clientHeight) < 50;
+
+    transcriptContainer.innerHTML = '';
+    let lastTime = null;
+
+    transcript.forEach((segment) => {
+      const segmentTime = getSegmentTimestampMs(segment);
+      if (lastTime !== null) {
+        const timeDiff = segmentTime - lastTime;
+        if (timeDiff > 30000) {
+          appendBreakDivider(formatGapDuration(timeDiff));
+        }
+      }
+      appendTranscriptLine(segment);
+      lastTime = segmentTime;
+    });
+
+    if (preserveScroll) {
+      transcriptContainer.scrollTop = wasAtBottom
+        ? transcriptContainer.scrollHeight
+        : currentScrollTop;
+    } else if (!isUserScrolledUp) {
+      transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
+    }
+
+    return lastTime;
+  }
+
   // Summary Tab Toggle
   const btnShowSummary = document.getElementById('btn-show-summary');
   const btnShowActions = document.getElementById('btn-show-actions');
@@ -457,9 +611,25 @@ if (isMiniMode) {
   const summaryContent = document.getElementById('summary-content');
   const actionContent = document.getElementById('action-content');
   const mixContent = document.getElementById('mix-content');
-  const textareaMixJots = document.getElementById('textarea-mix-jots');
+  const editorHost = document.getElementById('editor-component-root');
   const btnMixEnhance = document.getElementById('btn-mix-enhance');
-  const mixEnhancedPreview = document.getElementById('mix-enhanced-preview');
+  const editorLegend = document.getElementById('editor-legend');
+  const analysisPane = document.querySelector('.analysis-pane');
+
+  let jotEditor = null;
+  if (editorHost && window.EditorComponent) {
+    jotEditor = new window.EditorComponent(editorHost, {
+      onChange: (document) => {
+        if (!activeSession) return;
+        syncSessionFromEditorDocument(activeSession, document);
+        window.api.saveCallSilently(activeSession);
+      }
+    });
+  }
+
+  if (editorLegend) {
+    editorLegend.classList.add('hidden');
+  }
 
   btnShowSummary.addEventListener('click', () => {
     btnShowSummary.classList.add('active');
@@ -468,6 +638,7 @@ if (isMiniMode) {
     summaryContent.classList.remove('hidden');
     actionContent.classList.add('hidden');
     if (mixContent) mixContent.classList.add('hidden');
+    if (analysisPane) analysisPane.classList.remove('mix-focused');
   });
 
   btnShowActions.addEventListener('click', () => {
@@ -477,6 +648,7 @@ if (isMiniMode) {
     actionContent.classList.remove('hidden');
     summaryContent.classList.add('hidden');
     if (mixContent) mixContent.classList.add('hidden');
+    if (analysisPane) analysisPane.classList.remove('mix-focused');
   });
 
   if (btnShowMix) {
@@ -485,60 +657,59 @@ if (isMiniMode) {
       btnShowSummary.classList.remove('active');
       btnShowActions.classList.remove('active');
       if (mixContent) mixContent.classList.remove('hidden');
+      if (analysisPane) analysisPane.classList.add('mix-focused');
       summaryContent.classList.add('hidden');
       actionContent.classList.add('hidden');
     });
   }
 
-  let mixNotesSaveTimeout = null;
-  if (textareaMixJots) {
-    textareaMixJots.addEventListener('input', () => {
-      if (!activeSession) return;
-      activeSession.mixNotes = textareaMixJots.value;
-      
-      clearTimeout(mixNotesSaveTimeout);
-      mixNotesSaveTimeout = setTimeout(() => {
-        window.api.saveCallSilently(activeSession);
-      }, 500);
-    });
-  }
-
   if (btnMixEnhance) {
-    btnMixEnhance.addEventListener('click', () => {
-      if (!activeSession) return;
-      const transcriptText = activeSession.transcript 
-        ? activeSession.transcript.map(t => `[${t.timestamp}] ${t.speaker}: ${t.text}`).join('\n') 
-        : '';
-      const jots = textareaMixJots ? textareaMixJots.value.trim() : '';
-      if (!jots) {
-        alert("Please enter some rough jots first!");
+    btnMixEnhance.addEventListener('click', async () => {
+      if (!activeSession || !jotEditor) return;
+
+      const currentDocument = jotEditor.getDocument();
+      if (!currentDocument.plainText.trim()) {
+        alert('Please enter some jots first!');
         return;
       }
-      
+
+      syncSessionFromEditorDocument(activeSession, currentDocument);
+
       btnMixEnhance.disabled = true;
-      btnMixEnhance.innerHTML = '✨ Enhancing...';
-      if (mixEnhancedPreview) {
-        mixEnhancedPreview.innerHTML = '<p class="placeholder-text">AI is enhancing your notes using meeting context...</p>';
-      }
-      
-      window.api.mixEnhance(jots, transcriptText).then(response => {
-        activeSession.enhancedNotes = response;
-        if (mixEnhancedPreview) {
-          mixEnhancedPreview.innerHTML = formatAISummary(response);
-        }
-        
-        window.api.saveCall(activeSession).then(() => {
-          console.log("Enhanced notes saved successfully");
+      btnMixEnhance.innerHTML = '✨ Mixing…';
+      btnMixEnhance.classList.add('is-mixing');
+      jotEditor.setEnhancing(true);
+
+      try {
+        const result = await window.api.mixEnhance({
+          plainText: currentDocument.plainText,
+          editorDocument: currentDocument,
+          transcript: activeSession.transcript || []
         });
-      }).catch(err => {
-        console.error(err);
-        if (mixEnhancedPreview) {
-          mixEnhancedPreview.innerHTML = `<p class="placeholder-text" style="color: var(--text-critical);">Error enhancing notes: ${err.message || err}</p>`;
+
+        if (!result?.success) {
+          throw new Error(result?.error || 'Failed to enhance notes.');
         }
-      }).finally(() => {
+
+        activeSession.editorDocument = result.editorDocument;
+        activeSession.enhancedNotes = result.enhancedNotes;
+        activeSession.mixNotes = result.editorDocument.plainText || currentDocument.plainText;
+        jotEditor.applyEnhancedDocument(result.editorDocument);
+
+        if (editorLegend) {
+          editorLegend.classList.remove('hidden');
+        }
+
+        await window.api.saveCall(activeSession);
+      } catch (err) {
+        console.error(err);
+        alert(err.message || 'Failed to enhance notes.');
+        jotEditor.setEnhancing(false);
+      } finally {
         btnMixEnhance.disabled = false;
-        btnMixEnhance.innerHTML = '✨ Mix & Enhance';
-      });
+        btnMixEnhance.innerHTML = '✨ Start the Mix';
+        btnMixEnhance.classList.remove('is-mixing');
+      }
     });
   }
 
@@ -809,7 +980,7 @@ if (isMiniMode) {
           });
         }
       } else {
-        headerTitle.textContent = 'Recent Transcriptions';
+        headerTitle.textContent = 'The Trail';
       }
     }
 
@@ -1344,24 +1515,7 @@ if (isMiniMode) {
     // Load transcript
     transcriptContainer.innerHTML = '';
     if (session.transcript && session.transcript.length > 0) {
-      let lastTime = null;
-      session.transcript.forEach((seg) => {
-        const segTime = seg.wallTimeMs || seg.timestampMs;
-        if (lastTime !== null) {
-          const timeDiff = segTime - lastTime;
-          if (timeDiff > 30000) {
-            const m = Math.floor(timeDiff / 60000);
-            const s = Math.floor((timeDiff % 60000) / 1000);
-            let gapText = '';
-            if (m > 0) gapText += `${m}m `;
-            gapText += `${s}s`;
-            appendBreakDivider(gapText);
-          }
-        }
-        appendTranscriptLine(seg);
-        lastTime = segTime;
-      });
-      lastSegmentTimeMs = lastTime;
+      lastSegmentTimeMs = renderTranscriptWithBreaks(session.transcript);
     } else {
       transcriptContainer.innerHTML = `
         <div class="transcript-empty-state">
@@ -1393,17 +1547,11 @@ if (isMiniMode) {
       actionContent.innerHTML = '<p class="placeholder-text">No action items extracted.</p>';
     }
 
-    // Render Mix Notes
-    const textareaMixJots = document.getElementById('textarea-mix-jots');
-    const mixEnhancedPreview = document.getElementById('mix-enhanced-preview');
-    if (textareaMixJots) {
-      textareaMixJots.value = activeSession.mixNotes || '';
-    }
-    if (mixEnhancedPreview) {
-      if (activeSession.enhancedNotes) {
-        mixEnhancedPreview.innerHTML = formatAISummary(activeSession.enhancedNotes);
-      } else {
-        mixEnhancedPreview.innerHTML = '<p class="placeholder-text">Your enhanced notes will display here after you click "Mix & Enhance".</p>';
+    if (jotEditor) {
+      const editorDocument = normalizeEditorDocument(activeSession);
+      jotEditor.loadDocument(editorDocument);
+      if (editorLegend) {
+        editorLegend.classList.toggle('hidden', editorDocument.mode !== 'mixed');
       }
     }
   }
@@ -1831,8 +1979,17 @@ if (isMiniMode) {
       ? activeSession.transcript.map(t => `[${t.timestamp}] ${t.speaker}: ${t.text}`).join('\n') 
       : 'No transcript active.';
       
-    window.api.chatQuery(text, transcriptText).then((response) => {
-      updateChatMessage(loadingId, response);
+    window.api.chatQuery(text, transcriptText).then((result) => {
+      if (!result || !result.requestId) {
+        updateChatMessage(loadingId, result?.error || 'Could not query local AI model.');
+        return;
+      }
+
+      waitForLlmStream(result.requestId, (partialText) => {
+        updateChatMessage(loadingId, partialText || '');
+      }).catch((err) => {
+        updateChatMessage(loadingId, `Error: ${err.message}`);
+      });
     });
   }
 
@@ -1844,8 +2001,17 @@ if (isMiniMode) {
       ? activeSession.transcript.map(t => `[${t.timestamp}] ${t.speaker}: ${t.text}`).join('\n') 
       : 'No transcript active.';
       
-    window.api.chatQuery(presetType, transcriptText).then((response) => {
-      updateChatMessage(loadingId, response);
+    window.api.chatQuery(presetType, transcriptText).then((result) => {
+      if (!result || !result.requestId) {
+        updateChatMessage(loadingId, result?.error || 'Could not query local AI model.');
+        return;
+      }
+
+      waitForLlmStream(result.requestId, (partialText) => {
+        updateChatMessage(loadingId, partialText || '');
+      }).catch((err) => {
+        updateChatMessage(loadingId, `Error: ${err.message}`);
+      });
     });
   }
 

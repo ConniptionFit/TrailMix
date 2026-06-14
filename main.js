@@ -2,8 +2,24 @@ const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, screen, shell, dia
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { exec, execSync, spawn } = require('child_process');
+const { execSync, spawn } = require('child_process');
 const encryption = require('./encryption');
+const { parseLlmJsonResponse, applyPromptTemplate } = require('./lib/llm-utils');
+const {
+  getSpeakerDiarizationSystemPrompt,
+  buildDiarizationTurns,
+  buildDiarizationPrompt,
+  applySpeakerLabelMapping,
+  notifySpeakerLabelsUpdated
+} = require('./lib/speaker-diarization');
+const { formatTaskRow } = require('./lib/task-db');
+const { formatTimestamp } = require('./lib/format-timestamp');
+const { secureShredFile } = require('./lib/secure-shred');
+const { AudioCaptureService } = require('./services/AudioCaptureService');
+const { TranscriptionService } = require('./services/TranscriptionService');
+const { LLMInferenceService } = require('./services/LLMInferenceService');
+const { EnhanceNotesService } = require('./services/EnhanceNotesService');
+const { documentFromSession } = require('./lib/editor-document');
 const sqlite3 = require('sqlite3').verbose();
 
 // XDG Compliant Database Path
@@ -48,6 +64,60 @@ const DATA_DIR = path.join(PROJECT_DIR, 'data');
 const TEMP_DIR = path.join(DATA_DIR, 'temp_rec');
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 const WHISPER_DIR = path.join(PROJECT_DIR, 'bin', 'whisper.cpp');
+
+const audioCaptureService = new AudioCaptureService({ tempDir: TEMP_DIR });
+const transcriptionService = new TranscriptionService();
+const llmService = new LLMInferenceService();
+const enhanceNotesService = new EnhanceNotesService(llmService);
+
+function handleTranscriptionSegments({ chunkIndex, segments }) {
+  if (!activeSession) return;
+  if (!activeSession.transcript) activeSession.transcript = [];
+
+  segments.forEach((segment) => {
+    const sessionOffsetMs = (sessionChunkOffset + chunkIndex) * 2000 + segment.fromMs;
+    const transcriptSegment = {
+      id: `${activeSession.id}_${sessionChunkOffset + chunkIndex}_${segment.speaker.replace(/\s+/g, '_')}_${segment.fromMs}`,
+      timestampMs: sessionOffsetMs,
+      timestamp: formatTimestamp(sessionOffsetMs),
+      speaker: segment.speaker,
+      text: segment.text,
+      chunkIndex: sessionChunkOffset + chunkIndex,
+      wallTimeMs: Date.now()
+    };
+
+    activeSession.transcript.push(transcriptSegment);
+
+    if (mainWindow) {
+      mainWindow.webContents.send('audio:on-transcription-update', transcriptSegment);
+    }
+    if (miniWindow) {
+      miniWindow.webContents.send('audio:on-transcription-update', transcriptSegment);
+    }
+  });
+
+  if (segments.length > 0) {
+    saveSessionToFileSilently(activeSession);
+  }
+}
+
+transcriptionService.configure({
+  onSegments: handleTranscriptionSegments
+});
+
+audioCaptureService.configure({
+  onChunkReady: ({ chunkPath, chunkIndex }) => {
+    transcriptionService.enqueueChunk({
+      chunkPath,
+      chunkIndex,
+      whisperDir: WHISPER_DIR,
+      selectedModel: settings.selectedModel
+    });
+  },
+  onError: () => {
+    stopRecordingHandler();
+  }
+});
 
 // Ensure directories exist
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -99,13 +169,10 @@ function watchCallsDirectory() {
 let mainWindow = null;
 let miniWindow = null;
 let tray = null;
-let recordingProcess = null;
 let isRecording = false;
 let isPaused = false;
 let sessionChunkOffset = 0;
-let chunkWatcher = null;
 let diarizationInterval = null;
-let processedChunks = new Set();
 let activeSession = null;
 let decryptionKeys = new Map(); // In-memory cache for decrypted session keys
 
@@ -218,11 +285,7 @@ let settings = {
   selectedNoteStyle: 'executive',
   notePromptTemplate: DEFAULT_PROMPTS.executive,
   summaryPromptTemplate: DEFAULT_PROMPTS.summary,
-  actionPromptTemplate: DEFAULT_PROMPTS.actionItems,
-  customAgents: [
-    { name: 'Summary Agent', prompt: 'Summarize the meeting highlights and key decisions.' },
-    { name: 'Action Items Agent', prompt: 'Extract and list actionable next steps with owners.' }
-  ]
+  actionPromptTemplate: DEFAULT_PROMPTS.actionItems
 };
 
 // Load settings
@@ -432,58 +495,9 @@ async function syncDatabaseWithFiles() {
 
 
 // ----------------------------------------------------
-// VAD & Secure File Shredding (v0.2 Compliance)
+// Secure File Shredding (v0.2 Compliance)
 // ----------------------------------------------------
-
-function checkVoiceActivity(wavPath) {
-  try {
-    if (!fs.existsSync(wavPath)) return false;
-    const buffer = fs.readFileSync(wavPath);
-    if (buffer.length <= 44) return false;
-    
-    const numChannels = buffer.readUInt16LE(22);
-    const bytesPerFrame = numChannels * 2;
-    
-    let sum = 0;
-    let count = 0;
-    // Read 16-bit PCM samples
-    for (let i = 44; i < buffer.length; i += bytesPerFrame) {
-      if (i + 1 < buffer.length) {
-        const sampleL = buffer.readInt16LE(i);
-        sum += sampleL * sampleL;
-        count++;
-      }
-    }
-    if (count === 0) return false;
-    const rms = Math.sqrt(sum / count);
-    console.log(`VAD check [${path.basename(wavPath)}]: RMS energy = ${Math.round(rms)}`);
-    // Threshold of 100 RMS represents standard silence noise gate
-    return rms > 100;
-  } catch (err) {
-    console.error("VAD check failed, treating as active", err);
-    return true;
-  }
-}
-
-function secureShredFile(filePath) {
-  try {
-    if (!fs.existsSync(filePath)) return;
-    const stats = fs.statSync(filePath);
-    if (stats.isFile()) {
-      const size = stats.size;
-      const crypto = require('crypto');
-      const randomData = crypto.randomBytes(size);
-      fs.writeFileSync(filePath, randomData);
-      fs.unlinkSync(filePath);
-      console.log(`Secured shredded file: ${path.basename(filePath)}`);
-    }
-  } catch (err) {
-    console.error(`Shred failed for ${filePath}, attempting direct deletion`, err);
-    try {
-      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-    } catch (e) {}
-  }
-}
+// Async shredding lives in lib/secure-shred.js
 
 // ----------------------------------------------------
 // Window & Tray Management
@@ -730,63 +744,6 @@ function queryAudioDevices() {
 }
 
 // ----------------------------------------------------
-// Stereo Channel Energy Diarization
-// ----------------------------------------------------
-
-/**
- * Calculates Left and Right channel energy for a specified timestamp segment.
- * @param {string} wavPath Path to the 16kHz stereo WAV file
- * @param {number} startMs Segment start time in ms
- * @param {number} endMs Segment end time in ms
- * @returns {{rmsL: number, rmsR: number}} Left and Right RMS values
- */
-function calculateChannelEnergy(wavPath, startMs, endMs) {
-  try {
-    const fd = fs.openSync(wavPath, 'r');
-    const stats = fs.fstatSync(fd);
-    
-    // 16kHz stereo 16-bit PCM: 4 bytes per sample (2 channels * 2 bytes)
-    // 1 second of audio = 16000 * 4 = 64000 bytes
-    const bytesPerSecond = 64000;
-    const headerOffset = 44; // Standard WAV PCM header size
-    
-    const startByte = headerOffset + Math.floor((startMs / 1000) * bytesPerSecond);
-    const endByte = Math.min(stats.size, headerOffset + Math.floor((endMs / 1000) * bytesPerSecond));
-    
-    const length = endByte - startByte;
-    if (length <= 0) return { rmsL: 0, rmsR: 0 };
-    
-    const buffer = Buffer.alloc(length);
-    fs.readSync(fd, buffer, 0, length, startByte);
-    fs.closeSync(fd);
-    
-    let sumL = 0;
-    let sumR = 0;
-    let count = 0;
-    
-    for (let i = 0; i < buffer.length; i += 4) {
-      if (i + 3 < buffer.length) {
-        const valL = buffer.readInt16LE(i);
-        const valR = buffer.readInt16LE(i + 2);
-        sumL += valL * valL;
-        sumR += valR * valR;
-        count++;
-      }
-    }
-    
-    if (count === 0) return { rmsL: 0, rmsR: 0 };
-    
-    return {
-      rmsL: Math.sqrt(sumL / count),
-      rmsR: Math.sqrt(sumR / count)
-    };
-  } catch (error) {
-    console.error('Error analyzing channel energy', error);
-    return { rmsL: 0, rmsR: 0 };
-  }
-}
-
-// ----------------------------------------------------
 // Whisper & Transcription Runner
 // ----------------------------------------------------
 
@@ -843,233 +800,36 @@ function saveSessionToFileSilently(session) {
   });
 }
 
-const whisperQueue = [];
-let isWhisperRunning = false;
-
-function enqueueWhisperChunk(chunkPath, chunkIdx) {
-  whisperQueue.push({ chunkPath, chunkIdx });
-  processWhisperQueue();
-}
-
-async function processWhisperQueue() {
-  if (isWhisperRunning || whisperQueue.length === 0) return;
-  
-  isWhisperRunning = true;
-  const { chunkPath, chunkIdx } = whisperQueue.shift();
-  
-  try {
-    await runWhisperOnChunkPromise(chunkPath, chunkIdx);
-  } catch (err) {
-    console.error('Whisper chunk processing failed', err);
-  } finally {
-    isWhisperRunning = false;
-    processWhisperQueue();
-  }
-}
-
-function runWhisperOnChunkPromise(chunkWavPath, chunkIndex) {
-  return new Promise(async (resolve) => {
-    const whisperCli = path.join(WHISPER_DIR, 'build', 'bin', 'whisper-cli');
-    const whisperModel = path.join(WHISPER_DIR, 'models', settings.selectedModel);
-    
-    if (!fs.existsSync(whisperCli)) {
-      console.error('Whisper.cpp binary not found at', whisperCli);
-      secureShredFile(chunkWavPath);
-      resolve();
-      return;
-    }
-    if (!fs.existsSync(whisperModel)) {
-      console.error('Whisper model not found at', whisperModel);
-      secureShredFile(chunkWavPath);
-      resolve();
-      return;
-    }
-
-    const leftWavPath = chunkWavPath.replace('.wav', '_left.wav');
-    const rightWavPath = chunkWavPath.replace('.wav', '_right.wav');
-    
-    // Extract Left channel (System Monitor / "Them") and Right channel (Microphone / "You")
-    try {
-      execSync(`ffmpeg -y -i "${chunkWavPath}" -af "pan=mono|c0=c0" "${leftWavPath}"`);
-      execSync(`ffmpeg -y -i "${chunkWavPath}" -af "pan=mono|c0=c1" "${rightWavPath}"`);
-    } catch (err) {
-      console.error('Ffmpeg channel splitting failed', err);
-      secureShredFile(chunkWavPath);
-      resolve();
-      return;
-    }
-    
-    // Check Voice Activity Detection (VAD) noise gate for both channels
-    const hasLeftVoice = checkVoiceActivity(leftWavPath);
-    const hasRightVoice = checkVoiceActivity(rightWavPath);
-    
-    if (!hasLeftVoice && !hasRightVoice) {
-      console.log(`VAD noise gate: Chunk ${chunkIndex} Left & Right are silent. Dropping chunk.`);
-      secureShredFile(chunkWavPath);
-      secureShredFile(leftWavPath);
-      secureShredFile(rightWavPath);
-      resolve();
-      return;
-    }
-    
-    const allSegments = [];
-    
-    // Helper to transcribe a mono channel file
-    const transcribeMonoFile = (monoWavPath, speakerName) => {
-      return new Promise((resolveTranscribe) => {
-        const outputBase = monoWavPath.replace('.wav', '_trans');
-        const jsonPath = outputBase + '.json';
-        const threads = Math.min(8, Math.max(4, require('os').cpus().length - 2));
-        const whisperCmd = `"${whisperCli}" -m "${whisperModel}" -f "${monoWavPath}" -t ${threads} -oj -of "${outputBase}"`;
-        
-        exec(whisperCmd, (error) => {
-          if (error) {
-            console.error(`Whisper execution failed for ${speakerName}`, error);
-            resolveTranscribe([]);
-            return;
-          }
-          
-          if (!fs.existsSync(jsonPath)) {
-            console.error(`Whisper JSON file not found for ${speakerName}`, jsonPath);
-            resolveTranscribe([]);
-            return;
-          }
-          
-          try {
-            const data = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
-            const segments = data.transcription || [];
-            const results = [];
-            
-            segments.forEach((seg) => {
-              const text = seg.text.trim();
-              if (!text) return;
-              
-              if (/^\[blank_audio\]$/i.test(text) || text.toUpperCase().includes('BLANK_AUDIO')) {
-                return;
-              }
-              
-              results.push({
-                fromMs: seg.offsets.from,
-                toMs: seg.offsets.to,
-                speaker: speakerName,
-                text: text
-              });
-            });
-            
-            try {
-              if (fs.existsSync(jsonPath)) fs.unlinkSync(jsonPath);
-            } catch (e) {}
-            
-            resolveTranscribe(results);
-          } catch (e) {
-            console.error(`Error parsing whisper JSON output for ${speakerName}`, e);
-            resolveTranscribe([]);
-          }
-        });
-      });
-    };
-    
-    // Run transcriptions sequentially to keep CPU/RAM usage low and optimized
-    if (hasLeftVoice) {
-      const leftSegs = await transcribeMonoFile(leftWavPath, 'Speaker 1');
-      allSegments.push(...leftSegs);
-    } else {
-      secureShredFile(leftWavPath);
-    }
-    
-    if (hasRightVoice) {
-      const rightSegs = await transcribeMonoFile(rightWavPath, 'You');
-      allSegments.push(...rightSegs);
-    } else {
-      secureShredFile(rightWavPath);
-    }
-    
-    // Merge and sort segments chronologically by offset start time
-    allSegments.sort((a, b) => a.fromMs - b.fromMs);
-    
-    allSegments.forEach((seg) => {
-      const sessionOffsetMs = (sessionChunkOffset + chunkIndex) * 2000 + seg.fromMs;
-      const timestampStr = formatTimestamp(sessionOffsetMs);
-      
-      const transcriptSegment = {
-        id: `${activeSession.id}_${sessionChunkOffset + chunkIndex}_${seg.speaker.replace(/\s+/g, '_')}_${seg.fromMs}`,
-        timestampMs: sessionOffsetMs,
-        timestamp: timestampStr,
-        speaker: seg.speaker,
-        text: seg.text,
-        chunkIndex: sessionChunkOffset + chunkIndex,
-        wallTimeMs: Date.now()
-      };
-      
-      activeSession.transcript.push(transcriptSegment);
-      
-      if (mainWindow) {
-        mainWindow.webContents.send('audio:on-transcription-update', transcriptSegment);
-      }
-      if (miniWindow) {
-        miniWindow.webContents.send('audio:on-transcription-update', transcriptSegment);
-      }
-    });
-    
-    if (allSegments.length > 0) {
-      saveSessionToFileSilently(activeSession);
-    }
-    
-    // Clean up temporary files
-    secureShredFile(chunkWavPath);
-    secureShredFile(leftWavPath);
-    secureShredFile(rightWavPath);
-    
-    resolve();
-  });
-}
-
-function formatTimestamp(ms) {
-  const totalSecs = Math.floor(ms / 1000);
-  const m = Math.floor(totalSecs / 60);
-  const s = totalSecs % 60;
-return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-}
-
 // ----------------------------------------------------
 // Recording Controls
 // ----------------------------------------------------
 
-function startRecordingHandler() {
+async function startRecordingHandler() {
   if (isRecording) return;
-  
+
   const devices = queryAudioDevices();
   let sink = devices.sink;
   let source = devices.source;
-  
-  // Resolve microphone input device
+
   if (settings.selectedMic && settings.selectedMic !== 'default') {
     source = settings.selectedMic;
   }
-  // Resolve system monitor output device
   if (settings.selectedSink && settings.selectedSink !== 'default') {
     sink = settings.selectedSink;
   }
-  
+
   if (!sink || !source) {
     console.error('No audio devices found to transcribe.');
     return;
   }
-  
+
   const sinkMonitor = sink.endsWith('.monitor') ? sink : `${sink}.monitor`;
   console.log(`Starting transcription. Sink monitor: ${sinkMonitor}, Source: ${source}`);
-  
-  // Clean up temporary recording folder unless we are resuming/paused
+
   if (!isPaused) {
-    if (fs.existsSync(TEMP_DIR)) {
-      fs.rmSync(TEMP_DIR, { recursive: true, force: true });
-    }
-    fs.mkdirSync(TEMP_DIR, { recursive: true });
-    processedChunks.clear();
-    whisperQueue.length = 0;
-    isWhisperRunning = false;
-    
-    // Check if we are resuming a loaded session or starting a new one
+    transcriptionService.clearQueue();
+    audioCaptureService.resetProcessedChunks();
+
     if (!activeSession || activeSession.id === 'live') {
       activeSession = {
         id: 'call_' + Date.now(),
@@ -1083,213 +843,81 @@ function startRecordingHandler() {
       sessionChunkOffset = 0;
     }
   } else {
-    // If paused, we clean the temp folder so ffmpeg can write chunk_000.wav freshly
-    if (fs.existsSync(TEMP_DIR)) {
-      fs.rmSync(TEMP_DIR, { recursive: true, force: true });
-    }
-    fs.mkdirSync(TEMP_DIR, { recursive: true });
+    await audioCaptureService.prepareTempDir(true);
   }
-  
+
   isRecording = true;
   isPaused = false;
   updateTray();
-  
-  // Start LLM Speaker Diarization interval (runs every 25 seconds)
+
   if (diarizationInterval) {
     clearInterval(diarizationInterval);
   }
   diarizationInterval = setInterval(() => {
     runSpeakerDiarizationLLM();
   }, 25000);
-  
-  // Send recording status update to renderer
+
   if (mainWindow) {
     mainWindow.webContents.send('audio:on-recording-status', { isRecording: true, isPaused: false });
   }
-  
-  // Spawn ffmpeg to record in 3-second stereo WAV chunks.
-  // Left channel is system output monitor (inbound).
-  // Right channel is local microphone source (outbound).
-  // Use robust pan + amerge filter to support mono mic and stereo system mix cleanly.
-  const ffmpegArgs = [
-    '-y',
-    '-f', 'pulse', '-i', sinkMonitor,
-    '-f', 'pulse', '-i', source,
-    '-filter_complex', '[0:a]pan=mono|c0=c0[left]; [1:a]pan=mono|c0=c0[right]; [left][right]amerge=inputs=2[a]',
-    '-map', '[a]',
-    '-f', 'segment',
-    '-segment_time', '2',
-    '-segment_format', 'wav',
-    '-c:a', 'pcm_s16le',
-    '-ar', '16000',
-    '-ac', '2',
-    path.join(TEMP_DIR, 'chunk_%03d.wav')
-  ];
-  
-  recordingProcess = spawn('ffmpeg', ffmpegArgs);
-  
-  recordingProcess.on('error', (err) => {
-    console.error('Ffmpeg recording error', err);
-    stopRecordingHandler();
-  });
 
-  // Watch for new files in the temp directory
-  chunkWatcher = setInterval(() => {
-    if (!fs.existsSync(TEMP_DIR)) return;
-    
-    fs.readdir(TEMP_DIR, (err, files) => {
-      if (err) return;
-      
-      const wavChunks = files
-        .filter(f => f.startsWith('chunk_') && f.endsWith('.wav') && !f.includes('_mono') && !f.includes('_left') && !f.includes('_right') && !f.includes('_trans'))
-        .sort();
-      
-      // If we have at least 2 chunks, the previous ones are complete.
-      if (wavChunks.length >= 2) {
-        for (let i = 0; i < wavChunks.length - 1; i++) {
-          const chunkFile = wavChunks[i];
-          const chunkPath = path.join(TEMP_DIR, chunkFile);
-          const chunkIdx = parseInt(chunkFile.match(/\d+/)[0], 10);
-          
-          if (!processedChunks.has(chunkPath)) {
-            processedChunks.add(chunkPath);
-            enqueueWhisperChunk(chunkPath, chunkIdx);
-          }
-        }
-      }
-    });
-  }, 1000);
+  try {
+    await audioCaptureService.start({ sinkMonitor, source });
+  } catch (err) {
+    console.error('Failed to start audio capture', err);
+    isRecording = false;
+    updateTray();
+  }
 }
 
-function pauseRecordingHandler() {
+async function pauseRecordingHandler() {
   if (!isRecording || isPaused) return;
-  
+
   isRecording = false;
   isPaused = true;
   updateTray();
-  
+
   if (mainWindow) {
     mainWindow.webContents.send('audio:on-recording-status', { isRecording: false, isPaused: true });
   }
-  
-  if (chunkWatcher) {
-    clearInterval(chunkWatcher);
-    chunkWatcher = null;
-  }
-  
+
   if (diarizationInterval) {
     clearInterval(diarizationInterval);
     diarizationInterval = null;
   }
-  
-  // Clean close ffmpeg to finalize the currently writing chunk
-  if (recordingProcess) {
-    try {
-      recordingProcess.stdin.write('q');
-    } catch (e) {
-      try {
-        recordingProcess.kill('SIGINT');
-      } catch (e2) {}
-    }
-    recordingProcess = null;
-  }
-  
-  // Transcribe any remaining chunks in the temp directory
-  setTimeout(() => {
-    if (fs.existsSync(TEMP_DIR)) {
-      const files = fs.readdirSync(TEMP_DIR);
-      const wavChunks = files
-        .filter(f => f.startsWith('chunk_') && f.endsWith('.wav') && !f.includes('_mono') && !f.includes('_left') && !f.includes('_right') && !f.includes('_trans'))
-        .sort();
-        
-      let processedInThisRun = wavChunks.length;
-      
-      wavChunks.forEach((chunkFile) => {
-        const chunkPath = path.join(TEMP_DIR, chunkFile);
-        const chunkIdx = parseInt(chunkFile.match(/\d+/)[0], 10);
-        
-        if (!processedChunks.has(chunkPath)) {
-          processedChunks.add(chunkPath);
-          enqueueWhisperChunk(chunkPath, chunkIdx);
-        }
-      });
-      
-      // Update sessionChunkOffset for subsequent recording run segments
-      sessionChunkOffset += processedInThisRun;
-    }
+
+  await audioCaptureService.stopFfmpeg();
+
+  setTimeout(async () => {
+    const chunkCount = await audioCaptureService.countChunkCandidates();
+    await audioCaptureService.flushRemainingChunks();
+    sessionChunkOffset += chunkCount;
   }, 1000);
 }
 
-function stopRecordingHandler() {
+async function stopRecordingHandler() {
   if (!isRecording && !isPaused) return;
-  
+
   isRecording = false;
   isPaused = false;
   updateTray();
-  
+
   if (mainWindow) {
     mainWindow.webContents.send('audio:on-recording-status', { isRecording: false, isPaused: false });
-  }
-  
-  // Clear file watcher
-  if (chunkWatcher) {
-    clearInterval(chunkWatcher);
-    chunkWatcher = null;
   }
 
   if (diarizationInterval) {
     clearInterval(diarizationInterval);
     diarizationInterval = null;
   }
-  
-  // Kill ffmpeg process cleanly
-  if (recordingProcess) {
-    try {
-      recordingProcess.stdin.write('q');
-    } catch (e) {
-      try {
-        recordingProcess.kill('SIGINT');
-      } catch (e2) {
-        recordingProcess.kill('SIGKILL');
-      }
-    }
-    recordingProcess = null;
-  }
-  
+
+  await audioCaptureService.stopFfmpeg();
   destroyMiniWindow();
-  
-  // Transcribe any remaining chunks left in the temp directory
-  setTimeout(() => {
-    if (fs.existsSync(TEMP_DIR)) {
-      const files = fs.readdirSync(TEMP_DIR);
-      const wavChunks = files
-        .filter(f => f.startsWith('chunk_') && f.endsWith('.wav') && !f.includes('_mono') && !f.includes('_left') && !f.includes('_right') && !f.includes('_trans'))
-        .sort();
-        
-      let pendingTranscriptions = 0;
-      
-      wavChunks.forEach((chunkFile) => {
-        const chunkPath = path.join(TEMP_DIR, chunkFile);
-        const chunkIdx = parseInt(chunkFile.match(/\d+/)[0], 10);
-        
-        if (!processedChunks.has(chunkPath)) {
-          processedChunks.add(chunkPath);
-          pendingTranscriptions++;
-          enqueueWhisperChunk(chunkPath, chunkIdx);
-        }
-      });
-      
-      const waitInterval = setInterval(() => {
-        if (!isWhisperRunning && whisperQueue.length === 0) {
-          clearInterval(waitInterval);
-          finalizeAndSaveSession();
-        }
-      }, 500);
-      
-      setTimeout(() => clearInterval(waitInterval), 10000);
-    } else {
-      finalizeAndSaveSession();
-    }
+
+  setTimeout(async () => {
+    await audioCaptureService.flushRemainingChunks();
+    await transcriptionService.waitForIdle();
+    finalizeAndSaveSession();
   }, 1000);
 }
 
@@ -1328,120 +956,29 @@ async function resumeCallTranscriptionHandler(sessionId) {
   }
 }
 
-function runSpeakerDiarizationLLM() {
-  if (!activeSession || !activeSession.transcript || activeSession.transcript.length === 0) return;
-  
-  const model = settings.selectedLlm;
-  const systemPrompt = `You are a local speaker attribution assistant. Your job is to analyze the conversation turns of a transcript and differentiate/label the speakers.
-The user is "You" (their name is "${settings.userName || 'You'}"). Always leave the speaker "You" as "You" (do not change it).
-Other turns are currently labeled as "Speaker 1". All inbound speakers are mixed on the inbound audio channel. Differentiate them based on conversational context, flow, and text.
-Assign them identifiers like "Speaker 1", "Speaker 2" if you cannot deduce their names. Limit the number of unique inbound speakers identified to a maximum of 5.
-If you can deduce their actual name or role (e.g. "Sarah", "Netflix Support Agent", "BestBuy Support") from what they say in the transcript, use that descriptive name/label instead.
-Output your results ONLY as a valid JSON object mapping turnIndex strings (e.g. "1", "2") to their corrected speaker labels. Do not include any reasoning, markdown formatting (like \`\`\`json), or conversational text. Output ONLY the raw JSON object.`;
+async function runSpeakerDiarizationLLM() {
+  if (!activeSession?.transcript?.length) return;
 
-  const turns = activeSession.transcript.map((t, index) => {
-    return { turnIndex: index + 1, speaker: t.speaker, text: t.text };
-  });
-  
-  const prompt = `Here is the current transcript segments list:\n\n${JSON.stringify(turns, null, 2)}\n\nAnalyze the segments and return the JSON map of speaker labels.`;
-  
-  console.log("Diarization LLM: Analyzing transcript for speaker names and turns...");
-  queryOllama(prompt, model, systemPrompt)
-    .then(response => {
-      try {
-        let cleanText = response.trim();
-        const firstBrace = cleanText.indexOf('{');
-        const lastBrace = cleanText.lastIndexOf('}');
-        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-          cleanText = cleanText.substring(firstBrace, lastBrace + 1);
-        } else {
-          if (cleanText.includes('```')) {
-            const match = cleanText.match(/```(?:json)?\s*([\s\S]+?)\s*```/);
-            if (match) cleanText = match[1];
-          }
-        }
-        
-        const mapping = JSON.parse(cleanText);
-        console.log("Diarization LLM: Successfully mapped speakers:", mapping);
-        
-        activeSession.transcript.forEach((seg, index) => {
-          let label = mapping[seg.id];
-          if (!label) {
-            label = mapping[(index + 1).toString()] || mapping[index + 1];
-          }
-          if (label) {
-            if (label !== 'You' && seg.speaker === 'You') {
-              // ignore mapping if it tries to overwrite You
-            } else {
-              seg.speaker = label;
-            }
-          }
-        });
-        
-        if (mainWindow) {
-          mainWindow.webContents.send('audio:on-speaker-labels-updated', mapping);
-        }
-      } catch (e) {
-        console.error("Diarization LLM: Failed to parse JSON mapping. Raw response:", response, e);
-      }
-    })
-    .catch(err => {
-      console.error("Diarization LLM: Ollama query failed", err);
-    });
+  const model = settings.selectedLlm;
+  const systemPrompt = getSpeakerDiarizationSystemPrompt(settings.userName);
+  const turns = buildDiarizationTurns(activeSession.transcript);
+  const prompt = buildDiarizationPrompt(turns);
+
+  console.log('Diarization LLM: Analyzing transcript for speaker names and turns...');
+
+  try {
+    const response = await llmService.queryComplete(prompt, model, systemPrompt);
+    const mapping = parseLlmJsonResponse(response);
+    console.log('Diarization LLM: Successfully mapped speakers:', mapping);
+    applySpeakerLabelMapping(activeSession.transcript, mapping);
+    notifySpeakerLabelsUpdated(mainWindow, mapping);
+  } catch (error) {
+    console.error('Diarization LLM failed:', error);
+  }
 }
 
 async function diarizeSpeakersPromise() {
-  if (!activeSession || !activeSession.transcript || activeSession.transcript.length === 0) return;
-  
-  const model = settings.selectedLlm;
-  const systemPrompt = `You are a local speaker attribution assistant. Your job is to analyze the conversation turns of a transcript and differentiate/label the speakers.
-The user is "You" (their name is "${settings.userName || 'You'}"). Always leave the speaker "You" as "You" (do not change it).
-Other turns are currently labeled as "Speaker 1". All inbound speakers are mixed on the inbound audio channel. Differentiate them based on conversational context, flow, and text.
-Assign them identifiers like "Speaker 1", "Speaker 2" if you cannot deduce their names. Limit the number of unique inbound speakers identified to a maximum of 5.
-If you can deduce their actual name or role (e.g. "Sarah", "Netflix Support Agent", "BestBuy Support") from what they say in the transcript, use that descriptive name/label instead.
-Output your results ONLY as a valid JSON object mapping turnIndex strings (e.g. "1", "2") to their corrected speaker labels. Do not include any reasoning, markdown formatting (like \`\`\`json), or conversational text. Output ONLY the raw JSON object.`;
-
-  const turns = activeSession.transcript.map((t, index) => {
-    return { turnIndex: index + 1, speaker: t.speaker, text: t.text };
-  });
-  
-  const prompt = `Here is the current transcript segments list:\n\n${JSON.stringify(turns, null, 2)}\n\nAnalyze the segments and return the JSON map of speaker labels.`;
-  
-  try {
-    const response = await queryOllama(prompt, model, systemPrompt);
-    let cleanText = response.trim();
-    const firstBrace = cleanText.indexOf('{');
-    const lastBrace = cleanText.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-      cleanText = cleanText.substring(firstBrace, lastBrace + 1);
-    } else {
-      if (cleanText.includes('```')) {
-        const match = cleanText.match(/```(?:json)?\s*([\s\S]+?)\s*```/);
-        if (match) cleanText = match[1];
-      }
-    }
-    const mapping = JSON.parse(cleanText);
-    
-    activeSession.transcript.forEach((seg, index) => {
-      let label = mapping[seg.id];
-      if (!label) {
-        label = mapping[(index + 1).toString()] || mapping[index + 1];
-      }
-      if (label) {
-        if (label !== 'You' && seg.speaker === 'You') {
-          // ignore
-        } else {
-          seg.speaker = label;
-        }
-      }
-    });
-    
-    if (mainWindow) {
-      mainWindow.webContents.send('audio:on-speaker-labels-updated', mapping);
-    }
-  } catch (e) {
-    console.error("Diarization final promise failed", e);
-  }
+  await runSpeakerDiarizationLLM();
 }
 
 function triggerOllamaContextRename(transcriptText, callback) {
@@ -1451,16 +988,10 @@ Output your results ONLY as a valid JSON object with keys "title" (a very short 
 Do not include any reasoning, markdown formatting, or conversational text. Output ONLY the raw JSON object.`;
   const prompt = `Based on the following meeting transcript, generate the title, description, and suggested tags:\n\n${transcriptText}\n\nReturn the JSON object.`;
 
-  queryOllama(prompt, model, systemPrompt)
+  llmService.queryComplete(prompt, model, systemPrompt)
     .then(response => {
       try {
-        let cleanText = response.trim();
-        const firstBrace = cleanText.indexOf('{');
-        const lastBrace = cleanText.lastIndexOf('}');
-        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-          cleanText = cleanText.substring(firstBrace, lastBrace + 1);
-        }
-        const meta = JSON.parse(cleanText);
+        const meta = parseLlmJsonResponse(response);
         
         let tags = meta.suggestedTags || [];
         if (!Array.isArray(tags)) tags = [];
@@ -1483,6 +1014,30 @@ Do not include any reasoning, markdown formatting, or conversational text. Outpu
     });
 }
 
+async function runEnhanceNotesForSession(session) {
+  if (!session) return null;
+
+  const editorDocument = documentFromSession(session);
+  if (!editorDocument.plainText.trim()) {
+    return null;
+  }
+
+  const fullTranscript = enhanceNotesService.buildFullTranscript(session.transcript);
+  const systemPrompt = settings.notePromptTemplate || DEFAULT_PROMPTS.executive;
+
+  try {
+    return await enhanceNotesService.enhanceDocument({
+      editorDocument,
+      fullTranscript,
+      model: settings.selectedLlm,
+      systemPrompt
+    });
+  } catch (err) {
+    console.error('Enhance notes failed:', err);
+    return null;
+  }
+}
+
 async function finalizeAndSaveSession() {
   if (!activeSession) return;
   
@@ -1491,6 +1046,8 @@ async function finalizeAndSaveSession() {
   
   // Run final speaker diarization
   await diarizeSpeakersPromise();
+
+  const enhancePromise = runEnhanceNotesForSession(activeSession);
   
   const textContent = activeSession.transcript.map(t => `[${t.timestamp}] ${t.speaker}: ${t.text}`).join('\n');
   
@@ -1499,7 +1056,13 @@ async function finalizeAndSaveSession() {
       activeSession.summary = summary;
       activeSession.actionItems = actionItems;
       
-      triggerOllamaContextRename(textContent, (title, description, tags) => {
+      triggerOllamaContextRename(textContent, async (title, description, tags) => {
+        const enhanceResult = await enhancePromise;
+        if (enhanceResult) {
+          activeSession.editorDocument = enhanceResult.editorDocument;
+          activeSession.enhancedNotes = enhanceResult.enhancedNotes;
+        }
+
         const oldId = activeSession.id;
         const callsDir = getCallsDir();
         const oldFilePath = path.join(callsDir, `${oldId}.trail`);
@@ -1541,6 +1104,12 @@ async function finalizeAndSaveSession() {
       });
     });
   } else {
+    const enhanceResult = await enhancePromise;
+    if (enhanceResult) {
+      activeSession.editorDocument = enhanceResult.editorDocument;
+      activeSession.enhancedNotes = enhanceResult.enhancedNotes;
+    }
+
     saveSessionToFile(activeSession);
     if (mainWindow) {
       mainWindow.webContents.send('calls:session-summary-ready', activeSession);
@@ -1551,20 +1120,6 @@ async function finalizeAndSaveSession() {
 // ----------------------------------------------------
 // Timeline Tasks Manager
 // ----------------------------------------------------
-const TASKS_FILE = path.join(DATA_DIR, 'tasks.json');
-
-function getTasksList() {
-  if (!fs.existsSync(TASKS_FILE)) return [];
-  try {
-    return JSON.parse(fs.readFileSync(TASKS_FILE, 'utf8'));
-  } catch (e) {
-    return [];
-  }
-}
-
-function saveTasksList(tasks) {
-  fs.writeFileSync(TASKS_FILE, JSON.stringify(tasks, null, 2), 'utf8');
-}
 
 function parseDeadlineDate(text) {
   const lowercase = text.toLowerCase();
@@ -1712,10 +1267,10 @@ async function saveSessionToFile(session) {
   // Compliance: Secure file shredding of temporary recordings
   if (fs.existsSync(TEMP_DIR)) {
     try {
-      const files = fs.readdirSync(TEMP_DIR);
-      files.forEach(f => secureShredFile(path.join(TEMP_DIR, f)));
+      const files = await fs.promises.readdir(TEMP_DIR);
+      await Promise.all(files.map((file) => secureShredFile(path.join(TEMP_DIR, file))));
     } catch (e) {}
-    fs.rmSync(TEMP_DIR, { recursive: true, force: true });
+    await fs.promises.rm(TEMP_DIR, { recursive: true, force: true });
   }
 }
 
@@ -1725,26 +1280,19 @@ async function saveSessionToFile(session) {
 
 function triggerOllamaSummary(transcriptText, callback) {
   const model = settings.selectedLlm;
-  
-  let summaryPrompt = settings.summaryPromptTemplate || DEFAULT_PROMPTS.summary;
-  if (summaryPrompt.includes('{transcriptText}')) {
-    summaryPrompt = summaryPrompt.replace('{transcriptText}', transcriptText);
-  } else {
-    summaryPrompt = `${summaryPrompt}\n\n${transcriptText}`;
-  }
-  
-  let actionItemsPrompt = settings.actionPromptTemplate || DEFAULT_PROMPTS.actionItems;
-  if (actionItemsPrompt.includes('{transcriptText}')) {
-    actionItemsPrompt = actionItemsPrompt.replace('{transcriptText}', transcriptText);
-  } else {
-    actionItemsPrompt = `${actionItemsPrompt}\n\n${transcriptText}`;
-  }
+  const summaryPrompt = applyPromptTemplate(
+    settings.summaryPromptTemplate || DEFAULT_PROMPTS.summary,
+    transcriptText
+  );
+  const actionItemsPrompt = applyPromptTemplate(
+    settings.actionPromptTemplate || DEFAULT_PROMPTS.actionItems,
+    transcriptText
+  );
   
   // Request summary
-  queryOllama(summaryPrompt, model)
+  llmService.queryComplete(summaryPrompt, model)
     .then(summary => {
-      // Request action items
-      queryOllama(actionItemsPrompt, model)
+      llmService.queryComplete(actionItemsPrompt, model)
         .then(actionItems => {
           callback(summary, actionItems);
         })
@@ -1758,28 +1306,7 @@ function triggerOllamaSummary(transcriptText, callback) {
 }
 
 async function queryOllama(prompt, model, systemPrompt = '') {
-  try {
-    const response = await fetch('http://localhost:11434/api/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: model,
-        prompt: prompt,
-        system: systemPrompt,
-        stream: false
-      })
-    });
-    
-    if (!response.ok) {
-      throw new Error(`HTTP error ${response.status}`);
-    }
-    
-    const data = await response.json();
-    return data.response;
-  } catch (error) {
-    console.error('Failed to communicate with local Ollama service', error);
-    throw error;
-  }
+  return llmService.queryComplete(prompt, model, systemPrompt);
 }
 
 // ----------------------------------------------------
@@ -1899,7 +1426,7 @@ ipcMain.handle('chat:query', async (event, query, activeTranscriptText) => {
   try {
     const model = settings.selectedLlm;
     const rows = await dbAll("SELECT title, date, summary, actionItems, mixNotes, enhancedNotes FROM sessions");
-    
+
     let historyContext = "Here is the context of past calls:\n";
     rows.forEach(r => {
       historyContext += `- [${r.date}] Title: ${r.title}\n`;
@@ -1907,43 +1434,63 @@ ipcMain.handle('chat:query', async (event, query, activeTranscriptText) => {
       if (r.actionItems) historyContext += `  Action Items: ${r.actionItems}\n`;
       historyContext += `\n`;
     });
-    
+
     const systemPrompt = `You are an offline AI meeting assistant. You have access to the active call's transcript and the history of all past calls.
 Use this context to answer the user's question accurately.
 Be concise, helpful, and write your responses using clean Markdown format (headers, bold, list items, etc.) for great readability in the chat panel. Do not include loose asterisks.`;
-    
+
     const userPrompt = `${historyContext}
 Active Call Transcript:
 ${activeTranscriptText || 'No active transcript.'}
 
 User Question:
 ${query}`;
-    
-    return await queryOllama(userPrompt, model, systemPrompt);
+
+    const requestId = `chat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    void llmService.streamToWindow(mainWindow, requestId, userPrompt, model, systemPrompt).catch((err) => {
+      console.error('Chat stream error', err);
+    });
+    return { requestId };
   } catch (err) {
     console.error("Chat query error", err);
-    return "Could not query local AI model. Please verify Ollama is running.";
+    return {
+      requestId: null,
+      error: "Could not query local AI model. Please verify Ollama is running."
+    };
   }
 });
 
-ipcMain.handle('chat:mix-enhance', async (event, jots, transcriptText) => {
+ipcMain.handle('chat:mix-enhance', async (event, payload) => {
   try {
-    const model = settings.selectedLlm;
-    const systemPrompt = settings.notePromptTemplate || DEFAULT_PROMPTS.executive;
-    
-    const userPrompt = `User's Rough Jots:
-${jots || 'No jots provided.'}
+    const transcript = Array.isArray(payload?.transcript) ? payload.transcript : [];
+    const editorDocument = documentFromSession({
+      mixNotes: payload?.plainText || payload?.jots || '',
+      editorDocument: payload?.editorDocument || null
+    });
 
-Raw Transcript:
-${transcriptText || 'No transcript text available.'}
+    const result = await enhanceNotesService.enhanceDocument({
+      editorDocument,
+      fullTranscript: enhanceNotesService.buildFullTranscript(transcript),
+      model: settings.selectedLlm,
+      systemPrompt: settings.notePromptTemplate || DEFAULT_PROMPTS.executive
+    });
 
-Enhanced Notes:`;
-    
-    return await queryOllama(userPrompt, model, systemPrompt);
+    if (!result) {
+      return { success: false, error: 'Add some jots before enhancing notes.' };
+    }
+
+    return { success: true, ...result };
   } catch (err) {
     console.error("Mix & Enhance error", err);
-    return "Failed to run Mix & Enhance. Please ensure Ollama is running and the model is loaded.";
+    return {
+      success: false,
+      error: "Failed to run Mix & Enhance. Please ensure Ollama is running and the model is loaded."
+    };
   }
+});
+
+ipcMain.handle('llm:cancel', (event, requestId) => {
+  return { success: llmService.cancelStream(requestId) };
 });
 
 ipcMain.handle('models:get-specs', () => {
@@ -2368,7 +1915,7 @@ ipcMain.handle('calls:export-obsidian', async (event, folderId, exportDir) => {
           mdContent += `Tags: ${session.tags.map(t => `#${t}`).join(' ')}\n`;
         }
         mdContent += `\n---\n\n`;
-        mdContent += `## Jots (Manual Notes)\n${session.mixNotes || 'No manual jots.'}\n\n`;
+        mdContent += `## Jots (Manual Notes)\n${session.mixNotes || session.editorDocument?.plainText || 'No manual jots.'}\n\n`;
         mdContent += `## Blended Notes (AI Enhanced)\n${session.enhancedNotes || 'No enhanced notes.'}\n\n`;
         mdContent += `## Highlights Summary\n${session.summary || 'No summary.'}\n\n`;
         mdContent += `## Action Items\n${session.actionItems || 'No action items.'}\n`;
@@ -2422,15 +1969,29 @@ ipcMain.handle('calls:move-to-folder', async (event, sessionId, folderId) => {
   }
 });
 
-// Tasks Management (v0.2)
+// Tasks Management (v0.3)
+async function saveTaskToDb(task) {
+  await dbRun(`INSERT INTO tasks (
+    id, text, assignee, completed, dueDate, omitted,
+    sourceCallId, sourceCallTitle, sourceSegmentId, sourceTimestamp
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+    task.id,
+    task.text,
+    task.assignee || 'Unassigned',
+    task.completed ? 1 : 0,
+    task.dueDate || '',
+    task.omitted ? 1 : 0,
+    task.sourceCallId,
+    task.sourceCallTitle || '',
+    task.sourceSegmentId || '',
+    task.sourceTimestamp || ''
+  ]);
+}
+
 async function getTasksListFromDb() {
   try {
     const rows = await dbAll("SELECT * FROM tasks");
-    return rows.map(r => ({
-      ...r,
-      completed: r.completed === 1,
-      omitted: r.omitted === 1
-    }));
+    return rows.map(formatTaskRow);
   } catch (err) {
     console.error("Error getting tasks from DB:", err);
     return [];
@@ -2443,11 +2004,10 @@ ipcMain.handle('tasks:get', async () => {
 
 ipcMain.handle('tasks:toggle', async (event, taskId) => {
   try {
-    const task = await dbGet("SELECT * FROM tasks WHERE id = ?", [taskId]);
+    const task = formatTaskRow(await dbGet("SELECT * FROM tasks WHERE id = ?", [taskId]));
     if (task) {
-      const newCompleted = task.completed === 1 ? 0 : 1;
-      await dbRun("UPDATE tasks SET completed = ? WHERE id = ?", [newCompleted, taskId]);
-      task.completed = newCompleted === 1;
+      task.completed = !task.completed;
+      await dbRun("UPDATE tasks SET completed = ? WHERE id = ?", [task.completed ? 1 : 0, taskId]);
       return { success: true, task };
     }
     return { success: false, error: 'Task not found' };
@@ -2469,10 +2029,8 @@ ipcMain.handle('tasks:set-omitted', async (event, taskId, omitted) => {
   try {
     const omittedVal = omitted ? 1 : 0;
     await dbRun("UPDATE tasks SET omitted = ? WHERE id = ?", [omittedVal, taskId]);
-    const task = await dbGet("SELECT * FROM tasks WHERE id = ?", [taskId]);
+    const task = formatTaskRow(await dbGet("SELECT * FROM tasks WHERE id = ?", [taskId]));
     if (task) {
-      task.completed = task.completed === 1;
-      task.omitted = task.omitted === 1;
       return { success: true, task };
     }
     return { success: false, error: 'Task not found' };
@@ -2519,6 +2077,11 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
   });
+});
+
+app.on('before-quit', () => {
+  transcriptionService.shutdown();
+  audioCaptureService.stopFfmpeg().catch(() => {});
 });
 
 app.on('window-all-closed', () => {

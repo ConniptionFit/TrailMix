@@ -1,11 +1,18 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <title>TrailMix - Local AI Notes & Transcription</title>
+  <script>
+    (function () {
+      var theme = localStorage.getItem('trailmix-theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', theme);
+    })();
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="themes.css">
   <link rel="stylesheet" href="index.css">
   <style>
     /* Campfire Preserves folders (v0.2 UI styling) */
@@ -136,28 +143,29 @@
   <!-- Main App Window -->
   <div id="main-app" class="app-layout">
     
-    <!-- Sidebar -->
-    <aside class="sidebar">
+    <!-- The Trail (sidebar) -->
+    <aside id="sidebar" class="sidebar">
       <div class="sidebar-header">
+        <button id="btn-trail-toggle" class="btn-trail-toggle" title="Toggle The Trail" aria-label="Toggle The Trail">≡</button>
         <img src="../assets/logo.png" alt="TrailMix Logo" class="app-logo">
-        <h2>TrailMix</h2>
+        <h2 class="sidebar-brand">TrailMix</h2>
       </div>
       
       <div class="sidebar-menu">
         <button id="nav-dashboard" class="sidebar-btn active">
-          <span class="icon">📊</span> Dashboard
+          <span class="icon">🎙</span><span class="sidebar-label">Live Session</span>
         </button>
         <button id="nav-calendar" class="sidebar-btn">
-          <span class="icon">📅</span> Calendar
+          <span class="icon">📅</span><span class="sidebar-label">Calendar</span>
         </button>
         <button id="nav-action-items" class="sidebar-btn">
-          <span class="icon">📋</span> Action Items
+          <span class="icon">📋</span><span class="sidebar-label">Action Items</span>
         </button>
         <button id="nav-history" class="sidebar-btn">
-          <span class="icon">📜</span> Call History
+          <span class="icon">📜</span><span class="sidebar-label">Full Trail</span>
         </button>
-        <button id="nav-settings" class="sidebar-btn">
-          <span class="icon">⚙️</span> Settings
+        <button id="nav-settings" class="sidebar-btn sidebar-btn-settings">
+          <span class="icon">⚙️</span><span class="sidebar-label">Nuts and Bolts</span>
         </button>
       </div>
 
@@ -171,9 +179,9 @@
         </div>
       </div>
 
-      <div class="sidebar-history-section">
+      <div class="sidebar-history-section sidebar-trail-body">
         <div class="sidebar-history-header" style="position: relative;">
-          <h3>Recent Transcriptions</h3>
+          <h3>The Trail</h3>
           <button id="btn-history-menu" class="icon-btn-toggle" title="History Menu">☰</button>
           
           <!-- History Menu Dropdown -->
@@ -296,7 +304,7 @@
             <div class="analysis-tabs">
               <button id="btn-show-summary" class="analysis-tab-btn active">Highlights</button>
               <button id="btn-show-actions" class="analysis-tab-btn">Action Items</button>
-              <button id="btn-show-mix" class="analysis-tab-btn">Mix Notes</button>
+              <button id="btn-show-mix" class="analysis-tab-btn" data-tab="mix">The Mix</button>
             </div>
 
             <div class="analysis-content">
@@ -306,23 +314,22 @@
               <div id="action-content" class="analysis-text hidden">
                 <p class="placeholder-text">Action items will be extracted at the end of the transcription session.</p>
               </div>
-              <div id="mix-content" class="analysis-text hidden" style="display: flex; flex-direction: column; gap: 12px; height: 100%;">
-                <div class="mix-editor-container" style="display: flex; flex-direction: column; gap: 6px; flex-grow: 1; min-height: 140px;">
-                  <label for="textarea-mix-jots" style="font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Your Rough Jots</label>
-                  <textarea id="textarea-mix-jots" class="input-chat" style="flex-grow: 1; resize: none; font-family: inherit; font-size: 12px; line-height: 1.5; padding: 10px;" placeholder="Jot down quick thoughts, shorthand, or talking points during the meeting..."></textarea>
-                </div>
-                
-                <div style="display: flex; justify-content: flex-end; gap: 8px; align-items: center; margin-top: 4px;">
-                  <button id="btn-mix-enhance" class="btn-primary" style="font-size: 12px; padding: 8px 14px; font-weight: 600; display: flex; align-items: center; gap: 6px;">
-                    ✨ Mix & Enhance
-                  </button>
-                </div>
-                
-                <div class="mix-enhanced-container" style="display: flex; flex-direction: column; gap: 6px; flex-grow: 1; min-height: 140px; border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 12px;">
-                  <label style="font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Enhanced Notes Preview</label>
-                  <div id="mix-enhanced-preview" class="analysis-text" style="flex-grow: 1; overflow-y: auto; padding: 10px; background: rgba(0, 0, 0, 0.15); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 6px; min-height: 120px;">
-                    <p class="placeholder-text">Your enhanced notes will display here after you click "Mix & Enhance".</p>
-                  </div>
+              <div id="mix-content" class="analysis-text mix-stage hidden">
+                <div class="main-stage-inner">
+                  <header class="mix-stage-header">
+                    <h2>The Mix</h2>
+                    <p>Jot quick thoughts during the meeting. When you're ready, blend them with the full transcript using local AI.</p>
+                  </header>
+                  <div id="editor-component-root" class="editor-component-host"></div>
+                  <footer class="mix-stage-footer">
+                    <p id="editor-legend" class="editor-legend hidden">
+                      <span class="legend-user">Bold</span> = your jots ·
+                      <span class="legend-ai">Gray</span> = AI context from the transcript
+                    </p>
+                    <button id="btn-mix-enhance" class="btn-mix" type="button">
+                      ✨ Start the Mix
+                    </button>
+                  </footer>
                 </div>
               </div>
             </div>
@@ -411,14 +418,27 @@
         </div>
       </section>
 
-      <!-- Settings Tab -->
+      <!-- Nuts and Bolts -->
       <section id="tab-settings" class="tab-pane">
         <div class="tab-header">
-          <h1>Settings</h1>
-          <p>Configure Offline Models and Privacy Credentials</p>
+          <h1>Nuts and Bolts</h1>
+          <p>Configure offline models, appearance, and privacy credentials</p>
         </div>
         
         <div class="settings-grid">
+          <!-- Appearance -->
+          <div class="card glassmorphic settings-card">
+            <h2>Appearance</h2>
+            <div class="settings-field">
+              <label>Theme</label>
+              <div class="theme-toggle-group" role="group" aria-label="Theme selection">
+                <button id="btn-theme-dark" class="theme-toggle-btn active" type="button">Dark</button>
+                <button id="btn-theme-light" class="theme-toggle-btn" type="button">Light</button>
+              </div>
+              <p class="field-desc">Dark mode uses the classic TrailMix palette. Light mode is a clean, paper-like reading experience.</p>
+            </div>
+          </div>
+
           <!-- Hardware Recommendations -->
           <div class="card glassmorphic settings-card">
             <h2>Hardware Profiler</h2>
@@ -538,7 +558,7 @@
             <h2>LLM Prompt Customization</h2>
             
             <div class="settings-field">
-              <label for="select-note-style">Note-Taking Style (Mix & Enhance Prompt)</label>
+              <label for="select-note-style">Note-Taking Style (The Mix Prompt)</label>
               <select id="select-note-style" class="input-select">
                 <option value="executive">Elite Executive Assistant (Default)</option>
                 <option value="technical">Technical & Engineering Specs</option>
@@ -676,6 +696,7 @@
   <!-- Global Tooltip Element -->
   <div id="global-tooltip" class="global-tooltip-el hidden"></div>
 
+  <script src="EditorComponent.js"></script>
   <script src="index.js"></script>
 </body>
 </html>
