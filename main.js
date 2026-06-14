@@ -44,6 +44,7 @@ const {
   resolveSessionFilePath,
   relativePathFromFolderId
 } = require('./lib/storage-layout');
+const { resolveWhisperCli } = require('./lib/resolve-whisper-cli');
 const sqlite3 = require('sqlite3').verbose();
 
 // XDG Compliant Database Path
@@ -275,14 +276,15 @@ function broadcastToSession(sessionId, channel, payload) {
 }
 
 function broadcastRecordingStatus(extra = {}) {
+  const sessionId = extra.sessionId ?? activeRecordingSessionId;
   const payload = {
     isRecording,
     isPaused,
-    sessionId: activeRecordingSessionId,
+    sessionId,
     ...extra
   };
-  if (activeRecordingSessionId) {
-    broadcastToSession(activeRecordingSessionId, 'audio:on-recording-status', payload);
+  if (sessionId) {
+    broadcastToSession(sessionId, 'audio:on-recording-status', payload);
   }
 }
 
@@ -498,6 +500,50 @@ function initDatabase() {
   });
 }
 
+async function ensureFolderRecord(folderId, { name, icon, description } = {}) {
+  if (!folderId) return null;
+  await dbRun(
+    'INSERT OR IGNORE INTO folders (id, name, icon, description) VALUES (?, ?, ?, ?)',
+    [folderId, name || folderId, icon || '📁', description || '']
+  );
+  return folderId;
+}
+
+async function syncFilesystemFoldersToDb() {
+  const callsDir = getCallsDir();
+  const { folders } = scanStorageLayout(callsDir);
+  for (const folder of folders) {
+    if (folder.id === ROOT_FOLDER_ID) continue;
+    await ensureFolderRecord(folder.id, {
+      name: folder.name,
+      icon: folder.icon,
+      description: folder.description
+    });
+  }
+  const legacyFolders = [
+    { id: 'work', name: 'Work', icon: '💼', description: 'Professional meetings' },
+    { id: 'personal', name: 'Personal', icon: '🏠', description: 'Personal notes' },
+    { id: 'drafts', name: 'Drafts', icon: '📝', description: 'Draft notes' }
+  ];
+  for (const folder of legacyFolders) {
+    await ensureFolderRecord(folder.id, folder);
+  }
+}
+
+async function normalizeFolderIdForSave(folderId) {
+  const normalized = folderId || UNCATEGORIZED_FOLDER_ID;
+  await syncFilesystemFoldersToDb();
+  const displayName = normalized === UNCATEGORIZED_FOLDER_ID
+    ? 'Trail (root)'
+    : normalized.replace(/^fs:/, '') || normalized;
+  await ensureFolderRecord(normalized, {
+    name: displayName,
+    icon: normalized === UNCATEGORIZED_FOLDER_ID ? '🥣' : '📁',
+    description: ''
+  });
+  return normalized;
+}
+
 async function migrateFolderColumns() {
   const columns = await dbAll("PRAGMA table_info(folders)");
   const columnNames = columns.map((column) => column.name);
@@ -521,6 +567,7 @@ async function migrateOldData() {
     }
 
     await migrateFolderColumns();
+    await syncFilesystemFoldersToDb();
 
     // 2. Tasks migration
     const TASKS_FILE = path.join(DATA_DIR, 'tasks.json');
@@ -618,6 +665,7 @@ async function migrateOldData() {
 }
 
 async function upsertSessionFromTrailFile({ sessionId, filePath, folderId }) {
+  const normalizedFolderId = await normalizeFolderIdForSave(folderId);
   const rawContent = fs.readFileSync(filePath, 'utf8');
   const isEncrypted = rawContent.includes('"salt"') && rawContent.includes('"iv"');
   const stat = fs.statSync(filePath);
@@ -645,7 +693,7 @@ async function upsertSessionFromTrailFile({ sessionId, filePath, folderId }) {
           data.enhancedNotes || '',
           0,
           JSON.stringify(data),
-          folderId,
+          normalizedFolderId,
           mtimeMs,
           JSON.stringify(data.tags || []),
           JSON.stringify(data.suggestedTags || [])
@@ -668,7 +716,7 @@ async function upsertSessionFromTrailFile({ sessionId, filePath, folderId }) {
       '', '', '', '',
       1,
       rawContent,
-      folderId,
+      normalizedFolderId,
       mtimeMs,
       tagsStr,
       suggestedTagsStr
@@ -697,7 +745,7 @@ async function upsertSessionFromTrailFile({ sessionId, filePath, folderId }) {
     data.enhancedNotes || '',
     0,
     JSON.stringify(data),
-    folderId,
+    normalizedFolderId,
     mtimeMs,
     JSON.stringify(data.tags || []),
     JSON.stringify(data.suggestedTags || [])
@@ -706,6 +754,7 @@ async function upsertSessionFromTrailFile({ sessionId, filePath, folderId }) {
 
 async function syncDatabaseWithFiles() {
   try {
+    await syncFilesystemFoldersToDb();
     const callsDir = getCallsDir();
     const { trailFiles } = scanStorageLayout(callsDir);
     const existingIds = new Set(trailFiles.map((file) => file.sessionId));
@@ -934,7 +983,9 @@ async function saveSessionToDbPromise(session) {
   const tagsStr = JSON.stringify(session.tags || []);
   const suggestedTagsStr = JSON.stringify(session.suggestedTags || []);
   const mtimeMs = Date.now();
-  
+  const folderId = await normalizeFolderIdForSave(session.folder_id);
+  session.folder_id = folderId;
+
   try {
     const isEncrypted = session.encrypted ? 1 : 0;
     const password = decryptionKeys.get(session.id) || settings.encryptionPassword;
@@ -948,7 +999,7 @@ async function saveSessionToDbPromise(session) {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
         session.id, session.date || '', session.title || 'Meeting Session',
         session.description || 'No description available.', '', '', '', '',
-        1, payload, session.folder_id || UNCATEGORIZED_FOLDER_ID, mtimeMs, tagsStr, suggestedTagsStr
+        1, payload, folderId, mtimeMs, tagsStr, suggestedTagsStr
       ]);
       decryptionKeys.set(session.id, password);
     } else {
@@ -960,15 +1011,14 @@ async function saveSessionToDbPromise(session) {
         session.id, session.date || '', session.title || 'Meeting Session',
         session.description || 'No description available.', session.summary || '',
         session.actionItems || '', session.mixNotes || '', session.enhancedNotes || '',
-        0, payload, session.folder_id || UNCATEGORIZED_FOLDER_ID, mtimeMs, tagsStr, suggestedTagsStr
+        0, payload, folderId, mtimeMs, tagsStr, suggestedTagsStr
       ]);
     }
-    
+
     const callsDir = getCallsDir();
     if (!fs.existsSync(callsDir)) {
       fs.mkdirSync(callsDir, { recursive: true });
     }
-    const folderId = session.folder_id || UNCATEGORIZED_FOLDER_ID;
     const filePath = resolveSessionFilePath(callsDir, session.id, folderId);
     const fileDir = path.dirname(filePath);
     if (!fs.existsSync(fileDir)) {
@@ -1112,12 +1162,16 @@ async function stopRecordingHandler() {
   }
 
   setTimeout(async () => {
-    await audioCaptureService.flushRemainingChunks();
-    await transcriptionService.waitForIdle();
-    await finalizeAndSaveSession();
-    if (stoppingSessionId) {
-      const session = getSession(stoppingSessionId) || await loadSessionPayloadFromDb(stoppingSessionId);
-      if (session) broadcastToSession(stoppingSessionId, 'session:updated', session);
+    try {
+      await audioCaptureService.flushRemainingChunks();
+      await transcriptionService.waitForIdle();
+      await finalizeAndSaveSession();
+      if (stoppingSessionId) {
+        const session = getSession(stoppingSessionId) || await loadSessionPayloadFromDb(stoppingSessionId);
+        if (session) broadcastToSession(stoppingSessionId, 'session:updated', session);
+      }
+    } catch (err) {
+      console.error('Error finalizing recording session:', err);
     }
   }, 1000);
 }
@@ -1608,9 +1662,14 @@ ipcMain.handle('audio:start-recording', async (event, sessionId) => {
   return await startRecordingHandler(sessionId);
 });
 
-ipcMain.handle('audio:stop-recording', () => {
-  stopRecordingHandler();
-  return true;
+ipcMain.handle('audio:stop-recording', async () => {
+  try {
+    await stopRecordingHandler();
+    return { success: true };
+  } catch (err) {
+    console.error('Stop recording failed:', err);
+    return { success: false, error: err.message };
+  }
 });
 
 ipcMain.handle('audio:pause-recording', () => {
@@ -2273,6 +2332,11 @@ ipcMain.handle('folders:create', async (event, payload) => {
   try {
     const name = typeof payload === 'string' ? payload : payload?.name;
     const folder = ensureFolderDir(getCallsDir(), name);
+    await ensureFolderRecord(folder.id, {
+      name: folder.name,
+      icon: payload?.icon || '📁',
+      description: payload?.description || ''
+    });
     return { success: true, folder };
   } catch (err) {
     return { success: false, error: err.message };
@@ -2504,9 +2568,17 @@ function cleanupStaleLoopbackModules() {
 app.whenReady().then(async () => {
   cleanupStaleLoopbackModules();
   await initDatabase();
+  await migrateOldData();
+  await syncFilesystemFoldersToDb();
   await sessionProcessingService.initSchema();
   await sessionProcessingService.recoverInterruptedJobs();
   createHubWindow();
+  const whisperCli = resolveWhisperCli(WHISPER_DIR);
+  if (!fs.existsSync(whisperCli)) {
+    console.warn(
+      `Whisper binary missing at ${whisperCli}. Transcription will not work until you run: ./scripts/setup-whisper.sh`
+    );
+  }
   updateService.configure({
     getHubWindow,
     getAutoUpdateEnabled: () => settings.autoUpdateEnabled !== false

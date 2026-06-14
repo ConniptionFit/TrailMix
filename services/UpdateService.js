@@ -58,7 +58,11 @@ class UpdateService {
     });
 
     autoUpdater.on('error', (err) => {
-      this.setStatus({ state: 'error', error: err.message });
+      let message = err.message || 'Update check failed';
+      if (/404|could not be found|No published versions/i.test(message)) {
+        message = 'No GitHub release found. Publish a release with built installers to enable updates. Private repos require a GH_TOKEN in the environment.';
+      }
+      this.setStatus({ state: 'error', error: message });
     });
   }
 
@@ -86,7 +90,11 @@ class UpdateService {
       }
       return this.status;
     } catch (err) {
-      this.setStatus({ state: 'error', error: err.message });
+      let message = err.message || 'Update check failed';
+      if (/404|could not be found|No published versions/i.test(message)) {
+        message = 'No GitHub release found. Publish a release with built installers to enable updates. Private repos require a GH_TOKEN in the environment.';
+      }
+      this.setStatus({ state: 'error', error: message });
       return this.status;
     }
   }
