@@ -23,11 +23,23 @@ fi
 
 echo "Compiling whisper.cpp..."
 cd "${WHISPER_DIR}"
-make -j$(nproc)
+if [ -f CMakeLists.txt ]; then
+  cmake -B build
+  cmake --build build --config Release -j"$(nproc)"
+else
+  make -j"$(nproc)"
+fi
 
 echo "Downloading GGML Whisper models..."
 # Download ggml-tiny.bin and ggml-base.bin
 ./models/download-ggml-model.sh tiny
 ./models/download-ggml-model.sh base
 
-echo "Whisper setup complete! Binary is at ${WHISPER_DIR}/main"
+echo "Whisper setup complete!"
+if [ -f "${WHISPER_DIR}/build/bin/whisper-cli" ]; then
+  echo "Binary: ${WHISPER_DIR}/build/bin/whisper-cli"
+elif [ -f "${WHISPER_DIR}/main" ]; then
+  echo "Binary: ${WHISPER_DIR}/main"
+else
+  echo "Warning: whisper binary not found — check build output above."
+fi

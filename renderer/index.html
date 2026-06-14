@@ -154,6 +154,9 @@
       <div class="sidebar-space sidebar-space-workspace">
         <h3 class="sidebar-space-label">Workspace</h3>
         <div class="sidebar-menu">
+          <button id="nav-home" class="sidebar-btn active">
+            <span class="icon">🏠</span><span class="sidebar-label">Home</span>
+          </button>
           <button id="btn-new-meeting" class="sidebar-btn sidebar-btn-primary">
             <span class="icon">➕</span><span class="sidebar-label">New Meeting</span>
           </button>
@@ -596,6 +599,30 @@
       <span class="global-ask-hint">Ctrl+J</span>
     </div>
 
+  </div>
+
+  <!-- Folder Create/Edit Modal -->
+  <div id="folder-modal" class="modal hidden">
+    <div class="modal-content glassmorphic">
+      <h2 id="folder-modal-title">New Folder</h2>
+      <p class="field-desc">Folders organize notes and give AI extra context.</p>
+      <div class="modal-field">
+        <label for="folder-modal-name">Name</label>
+        <input type="text" id="folder-modal-name" class="input-text" placeholder="Folder name">
+      </div>
+      <div class="modal-field">
+        <label for="folder-modal-icon">Icon (emoji)</label>
+        <input type="text" id="folder-modal-icon" class="input-text" placeholder="📁" maxlength="4">
+      </div>
+      <div class="modal-field">
+        <label for="folder-modal-description">Description</label>
+        <input type="text" id="folder-modal-description" class="input-text" placeholder="Optional context for AI">
+      </div>
+      <div class="modal-actions">
+        <button id="btn-folder-modal-cancel" class="btn-secondary" type="button">Cancel</button>
+        <button id="btn-folder-modal-save" class="btn-primary" type="button">Save</button>
+      </div>
+    </div>
   </div>
 
   <!-- Password Entry Modal -->

@@ -348,13 +348,27 @@
   });
 
   // Meeting chat
+  const meetingApp = document.getElementById('meeting-app');
   const chatWidget = document.getElementById('meeting-chat-widget');
   const chatMessages = document.getElementById('chat-messages');
   const inputChatQuery = document.getElementById('input-chat-query');
   const CHAT_WELCOME = chatMessages?.innerHTML || '';
+  const DOCK_CHAT_MIN_WIDTH = 1080;
+  let chatUserDismissed = false;
+
+  function updateMeetingLayout() {
+    if (!meetingApp || !chatWidget) return;
+    const dockChat = window.innerWidth >= DOCK_CHAT_MIN_WIDTH;
+    meetingApp.classList.toggle('chat-docked', dockChat);
+    if (dockChat && !chatUserDismissed) {
+      chatWidget.classList.remove('closed');
+    }
+  }
 
   function toggleChat(open) {
+    if (!chatWidget) return;
     chatWidget.classList.toggle('closed', !open);
+    chatUserDismissed = !open;
   }
 
   function clearChat() {
@@ -367,6 +381,9 @@
     toggleChat(false);
     clearChat();
   });
+
+  window.addEventListener('resize', updateMeetingLayout);
+  updateMeetingLayout();
 
   function appendChatMessage(sender, text) {
     messageCounter += 1;

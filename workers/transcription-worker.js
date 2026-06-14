@@ -9,6 +9,7 @@ const execFileAsync = promisify(execFile);
 const { checkVoiceActivity } = require('../lib/audio-vad');
 const { secureShredFile } = require('../lib/secure-shred');
 const { applyAecToWavBuffers } = require('../lib/audio-aec');
+const { resolveWhisperCli } = require('../lib/resolve-whisper-cli');
 
 async function splitStereoChannels(chunkWavPath, leftWavPath, rightWavPath) {
   await execFileAsync('ffmpeg', [
@@ -91,11 +92,13 @@ async function processChunk(job) {
     aecMode = 'off'
   } = job;
 
-  const whisperCli = path.join(whisperDir, 'build', 'bin', 'whisper-cli');
+  const whisperCli = resolveWhisperCli(whisperDir);
   const whisperModel = path.join(whisperDir, 'models', selectedModel);
 
   if (!fs.existsSync(whisperCli)) {
-    throw new Error(`Whisper.cpp binary not found at ${whisperCli}`);
+    throw new Error(
+      `Whisper.cpp binary not found. Run ./scripts/setup-whisper.sh (tried ${whisperCli})`
+    );
   }
   if (!fs.existsSync(whisperModel)) {
     throw new Error(`Whisper model not found at ${whisperModel}`);

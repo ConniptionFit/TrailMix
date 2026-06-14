@@ -258,6 +258,7 @@ if (isMiniMode) {
   initTrailSidebar();
   
   // Navigation Tabs
+  const navHome = document.getElementById('nav-home');
   const navCalendar = document.getElementById('nav-calendar');
   const navActionItems = document.getElementById('nav-action-items');
   const navHistory = document.getElementById('nav-history');
@@ -269,12 +270,42 @@ if (isMiniMode) {
   const tabSettings = document.getElementById('tab-settings');
   
   const tabs = [
-    { nav: null, pane: tabHubHome },
+    { nav: navHome, pane: tabHubHome },
     { nav: navCalendar, pane: tabCalendar },
     { nav: navActionItems, pane: tabActionItems },
     { nav: navHistory, pane: tabHistory },
     { nav: navSettings, pane: tabSettings }
   ].filter((tab) => tab.pane);
+
+  function hideGlobalTooltip() {
+    if (tooltipTimeout) {
+      clearTimeout(tooltipTimeout);
+      tooltipTimeout = null;
+    }
+    if (globalTooltip) {
+      globalTooltip.classList.remove('visible');
+      globalTooltip.classList.add('hidden');
+    }
+  }
+
+  function activateTab(tab) {
+    if (!tab?.pane) return;
+    hideGlobalTooltip();
+    tabs.forEach((t) => {
+      t.nav?.classList.remove('active');
+      t.pane?.classList.remove('active');
+    });
+    tab.nav?.classList.add('active');
+    tab.pane.classList.add('active');
+
+    if (tab.nav === navHistory) {
+      loadHistoryList();
+    } else if (tab.nav === navCalendar) {
+      renderCalendar();
+    } else if (tab.nav === navActionItems) {
+      renderActionItems();
+    }
+  }
   
   function openMeetingForCall(call) {
     const sessionId = call.id || (call.filePath ? call.filePath.replace(/\.trail.*$/, '').split('/').pop() : null);
@@ -289,23 +320,7 @@ if (isMiniMode) {
   
   tabs.forEach(tab => {
     if (!tab.nav) return;
-    tab.nav.addEventListener('click', () => {
-      tabs.forEach(t => {
-        t.nav.classList.remove('active');
-        t.pane.classList.remove('active');
-      });
-      tab.nav.classList.add('active');
-      tab.pane.classList.add('active');
-      
-      // Refresh context when switching tabs
-      if (tab.nav === navHistory) {
-        loadHistoryList();
-      } else if (tab.nav === navCalendar) {
-        renderCalendar();
-      } else if (tab.nav === navActionItems) {
-        renderActionItems();
-      }
-    });
+    tab.nav.addEventListener('click', () => activateTab(tab));
   });
 
   // Recording Controls
@@ -1417,11 +1432,7 @@ if (isMiniMode) {
             <p class="text-xs text-slate-400 line-clamp-3 leading-relaxed">${call.encrypted ? 'Encrypted session' : (call.summary || 'No summary available.')}</p>
           `;
           card.addEventListener('click', () => {
-            tabs.forEach(t => {
-              t.nav?.classList.remove('active');
-              t.pane.classList.remove('active');
-            });
-            if (tabHubHome) tabHubHome.classList.add('active');
+            activateTab({ nav: navHome, pane: tabHubHome });
             openMeetingForCall(call);
           });
           historyGrid.appendChild(card);
@@ -1495,12 +1506,7 @@ if (isMiniMode) {
 
         item.querySelector('.btn-folder-edit').addEventListener('click', (e) => {
           e.stopPropagation();
-          const icon = prompt('Folder icon (emoji):', folder.icon || '📁') || folder.icon || '📁';
-          const description = prompt('Folder description (informs AI context):', folder.description || '') || '';
-          const name = prompt('Folder name:', folder.name) || folder.name;
-          window.api.updateFolder({ id: folder.id, name, icon, description }).then((res) => {
-            if (res.success) renderFolders();
-          });
+          openFolderModal({ mode: 'edit', folder });
         });
 
         // Delete Folder
@@ -1572,22 +1578,71 @@ if (isMiniMode) {
     });
   }
 
+  // Folder modal (Electron does not support prompt())
+  const folderModal = document.getElementById('folder-modal');
+  const folderModalTitle = document.getElementById('folder-modal-title');
+  const folderModalName = document.getElementById('folder-modal-name');
+  const folderModalIcon = document.getElementById('folder-modal-icon');
+  const folderModalDescription = document.getElementById('folder-modal-description');
+  const btnFolderModalCancel = document.getElementById('btn-folder-modal-cancel');
+  const btnFolderModalSave = document.getElementById('btn-folder-modal-save');
+  let folderModalMode = 'create';
+  let folderModalTargetId = null;
+
+  function openFolderModal({ mode = 'create', folder = null } = {}) {
+    if (!folderModal) return;
+    folderModalMode = mode;
+    folderModalTargetId = folder?.id || null;
+    folderModalTitle.textContent = mode === 'edit' ? 'Edit Folder' : 'New Folder';
+    folderModalName.value = folder?.name || '';
+    folderModalIcon.value = folder?.icon || '📁';
+    folderModalDescription.value = folder?.description || '';
+    folderModal.classList.remove('hidden');
+    folderModalName.focus();
+  }
+
+  function closeFolderModal() {
+    if (!folderModal) return;
+    folderModal.classList.add('hidden');
+    folderModalTargetId = null;
+  }
+
+  function saveFolderModal() {
+    const name = folderModalName?.value.trim();
+    if (!name) return;
+    const icon = folderModalIcon?.value.trim() || '📁';
+    const description = folderModalDescription?.value.trim() || '';
+
+    if (folderModalMode === 'edit' && folderModalTargetId) {
+      window.api.updateFolder({ id: folderModalTargetId, name, icon, description }).then((res) => {
+        if (res.success) {
+          closeFolderModal();
+          renderFolders();
+        }
+      });
+      return;
+    }
+
+    window.api.createFolder({ name, icon, description }).then((res) => {
+      if (res.success) {
+        closeFolderModal();
+        renderFolders();
+      } else {
+        alert('Error creating folder: ' + res.error);
+      }
+    });
+  }
+
+  btnFolderModalCancel?.addEventListener('click', closeFolderModal);
+  btnFolderModalSave?.addEventListener('click', saveFolderModal);
+  folderModalName?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') saveFolderModal();
+  });
+
   // Add Folder Button
   const btnAddFolder = document.getElementById('btn-add-folder');
   if (btnAddFolder) {
-    btnAddFolder.addEventListener('click', () => {
-      const name = prompt('Enter folder name:');
-      if (!name || !name.trim()) return;
-      const icon = prompt('Choose an icon (emoji):', '📁') || '📁';
-      const description = prompt('Folder description (helps AI understand context):', '') || '';
-      window.api.createFolder({ name: name.trim(), icon, description }).then(res => {
-        if (res.success) {
-          renderFolders();
-        } else {
-          alert('Error creating folder: ' + res.error);
-        }
-      });
-    });
+    btnAddFolder.addEventListener('click', () => openFolderModal({ mode: 'create' }));
   }
 
   // Single note Obsidian export
