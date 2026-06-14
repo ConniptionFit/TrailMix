@@ -235,7 +235,10 @@
   document.getElementById('btn-conflict-cancel')?.addEventListener('click', hideConflictModal);
   document.getElementById('btn-conflict-open-current')?.addEventListener('click', async () => {
     const status = await window.api.getRecordingStatus();
-    if (status?.sessionId) window.api.focusMeeting(status.sessionId);
+    if (status?.sessionId) {
+      const focused = await window.api.focusMeeting(status.sessionId);
+      if (!focused?.success) window.api.openMeeting(status.sessionId);
+    }
     hideConflictModal();
   });
   document.getElementById('btn-conflict-stop-current')?.addEventListener('click', async () => {
@@ -268,8 +271,20 @@
     else window.api.resumeRecording();
   });
 
-  btnResumePast?.addEventListener('click', () => {
-    window.api.resumeCallTranscription(activeSession.id);
+  btnResumePast?.addEventListener('click', async () => {
+    if (!activeSession?.id) return;
+    const result = await window.api.resumeCallTranscription(activeSession.id);
+    if (result?.conflict) {
+      showConflictModal(result.activeSessionId);
+      return;
+    }
+    if (result?.requirePassword) {
+      alert('Unlock this Trail with your password before resuming.');
+      return;
+    }
+    if (!result?.success) {
+      alert(result?.error || 'Could not resume this Trail.');
+    }
   });
 
   if (transcriptContainer) {
@@ -298,39 +313,75 @@
     editorTranscriptPanel?.classList.add('closed');
   });
 
-  window.api.onRecordingStatus((status) => {
-    if (status.sessionId && status.sessionId !== sessionId && !status.isRecording) return;
+  function getElapsedSecondsFromTranscript(transcript) {
+    if (!transcript?.length) return 0;
+    const lastSegment = transcript[transcript.length - 1];
+    return Math.max(0, Math.floor((lastSegment.timestampMs || 0) / 1000));
+  }
+
+  function applyRecordingStatus(status) {
+    if (status.sessionId && status.sessionId !== sessionId && status.isRecording) return;
 
     if (status.isRecording && !status.isPaused) {
       btnRecordToggle.className = 'btn-record stop';
       btnRecordToggle.innerHTML = '<span class="btn-icon">⏹</span> Stop Trail';
+      btnPauseToggle.className = 'btn-record pause';
+      btnPauseToggle.innerHTML = '<span class="btn-icon">⏸</span> Pause';
       btnPauseToggle.classList.remove('hidden');
       btnResumePast.classList.add('hidden');
       recIndicator.className = 'rec-indicator-active';
       recTitle.textContent = 'Transcribing…';
+
       if (status.isNewSession) {
         recordingSeconds = 0;
-        recTimer.textContent = '00:00';
+      } else if (!recordingSeconds) {
+        recordingSeconds = getElapsedSecondsFromTranscript(activeSession?.transcript);
       }
+      recTimer.textContent = formatTimerSeconds(recordingSeconds);
+
       clearInterval(recordingInterval);
       recordingInterval = setInterval(() => {
         recordingSeconds += 1;
         recTimer.textContent = formatTimerSeconds(recordingSeconds);
       }, 1000);
       editorWaveformBars?.classList.remove('hidden');
-    } else if (!status.isRecording && status.isPaused) {
+      return;
+    }
+
+    if (!status.isRecording && status.isPaused) {
+      btnRecordToggle.className = 'btn-record stop';
+      btnRecordToggle.innerHTML = '<span class="btn-icon">⏹</span> Stop Trail';
+      btnPauseToggle.className = 'btn-record start';
+      btnPauseToggle.innerHTML = '<span class="btn-icon">▶</span> Resume';
+      btnPauseToggle.classList.remove('hidden');
+      btnResumePast.classList.add('hidden');
+      recIndicator.className = 'rec-indicator-static';
       recTitle.textContent = 'Paused';
       clearInterval(recordingInterval);
-    } else {
-      btnRecordToggle.className = 'btn-record start';
-      btnRecordToggle.innerHTML = '<span class="btn-icon">⏺</span> Start Trail';
-      btnPauseToggle.classList.add('hidden');
-      btnResumePast.classList.toggle('hidden', !(activeSession?.transcript?.length));
-      recIndicator.className = 'rec-indicator-static';
-      recTitle.textContent = 'Engine Idle';
-      clearInterval(recordingInterval);
       editorWaveformBars?.classList.add('hidden');
+      return;
     }
+
+    btnRecordToggle.className = 'btn-record start';
+    btnRecordToggle.innerHTML = '<span class="btn-icon">⏺</span> Start Trail';
+    btnPauseToggle.classList.add('hidden');
+    btnResumePast.classList.toggle('hidden', !(activeSession?.transcript?.length));
+    recIndicator.className = 'rec-indicator-static';
+    recTitle.textContent = 'Engine Idle';
+    clearInterval(recordingInterval);
+    editorWaveformBars?.classList.add('hidden');
+  }
+
+  window.api.onRecordingStatus(applyRecordingStatus);
+
+  window.api.onSpeakerLabelsUpdated?.((mapping) => {
+    if (!activeSession?.transcript?.length || !mapping) return;
+    activeSession.transcript.forEach((segment) => {
+      if (mapping[segment.speaker]) {
+        segment.speaker = mapping[segment.speaker];
+      }
+    });
+    renderTranscript(activeSession.transcript);
   });
 
   window.api.onTranscriptionUpdate((segment) => {
@@ -486,8 +537,13 @@
     renderTranscript(session.transcript || []);
     if (jotEditor) jotEditor.loadDocument(normalizeEditorDocument(session));
     window.api.getRecordingStatus().then((status) => {
-      if (status?.sessionId === sessionId && status.isRecording) {
-        window.api.onRecordingStatus({ isRecording: true, isPaused: status.isPaused, isNewSession: false, sessionId });
+      if (status?.sessionId === sessionId && (status.isRecording || status.isPaused)) {
+        applyRecordingStatus({
+          isRecording: status.isRecording,
+          isPaused: status.isPaused,
+          isNewSession: false,
+          sessionId: status.sessionId
+        });
       }
     });
   });

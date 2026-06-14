@@ -195,7 +195,11 @@ audioCaptureService.configure({
       chunkIndex,
       whisperDir: WHISPER_DIR,
       selectedModel: settings.selectedModel,
-      aecMode: getAecModeForCapture() === 'app' ? 'app' : 'off'
+      aecMode: (() => {
+        if (!settings.enableNoiseCancellation) return 'off';
+        if (settings.aecMode === 'app') return 'app';
+        return 'guard';
+      })()
     });
   },
   onError: () => {
@@ -1046,6 +1050,9 @@ async function startRecordingHandler(requestedSessionId = null) {
   }
 
   if (isRecording && !isPaused) {
+    if (requestedSessionId && requestedSessionId === activeRecordingSessionId) {
+      broadcastRecordingStatus({ isNewSession: false });
+    }
     return { sessionId: activeRecordingSessionId };
   }
 
@@ -1092,6 +1099,11 @@ async function startRecordingHandler(requestedSessionId = null) {
     sessionChunkOffset = activeSession.transcript?.length ? Math.ceil(activeSession.transcript.length / 2) : 0;
   } else {
     await audioCaptureService.prepareTempDir(true);
+    if (requestedSessionId) {
+      activeRecordingSessionId = requestedSessionId;
+    } else if (activeSession?.id) {
+      activeRecordingSessionId = activeSession.id;
+    }
   }
 
   isRecording = true;
@@ -1178,6 +1190,10 @@ async function stopRecordingHandler() {
 
 async function resumeCallTranscriptionHandler(sessionId) {
   try {
+    if (isRecording && activeRecordingSessionId && activeRecordingSessionId !== sessionId) {
+      return { success: false, conflict: true, activeSessionId: activeRecordingSessionId };
+    }
+
     const res = await dbGet("SELECT * FROM sessions WHERE id = ?", [sessionId]);
     if (!res) return { success: false, error: 'Session not found' };
     
@@ -1194,6 +1210,7 @@ async function resumeCallTranscriptionHandler(sessionId) {
     }
     
     activeSession = session;
+    activeRecordingSessionId = sessionId;
     
     // Calculate sessionChunkOffset based on the last segment timestamp
     if (activeSession.transcript && activeSession.transcript.length > 0) {
@@ -1205,8 +1222,18 @@ async function resumeCallTranscriptionHandler(sessionId) {
     
     isPaused = true;
     setSession(session);
+    const meetingWindow = openMeetingWindow(sessionId);
+    const rebroadcastStatus = () => broadcastRecordingStatus({ isNewSession: false });
     await startRecordingHandler(sessionId);
-    openMeetingWindow(sessionId);
+    if (meetingWindow && !meetingWindow.isDestroyed()) {
+      if (meetingWindow.webContents.isLoading()) {
+        meetingWindow.webContents.once('did-finish-load', rebroadcastStatus);
+      } else {
+        rebroadcastStatus();
+      }
+    } else {
+      rebroadcastStatus();
+    }
     return { success: true };
   } catch (e) {
     return { success: false, error: e.message };
@@ -1701,9 +1728,16 @@ ipcMain.handle('meetings:new', async () => {
 });
 
 ipcMain.handle('meetings:focus', async (event, sessionId) => {
-  const win = windowManager?.getMeetingWindow(sessionId);
+  let win = windowManager?.getMeetingWindow(sessionId);
+  if (!win) {
+    openMeetingWindow(sessionId);
+    win = windowManager?.getMeetingWindow(sessionId);
+  }
   if (win) {
     win.focus();
+    if (activeRecordingSessionId === sessionId && isRecording) {
+      broadcastRecordingStatus({ isNewSession: false });
+    }
     return { success: true };
   }
   return { success: false };
