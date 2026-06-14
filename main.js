@@ -2214,8 +2214,31 @@ ipcMain.on('app:relaunch', () => {
   destroyMiniWindow();
 });
 
+function cleanupStaleLoopbackModules() {
+  try {
+    const listing = execSync('pactl list short modules 2>/dev/null', { encoding: 'utf8' });
+    const loopbackIds = listing
+      .split('\n')
+      .filter((line) => /module-loopback/i.test(line))
+      .map((line) => line.split('\t')[0])
+      .filter(Boolean);
+
+    loopbackIds.forEach((moduleId) => {
+      try {
+        execSync(`pactl unload-module ${moduleId}`);
+        console.log(`Unloaded stale module-loopback #${moduleId} (leftover from prior capture bug)`);
+      } catch (err) {
+        // Module may have been removed already.
+      }
+    });
+  } catch (err) {
+    // pactl not available — skip cleanup.
+  }
+}
+
 // App Lifecycles
 app.whenReady().then(async () => {
+  cleanupStaleLoopbackModules();
   await initDatabase();
   await sessionProcessingService.initSchema();
   await sessionProcessingService.recoverInterruptedJobs();

@@ -8,6 +8,12 @@ let activeFolderId = 'all';
 let recordingInterval = null;
 let recordingSeconds = 0;
 
+// Calendar state (declared early — renderCalendar() is called during init)
+let calendarCurrentDate = new Date();
+let calendarActiveView = 'grid';
+let calendarSortOrder = 'asc';
+let contextMenuTargetDeadline = null;
+
 // Global Tooltip variables
 let tooltipTimeout = null;
 let globalTooltip = null;
@@ -2350,10 +2356,6 @@ if (isMiniMode) {
   // ----------------------------------------------------
   // Deadline Calendar & Action Items Tab Logic
   // ----------------------------------------------------
-  let calendarCurrentDate = new Date();
-  let calendarActiveView = 'grid'; // 'grid', 'list', 'omitted'
-  let calendarSortOrder = 'asc'; // 'asc', 'desc'
-  let contextMenuTargetDeadline = null;
   const deadlinesContextMenu = document.getElementById('deadlines-context-menu');
   
   const btnCalendarGridView = document.getElementById('btn-calendar-grid-view');

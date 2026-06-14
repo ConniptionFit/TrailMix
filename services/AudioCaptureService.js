@@ -3,35 +3,35 @@ const path = require('path');
 const { spawn, execSync } = require('child_process');
 const { computeStereoLevels } = require('../lib/audio-levels');
 
+/**
+ * Detect whether PipeWire is managing audio (informational only).
+ * ffmpeg capture always uses the PulseAudio compatibility layer (`-f pulse`)
+ * because most distro ffmpeg builds lack a native PipeWire demuxer.
+ */
 function detectAudioBackend() {
   try {
     const pulseInfo = execSync('pactl info 2>/dev/null', { encoding: 'utf8' });
     if (/PipeWire/i.test(pulseInfo)) {
-      return 'pipewire';
+      return 'pipewire-pulse';
     }
   } catch (err) {
-    // Fall through to pulse.
+    // Fall through.
   }
 
   try {
     execSync('wpctl status 2>/dev/null', { encoding: 'utf8' });
-    return 'pipewire';
+    return 'pipewire-pulse';
   } catch (err) {
     return 'pulse';
   }
 }
 
-function ensurePipeWireLoopback() {
+function ffmpegSupportsPipewireInput() {
   try {
-    const modules = execSync('pactl list short modules 2>/dev/null', { encoding: 'utf8' });
-    if (/module-loopback/i.test(modules)) {
-      return { ok: true, message: 'PipeWire loopback module already loaded' };
-    }
-
-    execSync('pactl load-module module-loopback latency_msec=1 2>/dev/null', { encoding: 'utf8' });
-    return { ok: true, message: 'Loaded libpipewire-module-loopback via pactl' };
+    const help = execSync('ffmpeg -hide_banner -formats 2>/dev/null', { encoding: 'utf8' });
+    return /\s+E\s+.*pipewire/i.test(help) || /\s+D\s+.*pipewire/i.test(help);
   } catch (err) {
-    return { ok: false, message: err.message };
+    return false;
   }
 }
 
@@ -68,8 +68,10 @@ class AudioCaptureService {
   }
 
   buildFfmpegInputFormat() {
-    if (this.audioBackend === 'pipewire') {
-      ensurePipeWireLoopback();
+    // PipeWire systems expose devices through the PulseAudio API; do not load
+    // module-loopback (causes mic bleed to speakers) or use -f pipewire unless
+    // this ffmpeg build explicitly supports it.
+    if (this.audioBackend.startsWith('pipewire') && ffmpegSupportsPipewireInput()) {
       return 'pipewire';
     }
     return 'pulse';
@@ -94,6 +96,8 @@ class AudioCaptureService {
       path.join(this.tempDir, 'chunk_%03d.wav')
     ];
 
+    console.log(`Audio capture: backend=${this.audioBackend}, ffmpeg format=${inputFormat}`);
+
     this.recordingProcess = spawn('ffmpeg', ffmpegArgs);
 
     this.recordingProcess.stderr.on('data', (chunk) => {
@@ -106,6 +110,15 @@ class AudioCaptureService {
     this.recordingProcess.on('error', (err) => {
       console.error('Ffmpeg recording error', err);
       if (this.onError) this.onError(err);
+    });
+
+    this.recordingProcess.on('close', (code) => {
+      if (code !== 0 && code !== null && code !== 255) {
+        console.error(`ffmpeg exited with code ${code}`);
+        if (this.onError) {
+          this.onError(new Error(`ffmpeg recording failed (exit ${code})`));
+        }
+      }
     });
 
     this.startChunkPolling();
@@ -264,5 +277,5 @@ class AudioCaptureService {
 module.exports = {
   AudioCaptureService,
   detectAudioBackend,
-  ensurePipeWireLoopback
+  ffmpegSupportsPipewireInput
 };
