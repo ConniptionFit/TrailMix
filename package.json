@@ -1,6 +1,6 @@
 {
   "name": "trailmix",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Local-first, privacy-centric AI note-taking and transcription desktop application",
   "main": "main.js",
   "repository": {

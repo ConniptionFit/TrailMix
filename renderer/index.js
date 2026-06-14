@@ -264,12 +264,6 @@ if (isMiniMode) {
     });
   });
 
-  // Audio Device Info
-  window.api.getAudioDevices().then(devices => {
-    document.getElementById('label-mic-device').textContent = devices.sourceDesc || 'None';
-    document.getElementById('label-sys-device').textContent = devices.sinkDesc || 'None';
-  });
-
   // Recording Controls
   const btnRecordToggle = document.getElementById('btn-record-toggle');
   const btnPauseToggle = document.getElementById('btn-pause-toggle');
@@ -352,8 +346,8 @@ if (isMiniMode) {
   });
 
   btnResumePast.addEventListener('click', () => {
-    if (activeSession && activeSession.filePath) {
-      window.api.resumeCallTranscription(activeSession.filePath).then(res => {
+    if (activeSession && activeSession.id && activeSession.id !== 'live') {
+      window.api.resumeCallTranscription(activeSession.id).then(res => {
         if (res.success) {
           console.log("Resumed session successfully");
         } else if (res.requirePassword) {
@@ -367,7 +361,7 @@ if (isMiniMode) {
 
   // Recording Status listener
   window.api.onRecordingStatus((status) => {
-    const { isRecording, isPaused } = status;
+    const { isRecording, isPaused, isNewSession } = status;
 
     if (isRecording && !isPaused) {
       // Active Transcribing State
@@ -384,8 +378,7 @@ if (isMiniMode) {
       recIndicator.className = 'rec-indicator-active';
       recTitle.textContent = 'Transcribing Call...';
       
-      // Start or Resume Timer
-      if (!recordingInterval) {
+      if (isNewSession) {
         recordingSeconds = 0;
         recTimer.textContent = '00:00';
       }
@@ -469,7 +462,11 @@ if (isMiniMode) {
       }
     }
     
-    activeSession.transcript.push(segment);
+    if (segment.merged && activeSession.transcript.length > 0) {
+      activeSession.transcript[activeSession.transcript.length - 1] = segment;
+    } else {
+      activeSession.transcript.push(segment);
+    }
     appendTranscriptLine(segment);
     lastSegmentTimeMs = currentSegmentTime;
   });
@@ -523,6 +520,16 @@ if (isMiniMode) {
   }
 
   function appendTranscriptLine(segment) {
+    if (segment.merged) {
+      const existingLine = document.getElementById(`line-${segment.id}`);
+      if (existingLine) {
+        const textDiv = existingLine.querySelector('.line-text');
+        if (textDiv) textDiv.textContent = segment.text;
+        existingLine.setAttribute('data-timestamp-ms', segment.timestampMs);
+        return;
+      }
+    }
+
     const lastLineDiv = transcriptContainer.lastElementChild;
     let merged = false;
     
@@ -538,7 +545,7 @@ if (isMiniMode) {
         const lastTimestampMs = parseInt(lastLineDiv.getAttribute('data-timestamp-ms') || '0', 10);
         const timeDiffMs = segment.timestampMs - lastTimestampMs;
         
-        if (lastSpeaker.toLowerCase() === displaySpeakerName.toLowerCase() && timeDiffMs < 8000) {
+        if (lastSpeaker.toLowerCase() === displaySpeakerName.toLowerCase() && timeDiffMs < 12000) {
           textDiv.textContent += ' ' + segment.text;
           lastLineDiv.setAttribute('data-timestamp-ms', segment.timestampMs);
           lastLineDiv.classList.add(`subline-${segment.id}`);
@@ -1028,57 +1035,60 @@ if (isMiniMode) {
       }
       
       if (filteredCalls.length === 0) {
-        sidebarCallsList.innerHTML = '<div class="text-center text-xs text-slate-500 py-6">No matching calls.</div>';
-        historyGrid.innerHTML = '<div class="text-center text-xs text-slate-500 py-6">No matching calls.</div>';
+        sidebarCallsList.innerHTML = '<div class="empty-state">No matching calls.</div>';
+        historyGrid.innerHTML = '<div class="empty-state">No matching calls.</div>';
         return;
       }
       
       filteredCalls.forEach((call) => {
-        // Sidebar list
         const item = document.createElement('div');
-        
-        // Highlight active past transcript
         const isSelected = activeSession && activeSession.id === call.id;
         item.className = `call-list-item ${isSelected ? 'selected' : ''}`;
-        
         item.setAttribute('data-callid', call.id);
         
         let checkboxHtml = '';
         if (isMultiSelectMode) {
-          checkboxHtml = `<input type="checkbox" class="call-item-checkbox mt-1 rounded bg-slate-950 border-white/10 text-trail-500 focus:ring-0" data-filepath="${call.filePath}">`;
+          checkboxHtml = `<input type="checkbox" class="call-item-checkbox" data-filepath="${call.filePath}">`;
         }
         
         const tagline = call.title || 'Meeting Session';
         const description = call.encrypted ? 'Encrypted session' : (call.description || 'No description available.');
         
-        // Render tags HTML
         let tagsHtml = '';
         const tags = call.tags || [];
         const suggestedTags = call.suggestedTags || [];
         
         if (tags.length > 0 || suggestedTags.length > 0) {
-          tagsHtml = `<div class="call-tags-container flex flex-wrap gap-1 mt-2">`;
+          tagsHtml = '<div class="call-tags-container">';
           tags.forEach(tag => {
-            tagsHtml += `<span class="tag-pill bg-trail-500/10 border border-trail-500/20 text-trail-400 rounded px-1.5 py-0.5 text-[9px] font-medium">#${tag}</span>`;
+            tagsHtml += `<span class="tag-pill">#${tag}</span>`;
           });
-          
           if (!isMultiSelectMode) {
             suggestedTags.forEach(tag => {
-              tagsHtml += `<span class="suggested-tag-pill bg-white/5 border border-dashed border-white/20 text-slate-400 hover:text-white rounded px-1.5 py-0.5 text-[9px] font-medium cursor-pointer transition" data-tag="${tag}">+ ${tag}</span>`;
+              tagsHtml += `<span class="suggested-tag-pill" data-tag="${tag}">+ ${tag}</span>`;
             });
           }
-          tagsHtml += `</div>`;
+          tagsHtml += '</div>';
+        }
+
+        let processingHtml = '';
+        if (call.processing && call.processing.status && call.processing.status !== 'complete') {
+          const label = call.processing.label || 'Processing…';
+          const progress = call.processing.progress || 0;
+          processingHtml = `
+            <div class="processing-badge"><span class="processing-badge-dot"></span>${label}</div>
+            <div class="processing-progress-track"><div class="processing-progress-fill" style="width: ${progress}%"></div></div>
+          `;
         }
         
         item.innerHTML = `
           ${checkboxHtml}
-          <div class="call-item-details flex-1 min-w-0 cursor-pointer">
-            <div class="flex items-center justify-between">
-              <div class="call-item-title font-semibold text-xs truncate group-hover:text-white transition">${call.encrypted ? '🔒 ' : ''}${tagline}</div>
-            </div>
-            <div class="call-item-date text-[9px] text-slate-500 mt-0.5 font-medium">${call.date}</div>
-            <div class="call-item-desc text-[10px] text-slate-400 mt-1 line-clamp-2 leading-relaxed break-words">${description}</div>
+          <div class="call-item-details">
+            <div class="call-item-title">${call.encrypted ? '🔒 ' : ''}${tagline}</div>
+            <div class="call-item-date">${call.date || ''}</div>
+            <div class="call-item-desc">${description}</div>
             ${tagsHtml}
+            ${processingHtml}
           </div>
         `;
         
@@ -1421,6 +1431,22 @@ if (isMiniMode) {
     });
   }
 
+  if (window.api.onProcessingJobsUpdated) {
+    window.api.onProcessingJobsUpdated(() => {
+      loadHistoryList();
+    });
+  }
+
+  if (window.api.onProcessingTranscriptUpdated) {
+    window.api.onProcessingTranscriptUpdated(({ sessionId, session }) => {
+      if (activeSession && activeSession.id === sessionId) {
+        activeSession.transcript = session.transcript;
+        renderTranscriptWithBreaks(session.transcript, { preserveScroll: true });
+      }
+      loadHistoryList();
+    });
+  }
+
   // Listen to background summary updates
   if (window.api.onSessionSummaryReady) {
     window.api.onSessionSummaryReady((session) => {
@@ -1686,6 +1712,17 @@ if (isMiniMode) {
   
   const btnDownloadWhisper = document.getElementById('btn-download-whisper');
   const btnSaveSettings = document.getElementById('btn-save-settings');
+  const settingsDirtyHint = document.getElementById('settings-dirty-hint');
+  
+  function markSettingsDirty() {
+    if (btnSaveSettings) btnSaveSettings.disabled = false;
+    if (settingsDirtyHint) settingsDirtyHint.style.opacity = '1';
+  }
+
+  function resetSettingsDirtyState() {
+    if (btnSaveSettings) btnSaveSettings.disabled = true;
+    if (settingsDirtyHint) settingsDirtyHint.style.opacity = '0';
+  }
   
   const downloadProgressContainer = document.getElementById('download-progress-container');
   const downloadProgressPercent = document.getElementById('download-progress-percent');
@@ -1754,12 +1791,6 @@ if (isMiniMode) {
 
     // Load devices and populate lists
     window.api.getAudioDevices().then((devices) => {
-      // Set label in main dashboard
-      const activeSource = saved.selectedMic === 'default' ? devices.source : saved.selectedMic;
-      const activeSink = saved.selectedSink === 'default' ? devices.sink : saved.selectedSink;
-      document.getElementById('label-mic-device').textContent = activeSource ? activeSource.split('.').pop() : 'None';
-      document.getElementById('label-sys-device').textContent = activeSink ? activeSink.split('.').pop() : 'None';
-
       // Populate Mic dropdown
       selectMicDevice.innerHTML = '<option value="default">Default Active Microphone</option>';
       devices.microphones.forEach((mic) => {
@@ -1780,6 +1811,23 @@ if (isMiniMode) {
         selectSysDevice.appendChild(opt);
       });
     });
+
+    resetSettingsDirtyState();
+  });
+
+  const settingsInputs = [
+    selectWhisperModel, selectLlmModel, selectMicDevice, selectSysDevice,
+    checkEncryptDefault, inputEncryptPassword,
+    document.getElementById('check-color-deadlines'),
+    document.getElementById('input-user-name'),
+    document.getElementById('check-noise-cancel'),
+    document.getElementById('input-storage-path'),
+    selectNoteStyle, textareaNotePrompt, textareaSummaryPrompt, textareaActionPrompt
+  ].filter(Boolean);
+
+  settingsInputs.forEach((el) => {
+    el.addEventListener('change', markSettingsDirty);
+    el.addEventListener('input', markSettingsDirty);
   });
 
   // Load Ollama models list
@@ -1893,24 +1941,9 @@ if (isMiniMode) {
     };
     
     window.api.saveSettings(updated).then(() => {
+      activeSettings = updated;
+      resetSettingsDirtyState();
       alert('Settings saved successfully!');
-      // Update main dashboard badges
-      window.api.getAudioDevices().then((devices) => {
-        let activeSourceDesc = devices.sourceDesc;
-        if (updated.selectedMic !== 'default') {
-          const mic = devices.microphones.find(m => m.id === updated.selectedMic);
-          if (mic) activeSourceDesc = mic.name;
-        }
-
-        let activeSinkDesc = devices.sinkDesc;
-        if (updated.selectedSink !== 'default') {
-          const sink = devices.outputs.find(o => o.id === updated.selectedSink);
-          if (sink) activeSinkDesc = sink.name;
-        }
-        
-        document.getElementById('label-mic-device').textContent = activeSourceDesc || 'None';
-        document.getElementById('label-sys-device').textContent = activeSinkDesc || 'None';
-      });
     });
   });
 

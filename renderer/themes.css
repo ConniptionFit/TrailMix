@@ -8,6 +8,7 @@
   --sidebar-collapsed-width: 56px;
   --main-stage-max-width: 800px;
   --font-family: 'Plus Jakarta Sans', 'Outfit', system-ui, -apple-system, sans-serif;
+  --font-family-display: 'Roboto Slab', 'Rockwell', 'Georgia', serif;
 }
 
 /* ── Dark mode (preserve existing palette) ── */
@@ -45,6 +46,20 @@
   --color-border-focus: rgba(164, 198, 57, 0.35);
   --color-scrollbar: rgba(255, 255, 255, 0.1);
   --color-scrollbar-hover: rgba(164, 198, 57, 0.3);
+
+  --sidebar-bg: var(--color-bg-panel);
+  --sidebar-border: var(--color-border-subtle);
+  --sidebar-text: var(--color-text-primary);
+  --sidebar-text-muted: var(--color-text-muted);
+  --sidebar-text-subtle: var(--color-text-secondary);
+  --sidebar-hover-bg: var(--color-bg-hover);
+  --sidebar-active-bg: var(--color-accent-soft);
+  --sidebar-active-text: var(--color-accent);
+  --sidebar-input-bg: var(--color-bg-card);
+  --sidebar-input-border: var(--color-border-subtle);
+  --sidebar-divider: var(--color-border-subtle);
+  --sidebar-empty-border: var(--color-border-subtle);
+  --sidebar-footer-border: var(--color-border-subtle);
 
   --editor-text-user: #f0f2f5;
   --editor-text-ai: #9aa2b1;
@@ -89,6 +104,20 @@
   --color-border-focus: rgba(91, 140, 90, 0.35);
   --color-scrollbar: rgba(26, 26, 24, 0.12);
   --color-scrollbar-hover: rgba(91, 140, 90, 0.35);
+
+  --sidebar-bg: #faf8f5;
+  --sidebar-border: rgba(26, 26, 24, 0.06);
+  --sidebar-text: #1a1a18;
+  --sidebar-text-muted: #78716c;
+  --sidebar-text-subtle: #64748b;
+  --sidebar-hover-bg: #f3f0ea;
+  --sidebar-active-bg: rgba(91, 140, 90, 0.12);
+  --sidebar-active-text: #4a7349;
+  --sidebar-input-bg: #ffffff;
+  --sidebar-input-border: rgba(26, 26, 24, 0.08);
+  --sidebar-divider: rgba(26, 26, 24, 0.08);
+  --sidebar-empty-border: rgba(26, 26, 24, 0.1);
+  --sidebar-footer-border: rgba(26, 26, 24, 0.08);
 
   --editor-text-user: #1a1a18;
   --editor-text-ai: #64748b;

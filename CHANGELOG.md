@@ -29,6 +29,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.3] - 2026-06-14
+
+### Added
+- **Breadcrumb System** — SQLite-backed `session_processing_jobs` and `session_processing_breadcrumbs` for crash-resilient post-session processing
+- **Multi-pass pipeline** — Pass 1 live draft (channel labels only), Pass 2 precision clustering (`Speaker_00`, …), Pass 3 contextual name identification via local LLM batches
+- **`SessionProcessingService`** — background job queue with boot recovery and progress IPC
+- Sidebar processing badges ("Sifting the Mix…", "Sorting the Rations…") with Granola-style progress bars
+- Global sticky **Save Settings** button (disabled until a setting changes)
+- Sidebar semantic theme tokens for correct light-mode rendering
+- Segment coalescing in main process (`lib/transcript-coalesce.js`) to merge contiguous same-speaker blocks
+
+### Fixed
+- **Resume button** — removed premature `isRecording=true` before `startRecordingHandler()`; timer no longer resets on pause/resume
+- **Resume past session** — uses `activeSession.id` instead of missing `filePath`
+- **Light mode sidebar** — replaced hardcoded dark rgba/Tailwind classes with `--sidebar-*` CSS tokens
+
+### Changed
+- Removed live 25s LLM diarization during recording (Pass 1 stays fast/light)
+- Removed mic/system device badges from dashboard header for cleaner layout
+- Headers use `Roboto Slab` display font; body remains Plus Jakarta Sans
+
+---
+
 ## [0.3.2] - 2026-06-14
 
 ### Added
@@ -71,6 +94,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Electron desktop app with local whisper.cpp transcription and Ollama integration
 
+[0.3.3]: https://github.com/ConniptionFit/TrailMix/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/ConniptionFit/TrailMix/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/ConniptionFit/TrailMix/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/ConniptionFit/TrailMix/compare/v0.2...v0.3.0
