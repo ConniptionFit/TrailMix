@@ -1,17 +1,15 @@
 /**
- * Semantic editor for Jot & Enhance notes with provenance tracking.
+ * Semantic editor for TrailMix Mix-Ins with provenance tracking.
  *
- * Models TipTap-style custom marks via span origins:
- * - user spans: solid default text (black in light mode)
- * - ai spans: gray supporting prose with optional transcript traceability
- *
- * Editing within an AI span instantly reverts that block to user origin.
+ * Span origins:
+ * - user spans: your Mix-Ins (solid text)
+ * - ai spans: raw AI context (gray) with optional transcript traceability
  */
 class EditorComponent {
   constructor(container, options = {}) {
     this.container = container;
     this.options = {
-      placeholder: 'Jot quick thoughts during the meeting…',
+      placeholder: 'Drop in your Mix-Ins as the meeting unfolds…',
       onChange: null,
       onTraceTranscript: null,
       onEnhanceRequest: null,
@@ -25,10 +23,9 @@ class EditorComponent {
     this.root = null;
     this.surface = null;
     this.placeholderEl = null;
-    this.statusEl = null;
     this.toolbarEl = null;
     this.templateMenuEl = null;
-    this.viewMode = 'enhanced';
+    this.viewMode = 'mixins';
     this.isEnhancing = false;
     this.selectedTemplate = 'executive';
     this.spanSnapshots = new Map();
@@ -48,30 +45,27 @@ class EditorComponent {
     this.toolbarEl.className = 'editor-overlay-toolbar';
     this.toolbarEl.innerHTML = `
       <div class="editor-toolbar-left">
-        <button type="button" class="editor-toolbar-btn" data-action="enhance-menu" title="Enhanced notes templates">✨ Enhanced notes</button>
-        <button type="button" class="editor-toolbar-btn" data-action="view-toggle" title="Toggle raw vs enhanced view">☰</button>
-      </div>
-      <div class="editor-toolbar-right">
-        <span class="editor-view-badge" data-view-badge>Enhanced view</span>
+        <button type="button" class="editor-toolbar-btn" data-action="mix-menu" title="Blend Mix-Ins with transcript">🥣 Mix notes</button>
+        <div class="editor-view-switch" role="group" aria-label="Note view">
+          <button type="button" class="editor-view-btn active" data-view="mixins">Mix-Ins</button>
+          <button type="button" class="editor-view-btn" data-view="raw">Raw AI</button>
+          <button type="button" class="editor-view-btn" data-view="mixed">Mixed</button>
+        </div>
       </div>
     `;
 
     this.templateMenuEl = document.createElement('div');
     this.templateMenuEl.className = 'editor-template-menu hidden';
     this.templateMenuEl.innerHTML = `
-      <div class="editor-template-menu-header">Note template</div>
+      <div class="editor-template-menu-header">Trail mix recipe</div>
       <button type="button" class="editor-template-option" data-template="executive">Executive Summary</button>
       <button type="button" class="editor-template-option" data-template="technical">Technical Specs</button>
       <button type="button" class="editor-template-option" data-template="action">Action Checklist</button>
       <button type="button" class="editor-template-option" data-template="minutes">Meeting Minutes</button>
-      <button type="button" class="editor-template-option" data-template="custom">Custom Template</button>
+      <button type="button" class="editor-template-option" data-template="custom">Custom Recipe</button>
       <div class="editor-template-menu-divider"></div>
-      <button type="button" class="editor-template-option editor-template-regenerate" data-action="regenerate">🔁 Regenerate</button>
+      <button type="button" class="editor-template-option editor-template-regenerate" data-action="regenerate">🔁 Re-mix</button>
     `;
-
-    this.statusEl = document.createElement('div');
-    this.statusEl.className = 'editor-component-status';
-    this.statusEl.textContent = 'Your jots — saved as you type';
 
     this.surface = document.createElement('div');
     this.surface.className = 'editor-component-surface editor-mode-plain';
@@ -87,7 +81,6 @@ class EditorComponent {
 
     this.root.appendChild(this.toolbarEl);
     this.root.appendChild(this.templateMenuEl);
-    this.root.appendChild(this.statusEl);
     this.root.appendChild(this.surface);
     this.root.appendChild(this.placeholderEl);
     this.container.appendChild(this.root);
@@ -96,23 +89,20 @@ class EditorComponent {
   }
 
   bindToolbarEvents() {
-    const enhanceBtn = this.toolbarEl.querySelector('[data-action="enhance-menu"]');
-    const viewToggleBtn = this.toolbarEl.querySelector('[data-action="view-toggle"]');
+    const mixBtn = this.toolbarEl.querySelector('[data-action="mix-menu"]');
 
-    if (enhanceBtn) {
-      enhanceBtn.addEventListener('click', (event) => {
+    if (mixBtn) {
+      mixBtn.addEventListener('click', (event) => {
         event.stopPropagation();
         this.templateMenuEl.classList.toggle('hidden');
       });
     }
 
-    if (viewToggleBtn) {
-      viewToggleBtn.addEventListener('click', () => {
-        if (!this.document || this.document.mode !== 'mixed') return;
-        this.viewMode = this.viewMode === 'enhanced' ? 'raw' : 'enhanced';
-        this.renderDocument();
+    this.toolbarEl.querySelectorAll('[data-view]').forEach((button) => {
+      button.addEventListener('click', () => {
+        this.setViewMode(button.dataset.view);
       });
-    }
+    });
 
     this.templateMenuEl.querySelectorAll('[data-template]').forEach((button) => {
       button.addEventListener('click', () => {
@@ -144,9 +134,33 @@ class EditorComponent {
     });
   }
 
+  setViewMode(mode) {
+    if (!['mixins', 'raw', 'mixed'].includes(mode)) return;
+    if (mode === 'raw' || mode === 'mixed') {
+      if (!this.document || this.document.mode !== 'mixed') return;
+    }
+    this.viewMode = mode;
+    this.toolbarEl.querySelectorAll('[data-view]').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.view === mode);
+      btn.disabled = (btn.dataset.view === 'raw' || btn.dataset.view === 'mixed')
+        && this.document?.mode !== 'mixed';
+    });
+    this.renderDocument();
+  }
+
+  updateViewSwitchState() {
+    const hasMixed = this.document?.mode === 'mixed' && this.document.spans?.length;
+    this.toolbarEl.querySelectorAll('[data-view]').forEach((btn) => {
+      const needsMix = btn.dataset.view === 'raw' || btn.dataset.view === 'mixed';
+      btn.disabled = needsMix && !hasMixed;
+      btn.classList.toggle('active', btn.dataset.view === this.viewMode);
+    });
+  }
+
   bindEvents() {
     this.surface.addEventListener('input', () => {
       if (!this.document) return;
+      if (this.viewMode !== 'mixins') return;
 
       if (this.document.mode === 'plain') {
         this.updatePlaceholderVisibility();
@@ -158,7 +172,9 @@ class EditorComponent {
     });
 
     this.surface.addEventListener('keydown', (event) => {
-      if (this.document?.mode === 'mixed' && this.viewMode === 'raw') {
+      if (this.viewMode !== 'mixins') {
+        event.preventDefault();
+      } else if (this.document?.mode === 'mixed' && this.viewMode === 'raw') {
         event.preventDefault();
       }
     });
@@ -178,8 +194,6 @@ class EditorComponent {
   }
 
   handleMixedModeInput() {
-    if (this.viewMode === 'raw') return;
-
     const changedSpanIds = new Set();
 
     this.surface.querySelectorAll('.editor-span').forEach((node) => {
@@ -242,47 +256,59 @@ class EditorComponent {
   }
 
   loadDocument(document) {
-    this.document = document;
-    if (this.document?.mode === 'mixed') {
-      this.viewMode = 'enhanced';
+    this.document = {
+      ...document,
+      rawAiText: document?.rawAiText || document?.enhancedNotes || ''
+    };
+    if (this.document?.mode === 'mixed' && this.document.spans?.length) {
+      this.viewMode = 'mixed';
+    } else {
+      this.viewMode = 'mixins';
     }
     this.renderDocument();
   }
 
   renderDocument() {
     if (!this.document) return;
+    this.updateViewSwitchState();
 
-    if (this.document.mode === 'mixed' && this.document.spans?.length) {
-      if (this.viewMode === 'raw') {
-        this.renderPlainDocument(this.document.plainText || '');
-        this.updateViewBadge('Raw jots');
-        return;
-      }
-      this.renderMixedDocument();
-      this.updateViewBadge('Enhanced view');
+    if (this.viewMode === 'raw' && this.document.mode === 'mixed') {
+      this.renderRawAiDocument();
       return;
     }
 
-    this.viewMode = 'enhanced';
-    this.renderPlainDocument(this.document.plainText || '');
-    this.updateViewBadge('Plain notes');
+    if (this.viewMode === 'mixed' && this.document.mode === 'mixed' && this.document.spans?.length) {
+      this.renderMixedDocument();
+      return;
+    }
+
+    this.renderMixinsDocument();
   }
 
-  updateViewBadge(label) {
-    const badge = this.toolbarEl.querySelector('[data-view-badge]');
-    if (badge) badge.textContent = label;
-  }
-
-  renderPlainDocument(plainText = '') {
-    this.surface.classList.remove('editor-mode-mixed');
+  renderMixinsDocument() {
+    const text = this.document.plainText || '';
+    this.surface.classList.remove('editor-mode-mixed', 'is-transitioning');
     this.surface.classList.add('editor-mode-plain');
     this.surface.contentEditable = 'true';
-    this.surface.innerHTML = this.renderMarkdownHtml(plainText || '');
-    if (!plainText) {
-      this.surface.textContent = '';
-    }
-    this.statusEl.textContent = 'Your jots — saved as you type';
+    this.surface.innerHTML = this.renderMarkdownHtml(text);
+    if (!text) this.surface.textContent = '';
     this.updatePlaceholderVisibility();
+    this.spanSnapshots.clear();
+  }
+
+  renderRawAiDocument() {
+    const rawText = this.document.rawAiText
+      || this.document.enhancedNotes
+      || (this.document.spans || [])
+        .filter((span) => span.origin === 'ai')
+        .map((span) => span.text)
+        .join('\n\n');
+
+    this.surface.classList.remove('editor-mode-mixed', 'is-transitioning');
+    this.surface.classList.add('editor-mode-plain', 'editor-mode-readonly');
+    this.surface.contentEditable = 'false';
+    this.surface.innerHTML = this.renderMarkdownHtml(rawText || 'No raw AI notes yet. Run Mix notes to blend your Mix-Ins with the transcript.');
+    this.placeholderEl.classList.add('hidden');
     this.spanSnapshots.clear();
   }
 
@@ -307,7 +333,7 @@ class EditorComponent {
   }
 
   renderMixedDocument(animate = false) {
-    this.surface.classList.remove('editor-mode-plain', 'is-transitioning');
+    this.surface.classList.remove('editor-mode-plain', 'editor-mode-readonly', 'is-transitioning');
     this.surface.classList.add('editor-mode-mixed');
     this.surface.contentEditable = 'true';
     this.surface.innerHTML = '';
@@ -322,9 +348,7 @@ class EditorComponent {
       spanEl.className = isAi
         ? 'editor-span editor-span-ai'
         : 'editor-span editor-span-user';
-      if (animate && isAi) {
-        spanEl.classList.add('is-new');
-      }
+      if (animate && isAi) spanEl.classList.add('is-new');
       spanEl.dataset.origin = span.origin;
       spanEl.dataset.spanId = span.id;
       spanEl.textContent = span.text;
@@ -362,10 +386,6 @@ class EditorComponent {
       }, 400);
     }
 
-    const enhancedAt = this.document.enhancedAt
-      ? new Date(this.document.enhancedAt).toLocaleString()
-      : 'just now';
-    this.statusEl.textContent = `Enhanced notes · black = validated by you, gray = AI context (${enhancedAt})`;
     this.placeholderEl.classList.add('hidden');
   }
 
@@ -375,19 +395,17 @@ class EditorComponent {
   }
 
   getPlainText() {
-    if (this.document?.mode === 'mixed' && this.viewMode === 'raw') {
-      return this.document.plainText || '';
+    if (this.viewMode === 'mixins' && this.document?.mode === 'plain') {
+      return (this.surface.textContent || '').replace(/\u00A0/g, ' ');
     }
-
-    if (this.document?.mode === 'mixed') {
-      return this.document.plainText || '';
-    }
-
-    return (this.surface.textContent || '').replace(/\u00A0/g, ' ');
+    return this.document?.plainText || (this.surface.textContent || '').replace(/\u00A0/g, ' ');
   }
 
   getDocument() {
-    if (this.document?.mode === 'mixed') {
+    if (this.document?.mode === 'mixed' && this.viewMode === 'mixins') {
+      const plainText = (this.surface.textContent || '').replace(/\u00A0/g, ' ');
+      this.document.plainText = plainText;
+    } else if (this.document?.mode === 'mixed') {
       this.syncDocumentFromDom();
     }
 
@@ -397,7 +415,8 @@ class EditorComponent {
       mode: this.document?.mode === 'mixed' ? 'mixed' : 'plain',
       plainText,
       spans: this.document?.mode === 'mixed' ? (this.document.spans || []) : [],
-      enhancedAt: this.document?.mode === 'mixed' ? (this.document.enhancedAt || null) : null
+      enhancedAt: this.document?.mode === 'mixed' ? (this.document.enhancedAt || null) : null,
+      rawAiText: this.document?.rawAiText || this.document?.enhancedNotes || ''
     };
   }
 
@@ -408,18 +427,17 @@ class EditorComponent {
   setEnhancing(isEnhancing) {
     this.isEnhancing = isEnhancing;
     this.surface.classList.toggle('is-enhancing', isEnhancing);
-    if (isEnhancing) {
-      this.statusEl.textContent = 'Running enhancement — local AI is blending your jots with the transcript…';
-    } else if (this.document?.mode !== 'mixed') {
-      this.statusEl.textContent = 'Your jots — saved as you type';
-    }
   }
 
   applyEnhancedDocument(document) {
-    this.document = document;
-    this.viewMode = 'enhanced';
+    this.document = {
+      ...document,
+      rawAiText: document?.rawAiText || document?.enhancedNotes || ''
+    };
+    this.viewMode = 'mixed';
     if (this.document.mode === 'mixed' && this.document.spans?.length) {
       this.renderMixedDocument(true);
+      this.updateViewSwitchState();
       return;
     }
     this.renderDocument();
@@ -431,9 +449,10 @@ class EditorComponent {
       mode: 'plain',
       plainText: '',
       spans: [],
-      enhancedAt: null
+      enhancedAt: null,
+      rawAiText: ''
     };
-    this.viewMode = 'enhanced';
+    this.viewMode = 'mixins';
     this.renderDocument();
   }
 

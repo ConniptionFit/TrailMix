@@ -11,8 +11,9 @@ html,
   display: flex;
   flex-direction: column;
   height: 100vh;
-  padding: 16px 18px 12px;
-  gap: 12px;
+  min-height: 520px;
+  padding: 14px 16px 12px;
+  gap: 10px;
   background: var(--bg-base, var(--color-bg-app, #0c0e11));
   box-sizing: border-box;
 }
@@ -56,44 +57,29 @@ html,
 }
 
 .meeting-body-row {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  gap: 12px;
-}
-
-.meeting-main {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 320px);
-  gap: 12px;
+  grid-template-columns: minmax(260px, 1.4fr) minmax(200px, 0.9fr) minmax(240px, 1fr);
+  gap: 10px;
   flex: 1;
   min-height: 0;
-  min-width: 0;
+  align-items: stretch;
 }
 
-.meeting-editor-pane {
+.meeting-editor-pane,
+.meeting-transcript-pane,
+.meeting-chat-widget {
   display: flex;
   flex-direction: column;
   min-height: 0;
   min-width: 0;
   background: var(--bg-surface, var(--color-bg-card, rgba(18, 22, 28, 0.7)));
+  border-radius: 12px;
+  overflow: hidden;
 }
 
 .meeting-editor-pane .editor-component-host {
   flex: 1;
-  min-height: 180px;
-}
-
-.meeting-transcript-pane {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  min-width: 0;
-  background: var(--bg-surface, var(--color-bg-card, rgba(18, 22, 28, 0.7)));
-}
-
-.meeting-transcript-pane.closed {
-  display: none;
+  min-height: 160px;
 }
 
 .meeting-transcript-pane .transcript-container {
@@ -103,75 +89,80 @@ html,
 }
 
 .meeting-chat-widget {
-  position: fixed;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  width: 360px;
-  z-index: 50;
-  background: var(--color-bg-panel, rgba(10, 12, 16, 0.92));
-  border-left: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.06));
-  transition: width 0.2s ease, opacity 0.2s ease;
+  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.06));
 }
 
-.meeting-chat-widget.closed {
-  width: 0;
-  opacity: 0;
-  pointer-events: none;
+.meeting-chat-widget .chat-body {
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
-/* Wide layout: dock AI chat beside editor/transcript */
-.meeting-app.chat-docked {
-  padding-right: 0;
+.meeting-chat-widget .chat-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
-.meeting-app.chat-docked .meeting-body-row {
-  padding-right: 18px;
-}
-
-.meeting-app.chat-docked .meeting-chat-widget {
-  position: relative;
-  top: auto;
-  right: auto;
-  bottom: auto;
-  flex: 0 0 340px;
-  width: 340px;
-  min-width: 300px;
-  opacity: 1;
-  pointer-events: auto;
-  border-left: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.06));
-  border-radius: 12px;
-  align-self: stretch;
-}
-
-.meeting-app.chat-docked .meeting-chat-widget.closed {
+.editor-component-status {
   display: none;
 }
 
-@media (max-width: 900px) {
-  .meeting-main {
-    grid-template-columns: 1fr;
+.editor-view-switch {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 8px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--color-bg-hover, rgba(255, 255, 255, 0.04));
+}
+
+.editor-view-btn {
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.editor-view-btn.active {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.editor-view-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.editor-mode-readonly {
+  opacity: 0.92;
+}
+
+@media (max-width: 1100px) {
+  .meeting-body-row {
+    grid-template-columns: minmax(240px, 1fr) minmax(200px, 0.85fr);
+    grid-template-rows: minmax(200px, 1fr) minmax(220px, 0.75fr);
   }
 
-  .meeting-transcript-pane {
-    max-height: 240px;
-  }
-
-  .meeting-app.chat-docked .meeting-body-row {
-    flex-direction: column;
-  }
-
-  .meeting-app.chat-docked .meeting-chat-widget {
-    flex: 0 0 auto;
-    width: 100%;
-    min-width: 0;
+  .meeting-chat-widget {
+    grid-column: 1 / -1;
     max-height: 280px;
   }
 }
 
-@media (min-width: 1100px) {
-  .meeting-main {
-    grid-template-columns: minmax(0, 1.2fr) minmax(260px, 360px);
+@media (max-width: 820px) {
+  .meeting-body-row {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(220px, 1.1fr) minmax(180px, 0.8fr) minmax(200px, 0.7fr);
+  }
+
+  .meeting-chat-widget {
+    max-height: 240px;
   }
 }

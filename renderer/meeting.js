@@ -70,10 +70,27 @@
       if (typeof doc === 'string') {
         try { doc = JSON.parse(doc); } catch (e) { doc = null; }
       }
-      if (doc?.mode === 'mixed' && doc.spans?.length) return doc;
-      return { version: 1, mode: 'plain', plainText: doc?.plainText || session.mixNotes || '', spans: [], enhancedAt: null };
+      if (doc?.mode === 'mixed' && doc.spans?.length) {
+        doc.rawAiText = doc.rawAiText || session.enhancedNotes || '';
+        return doc;
+      }
+      return {
+        version: 1,
+        mode: 'plain',
+        plainText: doc?.plainText || session.mixNotes || '',
+        spans: [],
+        enhancedAt: null,
+        rawAiText: session.enhancedNotes || ''
+      };
     }
-    return { version: 1, mode: 'plain', plainText: session?.mixNotes || '', spans: [], enhancedAt: null };
+    return {
+      version: 1,
+      mode: 'plain',
+      plainText: session?.mixNotes || '',
+      spans: [],
+      enhancedAt: null,
+      rawAiText: session?.enhancedNotes || ''
+    };
   }
 
   function syncSessionFromEditorDocument(session, document) {
@@ -155,7 +172,7 @@
     if (!activeSession || !jotEditor) return;
     const currentDocument = jotEditor.getDocument();
     if (!currentDocument.plainText.trim()) {
-      alert('Please enter some jots first.');
+      alert('Add some Mix-Ins before running Mix notes.');
       return;
     }
     syncSessionFromEditorDocument(activeSession, currentDocument);
@@ -347,43 +364,16 @@
     });
   });
 
-  // Meeting chat
-  const meetingApp = document.getElementById('meeting-app');
+  // Meeting chat (always visible in layout)
   const chatWidget = document.getElementById('meeting-chat-widget');
   const chatMessages = document.getElementById('chat-messages');
   const inputChatQuery = document.getElementById('input-chat-query');
   const CHAT_WELCOME = chatMessages?.innerHTML || '';
-  const DOCK_CHAT_MIN_WIDTH = 1080;
-  let chatUserDismissed = false;
-
-  function updateMeetingLayout() {
-    if (!meetingApp || !chatWidget) return;
-    const dockChat = window.innerWidth >= DOCK_CHAT_MIN_WIDTH;
-    meetingApp.classList.toggle('chat-docked', dockChat);
-    if (dockChat && !chatUserDismissed) {
-      chatWidget.classList.remove('closed');
-    }
-  }
-
-  function toggleChat(open) {
-    if (!chatWidget) return;
-    chatWidget.classList.toggle('closed', !open);
-    chatUserDismissed = !open;
-  }
 
   function clearChat() {
     if (chatMessages) chatMessages.innerHTML = CHAT_WELCOME;
     messageCounter = 0;
   }
-
-  document.getElementById('btn-meeting-chat-toggle')?.addEventListener('click', () => toggleChat(true));
-  document.getElementById('btn-meeting-chat-close')?.addEventListener('click', () => {
-    toggleChat(false);
-    clearChat();
-  });
-
-  window.addEventListener('resize', updateMeetingLayout);
-  updateMeetingLayout();
 
   function appendChatMessage(sender, text) {
     messageCounter += 1;
@@ -468,7 +458,6 @@
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'j') {
       e.preventDefault();
-      toggleChat(true);
       inputChatQuery?.focus();
     }
   });
@@ -483,7 +472,6 @@
         pill.className = 'chat-recipe-pill';
         pill.textContent = `${recipe.icon || ''} ${recipe.label}`.trim();
         pill.addEventListener('click', () => {
-          toggleChat(true);
           runRecipeQuery(recipe);
         });
         container.appendChild(pill);

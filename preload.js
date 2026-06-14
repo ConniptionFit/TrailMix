@@ -65,6 +65,7 @@ contextBridge.exposeInMainWorld('api', {
   saveCall: (callData, password) => ipcRenderer.invoke('calls:save', callData, password),
   loadCall: (filePath, password) => ipcRenderer.invoke('calls:load', filePath, password),
   decryptCall: (filePath, password) => ipcRenderer.invoke('calls:decrypt', filePath, password),
+  decryptMultipleCalls: (sessionIds, password) => ipcRenderer.invoke('calls:decrypt-multiple', sessionIds, password),
 
   // Settings
   getSettings: () => ipcRenderer.invoke('settings:get'),

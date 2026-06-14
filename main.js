@@ -34,6 +34,16 @@ const {
   createNewSession,
   applyAutoTitle
 } = require('./lib/session-registry');
+const {
+  ROOT_FOLDER_ID,
+  UNCATEGORIZED_FOLDER_ID,
+  scanStorageLayout,
+  ensureFolderDir,
+  moveSessionFile,
+  moveStorageContents,
+  resolveSessionFilePath,
+  relativePathFromFolderId
+} = require('./lib/storage-layout');
 const sqlite3 = require('sqlite3').verbose();
 
 // XDG Compliant Database Path
@@ -607,27 +617,112 @@ async function migrateOldData() {
   }
 }
 
+async function upsertSessionFromTrailFile({ sessionId, filePath, folderId }) {
+  const rawContent = fs.readFileSync(filePath, 'utf8');
+  const isEncrypted = rawContent.includes('"salt"') && rawContent.includes('"iv"');
+  const stat = fs.statSync(filePath);
+  const mtimeMs = stat.mtimeMs;
+  const tagsStr = '[]';
+  const suggestedTagsStr = '[]';
+
+  if (isEncrypted) {
+    const cachedKey = decryptionKeys.get(sessionId) || settings.encryptionPassword;
+    if (cachedKey) {
+      try {
+        const decrypted = encryption.decrypt(rawContent, cachedKey);
+        const data = JSON.parse(decrypted);
+        await dbRun(`INSERT OR REPLACE INTO sessions (
+          id, date, title, description, summary, actionItems, mixNotes, enhancedNotes,
+          encrypted, encrypted_payload, folder_id, mtimeMs, tags, suggestedTags
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+          data.id || sessionId,
+          data.date || '',
+          data.title || 'Meeting Session',
+          data.description || 'No description available.',
+          data.summary || '',
+          data.actionItems || '',
+          data.mixNotes || '',
+          data.enhancedNotes || '',
+          0,
+          JSON.stringify(data),
+          folderId,
+          mtimeMs,
+          JSON.stringify(data.tags || []),
+          JSON.stringify(data.suggestedTags || [])
+        ]);
+        decryptionKeys.set(sessionId, cachedKey);
+        return;
+      } catch (_) {
+        // Fall through to locked state.
+      }
+    }
+
+    await dbRun(`INSERT OR REPLACE INTO sessions (
+      id, date, title, description, summary, actionItems, mixNotes, enhancedNotes,
+      encrypted, encrypted_payload, folder_id, mtimeMs, tags, suggestedTags
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+      sessionId,
+      '',
+      'Encrypted Session (Locked)',
+      'This session is encrypted. Enter credentials to unlock.',
+      '', '', '', '',
+      1,
+      rawContent,
+      folderId,
+      mtimeMs,
+      tagsStr,
+      suggestedTagsStr
+    ]);
+    return;
+  }
+
+  let data = {};
+  try {
+    data = JSON.parse(rawContent);
+  } catch (_) {
+    return;
+  }
+
+  await dbRun(`INSERT OR REPLACE INTO sessions (
+    id, date, title, description, summary, actionItems, mixNotes, enhancedNotes,
+    encrypted, encrypted_payload, folder_id, mtimeMs, tags, suggestedTags
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+    data.id || sessionId,
+    data.date || '',
+    data.title || 'Meeting Session',
+    data.description || 'No description available.',
+    data.summary || '',
+    data.actionItems || '',
+    data.mixNotes || '',
+    data.enhancedNotes || '',
+    0,
+    JSON.stringify(data),
+    folderId,
+    mtimeMs,
+    JSON.stringify(data.tags || []),
+    JSON.stringify(data.suggestedTags || [])
+  ]);
+}
+
 async function syncDatabaseWithFiles() {
   try {
     const callsDir = getCallsDir();
-    if (!fs.existsSync(callsDir)) return;
-    const files = fs.readdirSync(callsDir);
-    const existingIds = new Set(
-      files
-        .filter(f => f.endsWith('.trail') || f.endsWith('.trail.bak'))
-        .map(f => f.replace('.trail.bak', '').replace('.trail', ''))
-    );
-    
-    // Get all sessions from DB
-    const sessions = await dbAll("SELECT id FROM sessions");
+    const { trailFiles } = scanStorageLayout(callsDir);
+    const existingIds = new Set(trailFiles.map((file) => file.sessionId));
+
+    for (const file of trailFiles) {
+      await upsertSessionFromTrailFile(file);
+    }
+
+    const sessions = await dbAll('SELECT id FROM sessions');
     for (const session of sessions) {
       if (session.id !== 'live' && !existingIds.has(session.id)) {
         console.log(`Pruning session ${session.id} from database because file does not exist in ${callsDir}`);
-        await dbRun("DELETE FROM sessions WHERE id = ?", [session.id]);
+        await dbRun('DELETE FROM sessions WHERE id = ?', [session.id]);
       }
     }
   } catch (err) {
-    console.error("Error syncing database with files:", err);
+    console.error('Error syncing database with files:', err);
   }
 }
 
@@ -853,7 +948,7 @@ async function saveSessionToDbPromise(session) {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
         session.id, session.date || '', session.title || 'Meeting Session',
         session.description || 'No description available.', '', '', '', '',
-        1, payload, session.folder_id || 'work', mtimeMs, tagsStr, suggestedTagsStr
+        1, payload, session.folder_id || UNCATEGORIZED_FOLDER_ID, mtimeMs, tagsStr, suggestedTagsStr
       ]);
       decryptionKeys.set(session.id, password);
     } else {
@@ -865,16 +960,20 @@ async function saveSessionToDbPromise(session) {
         session.id, session.date || '', session.title || 'Meeting Session',
         session.description || 'No description available.', session.summary || '',
         session.actionItems || '', session.mixNotes || '', session.enhancedNotes || '',
-        0, payload, session.folder_id || 'work', mtimeMs, tagsStr, suggestedTagsStr
+        0, payload, session.folder_id || UNCATEGORIZED_FOLDER_ID, mtimeMs, tagsStr, suggestedTagsStr
       ]);
     }
     
-    // Write file to save location directory as .trail.bak
     const callsDir = getCallsDir();
     if (!fs.existsSync(callsDir)) {
       fs.mkdirSync(callsDir, { recursive: true });
     }
-    const filePath = path.join(callsDir, `${session.id}.trail.bak`);
+    const folderId = session.folder_id || UNCATEGORIZED_FOLDER_ID;
+    const filePath = resolveSessionFilePath(callsDir, session.id, folderId);
+    const fileDir = path.dirname(filePath);
+    if (!fs.existsSync(fileDir)) {
+      fs.mkdirSync(fileDir, { recursive: true });
+    }
     fs.writeFileSync(filePath, payload, 'utf8');
   } catch (err) {
     console.error("Failed to save session to DB", err);
@@ -1472,15 +1571,16 @@ ipcMain.handle('settings:save', async (event, newSettings) => {
     }
     
     if (moveFiles) {
-      filesToMove.forEach(file => {
-        const src = path.join(oldStoragePath, file);
-        const dest = path.join(newStoragePath, file);
+      for (const entry of fs.readdirSync(oldStoragePath)) {
+        const src = path.join(oldStoragePath, entry);
+        const dest = path.join(newStoragePath, entry);
         try {
+          if (fs.existsSync(dest)) continue;
           fs.renameSync(src, dest);
         } catch (e) {
-          console.error(`Failed to move ${file}:`, e);
+          console.error(`Failed to move ${entry}:`, e);
         }
-      });
+      }
     }
   }
   
@@ -1736,6 +1836,32 @@ ipcMain.handle('models:download-whisper', async (event, modelName) => {
   });
 });
 
+ipcMain.handle('calls:decrypt-multiple', async (event, sessionIds, password) => {
+  const unlocked = [];
+  const failed = [];
+
+  for (const sessionId of sessionIds || []) {
+    try {
+      const session = await dbGet('SELECT * FROM sessions WHERE id = ?', [sessionId]);
+      if (!session || session.encrypted !== 1) {
+        unlocked.push(sessionId);
+        continue;
+      }
+      const decrypted = encryption.decrypt(session.encrypted_payload, password);
+      const sessionData = JSON.parse(decrypted);
+      sessionData.folder_id = session.folder_id;
+      decryptionKeys.set(sessionData.id, password);
+      await saveSessionToDbPromise(sessionData);
+      unlocked.push(sessionId);
+    } catch (err) {
+      failed.push({ sessionId, error: err.message });
+    }
+  }
+
+  if (getHubWindow()) getHubWindow().webContents.send('calls:list-updated');
+  return { success: failed.length === 0, unlocked, failed };
+});
+
 ipcMain.handle('calls:get-list', async () => {
   try {
     await migrateOldData();
@@ -1755,6 +1881,7 @@ ipcMain.handle('calls:get-list', async () => {
         encrypted: row.encrypted === 1,
         unlocked: row.encrypted !== 1 || decryptionKeys.has(row.id),
         filePath: row.id,
+        storagePath: resolveSessionFilePath(getCallsDir(), row.id, row.folder_id || UNCATEGORIZED_FOLDER_ID),
         summary: row.summary,
         description: row.description || 'No description available.',
         tags: tags,
@@ -2130,10 +2257,12 @@ ipcMain.handle('calls:export-obsidian', async (event, folderId, exportDir) => {
   }
 });
 
-// Folders Management (v0.2)
+// Folders Management — filesystem-backed under save location
 ipcMain.handle('folders:get', async () => {
   try {
-    return await dbAll("SELECT * FROM folders");
+    await syncDatabaseWithFiles();
+    const { folders } = scanStorageLayout(getCallsDir());
+    return folders.filter((folder) => folder.id !== ROOT_FOLDER_ID);
   } catch (err) {
     console.error(err);
     return [];
@@ -2143,11 +2272,8 @@ ipcMain.handle('folders:get', async () => {
 ipcMain.handle('folders:create', async (event, payload) => {
   try {
     const name = typeof payload === 'string' ? payload : payload?.name;
-    const icon = typeof payload === 'object' ? (payload?.icon || '📁') : '📁';
-    const description = typeof payload === 'object' ? (payload?.description || '') : '';
-    const id = 'folder_' + Date.now();
-    await dbRun("INSERT INTO folders (id, name, icon, description) VALUES (?, ?, ?, ?)", [id, name, icon, description]);
-    return { success: true, folder: { id, name, icon, description } };
+    const folder = ensureFolderDir(getCallsDir(), name);
+    return { success: true, folder };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -2155,10 +2281,27 @@ ipcMain.handle('folders:create', async (event, payload) => {
 
 ipcMain.handle('folders:update', async (event, folder) => {
   try {
-    await dbRun(
-      "UPDATE folders SET name = ?, icon = ?, description = ? WHERE id = ?",
-      [folder.name, folder.icon || '📁', folder.description || '', folder.id]
-    );
+    if (!folder?.id?.startsWith('fs:') || folder.id === UNCATEGORIZED_FOLDER_ID) {
+      return { success: true };
+    }
+    const relative = relativePathFromFolderId(folder.id);
+    const oldPath = path.join(getCallsDir(), relative);
+    const newName = (folder.name || relative).trim().replace(/[\\/]/g, '_');
+    const newPath = path.join(getCallsDir(), newName);
+    if (oldPath !== newPath && fs.existsSync(oldPath)) {
+      fs.renameSync(oldPath, newPath);
+      const sessions = await dbAll('SELECT id FROM sessions WHERE folder_id = ?', [folder.id]);
+      const newFolderId = `fs:${newName}`;
+      for (const session of sessions) {
+        await dbRun('UPDATE sessions SET folder_id = ? WHERE id = ?', [newFolderId, session.id]);
+        const file = resolveSessionFilePath(getCallsDir(), session.id, folder.id);
+        const dest = resolveSessionFilePath(getCallsDir(), session.id, newFolderId);
+        if (fs.existsSync(file)) {
+          fs.mkdirSync(path.dirname(dest), { recursive: true });
+          fs.renameSync(file, dest);
+        }
+      }
+    }
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
@@ -2167,7 +2310,19 @@ ipcMain.handle('folders:update', async (event, folder) => {
 
 ipcMain.handle('folders:delete', async (event, id) => {
   try {
-    await dbRun("DELETE FROM folders WHERE id = ?", [id]);
+    if (!id?.startsWith('fs:') || id === UNCATEGORIZED_FOLDER_ID) {
+      return { success: false, error: 'Cannot delete this folder' };
+    }
+    const relative = relativePathFromFolderId(id);
+    const folderPath = path.join(getCallsDir(), relative);
+    if (fs.existsSync(folderPath)) {
+      const remaining = fs.readdirSync(folderPath);
+      if (remaining.length > 0) {
+        return { success: false, error: 'Folder is not empty. Move or delete notes first.' };
+      }
+      fs.rmdirSync(folderPath);
+    }
+    await dbRun('UPDATE sessions SET folder_id = ? WHERE folder_id = ?', [UNCATEGORIZED_FOLDER_ID, id]);
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
@@ -2176,16 +2331,23 @@ ipcMain.handle('folders:delete', async (event, id) => {
 
 ipcMain.handle('calls:move-to-folder', async (event, sessionId, folderId) => {
   try {
-    await dbRun("UPDATE sessions SET folder_id = ? WHERE id = ?", [folderId, sessionId]);
+    const normalizedFolderId = folderId || UNCATEGORIZED_FOLDER_ID;
+    const row = await dbGet('SELECT folder_id FROM sessions WHERE id = ?', [sessionId]);
+    const fromFolderId = row?.folder_id || UNCATEGORIZED_FOLDER_ID;
+    const moveResult = moveSessionFile(getCallsDir(), sessionId, fromFolderId, normalizedFolderId);
+    if (!moveResult.success) {
+      return moveResult;
+    }
+    await dbRun('UPDATE sessions SET folder_id = ? WHERE id = ?', [normalizedFolderId, sessionId]);
     if (getHubWindow()) getHubWindow().webContents.send('calls:list-updated');
 
-    if (folderId) {
-      const folder = await dbGet("SELECT * FROM folders WHERE id = ?", [folderId]);
-      const session = await dbGet("SELECT title FROM sessions WHERE id = ?", [sessionId]);
+    if (normalizedFolderId && normalizedFolderId !== UNCATEGORIZED_FOLDER_ID) {
+      const folderName = relativePathFromFolderId(normalizedFolderId);
+      const session = await dbGet('SELECT title FROM sessions WHERE id = ?', [sessionId]);
       void appEventBus.emitWorkflowEvent('note:added-to-folder', {
         sessionId,
-        folderId,
-        folderName: folder?.name || null,
+        folderId: normalizedFolderId,
+        folderName,
         sessionTitle: session?.title || null
       });
     }

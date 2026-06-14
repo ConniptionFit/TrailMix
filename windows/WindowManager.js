@@ -51,10 +51,10 @@ class WindowManager {
     }
 
     const meetingWindow = new BrowserWindow({
-      width: 920,
-      height: 700,
-      minWidth: 720,
-      minHeight: 520,
+      width: 1100,
+      height: 760,
+      minWidth: 960,
+      minHeight: 600,
       title: 'TrailMix Meeting',
       icon: path.join(this.projectDir, 'assets', 'logo.png'),
       webPreferences: {

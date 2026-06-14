@@ -209,6 +209,7 @@
         <div id="sidebar-bulk-actions" class="bulk-actions-bar hidden">
           <span id="bulk-select-count">0 selected</span>
           <div class="bulk-buttons">
+            <button id="btn-bulk-decrypt" class="bulk-btn" title="Unlock selected encrypted notes">🔓</button>
             <button id="btn-bulk-merge" class="bulk-btn" title="Merge Selected">🔗</button>
             <button id="btn-bulk-export" class="bulk-btn" title="Export Selected">📤</button>
             <button id="btn-bulk-delete" class="bulk-btn delete" title="Delete Selected">🗑️</button>
@@ -237,12 +238,7 @@
       <section id="tab-hub-home" class="tab-pane active">
         <div class="tab-header">
           <h1>The Trail</h1>
-          <p>Your meeting history lives here. Start a new meeting or open a past session from the sidebar.</p>
-        </div>
-        <div class="card glassmorphic hub-home-card">
-          <h2>Quick actions</h2>
-          <p>Use <strong>New Meeting</strong> in the sidebar to open a distraction-free capture window. All live transcription and Jot &amp; Enhance editing happens there.</p>
-          <button id="btn-hub-new-meeting" class="btn-primary" type="button">➕ New Meeting</button>
+          <p>Your meeting history lives here. Start a new meeting from the sidebar or browse past sessions below.</p>
         </div>
       </section>
 
@@ -321,6 +317,11 @@
         <div class="tab-header">
           <h1>Call History</h1>
           <p>Review and search past local transcriptions</p>
+        </div>
+        <div id="history-tag-filters" class="history-tag-filters hidden">
+          <span class="history-tag-filters-label">Filter by tags:</span>
+          <div id="history-tag-pills" class="history-tag-pills"></div>
+          <button id="btn-clear-tag-filters" class="btn-secondary btn-tag-clear" type="button">Clear</button>
         </div>
         <div class="history-grid" id="history-grid">
           <!-- Dynamically populated -->
@@ -599,6 +600,21 @@
       <span class="global-ask-hint">Ctrl+J</span>
     </div>
 
+  </div>
+
+  <div id="bulk-decrypt-modal" class="modal hidden">
+    <div class="modal-content glassmorphic">
+      <h2>Unlock encrypted notes</h2>
+      <p id="bulk-decrypt-count">Enter your key to unlock selected sessions.</p>
+      <div class="modal-field">
+        <input type="password" id="bulk-decrypt-password" class="input-text" placeholder="Decryption key">
+      </div>
+      <div id="bulk-decrypt-error" class="modal-error hidden"></div>
+      <div class="modal-actions">
+        <button id="btn-bulk-decrypt-cancel" class="btn-secondary" type="button">Cancel</button>
+        <button id="btn-bulk-decrypt-submit" class="btn-primary" type="button">Unlock</button>
+      </div>
+    </div>
   </div>
 
   <!-- Folder Create/Edit Modal -->

@@ -14,14 +14,11 @@
   <link rel="stylesheet" href="meeting.css">
 </head>
 <body class="meeting-window-body">
-  <div id="meeting-app" class="meeting-app">
+  <div id="meeting-app" class="meeting-app chat-docked">
     <header class="meeting-header">
       <div class="meeting-title-block">
         <input id="input-meeting-title" class="meeting-title-input" type="text" value="New Meeting" maxlength="120">
         <p id="meeting-title-hint" class="meeting-title-hint">Title will be auto-generated when you finish unless you change it</p>
-      </div>
-      <div class="meeting-header-actions">
-        <button id="btn-meeting-chat-toggle" class="btn-secondary" type="button" title="Ask about this meeting (Ctrl+J)">💬 Ask</button>
       </div>
     </header>
 
@@ -47,11 +44,10 @@
     </div>
 
     <div class="meeting-body-row">
-    <div class="meeting-main">
       <section class="meeting-editor-pane card glassmorphic">
         <header class="mix-stage-header">
-          <h2>Jot &amp; Enhance</h2>
-          <p>Distraction-free notes blended with your live transcript.</p>
+          <h2>The Mix</h2>
+          <p>Scatter your Mix-Ins as you go — then blend them with the live transcript into trail-ready notes.</p>
         </header>
         <div id="editor-component-root" class="editor-component-host"></div>
         <div id="editor-waveform-bars" class="editor-waveform-bars hidden" aria-hidden="true">
@@ -62,20 +58,19 @@
         </div>
         <footer class="mix-stage-footer">
           <div class="mix-stage-footer-left">
-            <button id="btn-toggle-editor-transcript" type="button" class="btn-icon-subtle" title="Toggle transcript panel">〰️</button>
+            <button id="btn-toggle-editor-transcript" type="button" class="btn-icon-subtle" title="Toggle transcript trace">〰️</button>
             <p id="editor-legend" class="editor-legend hidden">
-              <span class="legend-user">Black</span> = your notes ·
-              <span class="legend-ai">Gray</span> = AI context
+              <span class="legend-user">Dark</span> = your Mix-Ins ·
+              <span class="legend-ai">Gray</span> = AI trail context
             </p>
           </div>
-          <button id="btn-mix-enhance" class="btn-mix" type="button">✨ Start the Mix</button>
+          <button id="btn-mix-enhance" class="btn-mix" type="button">🥣 Mix notes</button>
         </footer>
       </section>
 
       <aside id="meeting-transcript-drawer" class="transcript-pane card glassmorphic meeting-transcript-pane">
         <div class="pane-header">
           <h2>Transcript</h2>
-          <button id="btn-close-transcript" class="icon-btn-toggle" type="button" title="Close">✕</button>
         </div>
         <div id="transcript-container" class="transcript-container">
           <div class="transcript-empty-state">
@@ -85,30 +80,28 @@
         </div>
         <button id="btn-jump-latest" class="btn-jump-latest hidden"><span>↓ Jump to latest</span></button>
       </aside>
-    </div>
 
-    <div id="meeting-chat-widget" class="chat-widget meeting-chat-widget closed">
-    <div class="chat-header">
-      <div class="chat-title">
-        <span class="chat-icon">💬</span>
-        <div>
-          <h4>Meeting Assistant</h4>
-          <span>Primary context: this meeting</span>
+      <div id="meeting-chat-widget" class="chat-widget meeting-chat-widget">
+        <div class="chat-header">
+          <div class="chat-title">
+            <span class="chat-icon">💬</span>
+            <div>
+              <h4>Trail Guide</h4>
+              <span>Ask about this meeting</span>
+            </div>
+          </div>
+        </div>
+        <div class="chat-body">
+          <div id="chat-recipes" class="chat-recipes"></div>
+          <div id="chat-messages" class="chat-messages">
+            <div class="msg system">Ask about this meeting. I'll use the current transcript first, and can reference past sessions when you ask.</div>
+          </div>
+        </div>
+        <div class="chat-footer">
+          <input type="text" id="input-chat-query" class="input-chat" placeholder="Ask anything about this meeting…">
+          <button id="btn-chat-send" class="btn-chat-send" type="button">Send</button>
         </div>
       </div>
-      <button id="btn-meeting-chat-close" class="chat-toggle-btn" type="button">▲</button>
-    </div>
-    <div class="chat-body">
-      <div id="chat-recipes" class="chat-recipes"></div>
-      <div id="chat-messages" class="chat-messages">
-        <div class="msg system">Ask about this meeting. I'll use the current transcript first, and can reference past sessions when you ask.</div>
-      </div>
-    </div>
-    <div class="chat-footer">
-      <input type="text" id="input-chat-query" class="input-chat" placeholder="Ask anything about this meeting…">
-      <button id="btn-chat-send" class="btn-chat-send" type="button">Send</button>
-    </div>
-    </div>
     </div>
 
     <div id="editor-transcript-panel" class="editor-transcript-panel closed">

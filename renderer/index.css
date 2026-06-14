@@ -2645,3 +2645,56 @@ body {
   color: var(--text-muted);
   line-height: 1.5;
 }
+
+.history-tag-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--bg-surface, rgba(18, 22, 28, 0.5));
+  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.06));
+}
+
+.history-tag-filters-label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.history-tag-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+}
+
+.history-tag-pill {
+  border: 1px solid var(--color-border-subtle);
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.history-tag-pill.active {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: rgba(164, 198, 57, 0.1);
+}
+
+.btn-tag-clear {
+  font-size: 11px;
+  padding: 4px 10px;
+}
+
+.call-lock-btn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  font-size: 12px;
+}

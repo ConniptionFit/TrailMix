@@ -313,10 +313,8 @@ if (isMiniMode) {
   }
 
   const btnNewMeeting = document.getElementById('btn-new-meeting');
-  const btnHubNewMeeting = document.getElementById('btn-hub-new-meeting');
   const startNewMeeting = () => window.api.createMeeting();
   if (btnNewMeeting) btnNewMeeting.addEventListener('click', startNewMeeting);
-  if (btnHubNewMeeting) btnHubNewMeeting.addEventListener('click', startNewMeeting);
   
   tabs.forEach(tab => {
     if (!tab.nav) return;
@@ -957,6 +955,18 @@ if (isMiniMode) {
   const btnBulkCancel = document.getElementById('btn-bulk-cancel');
   
   let historySortOrder = 'date-newest'; // default
+  let selectedHistoryTags = new Set();
+
+  const historyTagFilters = document.getElementById('history-tag-filters');
+  const historyTagPills = document.getElementById('history-tag-pills');
+  const btnClearTagFilters = document.getElementById('btn-clear-tag-filters');
+  const btnBulkDecrypt = document.getElementById('btn-bulk-decrypt');
+  const bulkDecryptModal = document.getElementById('bulk-decrypt-modal');
+  const bulkDecryptPassword = document.getElementById('bulk-decrypt-password');
+  const bulkDecryptError = document.getElementById('bulk-decrypt-error');
+  const bulkDecryptCount = document.getElementById('bulk-decrypt-count');
+  const btnBulkDecryptCancel = document.getElementById('btn-bulk-decrypt-cancel');
+  const btnBulkDecryptSubmit = document.getElementById('btn-bulk-decrypt-submit');
 
   const btnHistoryMenu = document.getElementById('btn-history-menu');
   const historyMenuDropdown = document.getElementById('history-menu-dropdown');
@@ -1060,6 +1070,13 @@ if (isMiniMode) {
     if (btnBulkMerge) btnBulkMerge.disabled = checked.length < 2;
     if (btnBulkExport) btnBulkExport.disabled = checked.length < 1;
     if (btnBulkDelete) btnBulkDelete.disabled = checked.length < 1;
+    if (btnBulkDecrypt) {
+      const lockedSelected = Array.from(checked).filter((cb) => {
+        const item = cb.closest('.call-list-item');
+        return item?.querySelector('.call-lock-btn');
+      });
+      btnBulkDecrypt.disabled = lockedSelected.length < 1;
+    }
   }
   
   if (btnBulkMerge) {
@@ -1080,6 +1097,46 @@ if (isMiniMode) {
     });
   }
   
+  if (btnBulkDecrypt) {
+    btnBulkDecrypt.addEventListener('click', () => {
+      const checked = Array.from(document.querySelectorAll('.call-item-checkbox:checked'));
+      const lockedIds = checked
+        .map((cb) => cb.closest('.call-list-item')?.getAttribute('data-callid'))
+        .filter((id, index) => id && checked[index].closest('.call-list-item')?.querySelector('.call-lock-btn'));
+      if (!lockedIds.length) return;
+      bulkDecryptCount.textContent = `Unlock ${lockedIds.length} encrypted session(s) with one key.`;
+      bulkDecryptPassword.value = '';
+      bulkDecryptError.classList.add('hidden');
+      bulkDecryptModal.classList.remove('hidden');
+      bulkDecryptModal.dataset.sessionIds = JSON.stringify(lockedIds);
+    });
+  }
+
+  btnBulkDecryptCancel?.addEventListener('click', () => {
+    bulkDecryptModal.classList.add('hidden');
+  });
+
+  btnBulkDecryptSubmit?.addEventListener('click', () => {
+    const password = bulkDecryptPassword?.value;
+    if (!password) return;
+    let sessionIds = [];
+    try {
+      sessionIds = JSON.parse(bulkDecryptModal.dataset.sessionIds || '[]');
+    } catch (_) {
+      return;
+    }
+    window.api.decryptMultipleCalls(sessionIds, password).then((res) => {
+      if (res.failed?.length) {
+        bulkDecryptError.textContent = `Unlocked ${res.unlocked?.length || 0}. Failed: ${res.failed.map((f) => f.sessionId).join(', ')}`;
+        bulkDecryptError.classList.remove('hidden');
+        loadHistoryList();
+      } else {
+        bulkDecryptModal.classList.add('hidden');
+        loadHistoryList();
+      }
+    });
+  });
+
   if (btnBulkExport) {
     btnBulkExport.addEventListener('click', () => {
       const checked = Array.from(document.querySelectorAll('.call-item-checkbox:checked'));
@@ -1183,6 +1240,36 @@ if (isMiniMode) {
     }
   });
 
+  function renderHistoryTagFilters(tags) {
+    if (!historyTagFilters || !historyTagPills) return;
+    if (!tags.length) {
+      historyTagFilters.classList.add('hidden');
+      historyTagPills.innerHTML = '';
+      return;
+    }
+    historyTagFilters.classList.remove('hidden');
+    historyTagPills.innerHTML = '';
+    tags.forEach((tag) => {
+      const pill = document.createElement('button');
+      pill.type = 'button';
+      pill.className = `history-tag-pill ${selectedHistoryTags.has(tag) ? 'active' : ''}`;
+      pill.textContent = `#${tag}`;
+      pill.addEventListener('click', () => {
+        if (selectedHistoryTags.has(tag)) selectedHistoryTags.delete(tag);
+        else selectedHistoryTags.add(tag);
+        loadHistoryList();
+      });
+      historyTagPills.appendChild(pill);
+    });
+  }
+
+  if (btnClearTagFilters) {
+    btnClearTagFilters.addEventListener('click', () => {
+      selectedHistoryTags.clear();
+      loadHistoryList();
+    });
+  }
+
   function loadHistoryList() {
     // Update header first
     const headerTitle = document.querySelector('.sidebar-history-header h3');
@@ -1215,9 +1302,29 @@ if (isMiniMode) {
       
       let filteredCalls = calls;
       
-      // Filter by active folder
+      // Filter by active folder (filesystem-backed)
       if (activeFolderId && activeFolderId !== 'all') {
-        filteredCalls = filteredCalls.filter(c => c.folder_id === activeFolderId);
+        filteredCalls = filteredCalls.filter((c) => {
+          const folderId = c.folder_id || 'fs:';
+          if (activeFolderId === 'fs:') {
+            return !folderId || folderId === 'fs:' || folderId === 'work';
+          }
+          return folderId === activeFolderId;
+        });
+      }
+
+      // Collect tags for history filter UI
+      const tagSet = new Set();
+      calls.forEach((c) => {
+        (c.tags || []).forEach((tag) => tagSet.add(tag));
+      });
+      renderHistoryTagFilters([...tagSet].sort());
+
+      if (selectedHistoryTags.size > 0) {
+        filteredCalls = filteredCalls.filter((c) => {
+          const callTags = c.tags || [];
+          return [...selectedHistoryTags].every((tag) => callTags.includes(tag));
+        });
       }
       
       // Sort calls
@@ -1263,7 +1370,9 @@ if (isMiniMode) {
         }
         
         const tagline = call.title || 'Meeting Session';
-        const description = call.encrypted ? 'Encrypted session' : (call.description || 'No description available.');
+        const description = call.encrypted && !call.unlocked
+          ? '🔒 Encrypted — click to unlock'
+          : (call.encrypted ? 'Encrypted session' : (call.description || 'No description available.'));
         
         let tagsHtml = '';
         const tags = call.tags || [];
@@ -1295,7 +1404,7 @@ if (isMiniMode) {
         item.innerHTML = `
           ${checkboxHtml}
           <div class="call-item-details">
-            <div class="call-item-title">${call.encrypted ? '🔒 ' : ''}${tagline}</div>
+            <div class="call-item-title">${call.encrypted && !call.unlocked ? '<button type="button" class="call-lock-btn" title="Unlock">🔒</button> ' : (call.encrypted ? '🔒 ' : '')}${tagline}</div>
             <div class="call-item-date">${call.date || ''}</div>
             <div class="call-item-desc">${description}</div>
             ${tagsHtml}
@@ -1318,9 +1427,27 @@ if (isMiniMode) {
             }
             updateBulkSelectState();
           } else {
-            handleCallSelect(call);
+            if (call.encrypted && !call.unlocked) {
+              pendingCallToDecrypt = call;
+              modalPasswordInput.value = '';
+              modalErrorMessage.classList.add('hidden');
+              passwordModal.classList.remove('hidden');
+            } else {
+              handleCallSelect(call);
+            }
           }
         });
+
+        const lockBtn = item.querySelector('.call-lock-btn');
+        if (lockBtn) {
+          lockBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            pendingCallToDecrypt = call;
+            modalPasswordInput.value = '';
+            modalErrorMessage.classList.add('hidden');
+            passwordModal.classList.remove('hidden');
+          });
+        }
 
         // Hover tooltip logic with 1-second delay
         item.addEventListener('mouseenter', () => {
@@ -1472,10 +1599,12 @@ if (isMiniMode) {
       });
       folderList.appendChild(allItem);
 
-      // Render database folders
+      // Render filesystem folders from save location
       folders.forEach(folder => {
         const item = document.createElement('div');
         const isSelected = activeFolderId === folder.id;
+        const isRootTrail = folder.id === 'fs:';
+        const canManage = folder.id.startsWith('fs:') && !isRootTrail;
         item.className = `folder-list-item flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer transition text-xs ${
           isSelected 
             ? 'bg-trail-500/10 text-trail-400 font-semibold border border-trail-500/20' 
@@ -1491,9 +1620,9 @@ if (isMiniMode) {
             </div>
           </div>
           <div class="flex items-center gap-1.5 folder-actions opacity-60 hover:opacity-100 transition">
-            <button class="btn-folder-edit p-0.5 text-slate-400 hover:text-trail-400 transition" title="Edit folder" data-folderid="${folder.id}">✏️</button>
-            <button class="btn-folder-export p-0.5 text-slate-400 hover:text-trail-400 transition" title="Export Folder to Obsidian" data-folderid="${folder.id}">📤</button>
-            <button class="btn-folder-delete p-0.5 text-slate-400 hover:text-red-400 transition" title="Delete Folder" data-folderid="${folder.id}">🗑️</button>
+            ${canManage ? '<button class="btn-folder-edit p-0.5 text-slate-400 hover:text-trail-400 transition" title="Rename folder" data-folderid="' + folder.id + '">✏️</button>' : ''}
+            ${canManage ? '<button class="btn-folder-export p-0.5 text-slate-400 hover:text-trail-400 transition" title="Export Folder to Obsidian" data-folderid="' + folder.id + '">📤</button>' : ''}
+            ${canManage ? '<button class="btn-folder-delete p-0.5 text-slate-400 hover:text-red-400 transition" title="Delete Folder" data-folderid="' + folder.id + '">🗑️</button>' : ''}
           </div>
         `;
         
@@ -1504,38 +1633,49 @@ if (isMiniMode) {
           loadHistoryList();
         });
 
-        item.querySelector('.btn-folder-edit').addEventListener('click', (e) => {
-          e.stopPropagation();
-          openFolderModal({ mode: 'edit', folder });
-        });
+        const editBtn = item.querySelector('.btn-folder-edit');
+        if (editBtn) {
+          editBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            openFolderModal({ mode: 'edit', folder });
+          });
+        }
 
-        // Delete Folder
-        item.querySelector('.btn-folder-delete').addEventListener('click', (e) => {
-          e.stopPropagation();
-          if (confirm(`Delete folder "${folder.name}"? Notes inside will not be deleted but will become uncategorized.`)) {
-            window.api.deleteFolder(folder.id).then(() => {
-              if (activeFolderId === folder.id) activeFolderId = 'all';
-              renderFolders();
-              loadHistoryList();
-            });
-          }
-        });
-
-        // Export Folder to Obsidian
-        item.querySelector('.btn-folder-export').addEventListener('click', (e) => {
-          e.stopPropagation();
-          window.api.selectDirectory().then(dir => {
-            if (dir) {
-              window.api.exportObsidian(folder.id, dir).then(res => {
-                if (res.success) {
-                  alert(`Successfully exported ${res.count} notes to your Obsidian vault at: ${dir}`);
-                } else {
-                  alert(`Export failed: ${res.error}`);
+        const deleteBtn = item.querySelector('.btn-folder-delete');
+        if (deleteBtn) {
+          deleteBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (confirm(`Delete folder "${folder.name}"? It must be empty first.`)) {
+              window.api.deleteFolder(folder.id).then((res) => {
+                if (res?.success === false) {
+                  alert(res.error || 'Could not delete folder');
+                  return;
                 }
+                if (activeFolderId === folder.id) activeFolderId = 'all';
+                renderFolders();
+                loadHistoryList();
               });
             }
           });
-        });
+        }
+
+        const exportBtn = item.querySelector('.btn-folder-export');
+        if (exportBtn) {
+          exportBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            window.api.selectDirectory().then(dir => {
+              if (dir) {
+                window.api.exportObsidian(folder.id, dir).then(res => {
+                  if (res.success) {
+                    alert(`Successfully exported ${res.count} notes to your Obsidian vault at: ${dir}`);
+                  } else {
+                    alert(`Export failed: ${res.error}`);
+                  }
+                });
+              }
+            });
+          });
+        }
 
         folderList.appendChild(item);
       });
