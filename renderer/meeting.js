@@ -262,7 +262,7 @@
     if (btnRecordToggle.classList.contains('start')) {
       await startRecordingFlow();
     } else {
-      window.api.stopRecording();
+      await window.api.stopRecording();
     }
   });
 
@@ -438,13 +438,18 @@
     return id;
   }
 
-  function submitChatQueryPayload(queryText) {
+  function buildTranscriptTextForChat() {
+    return (activeSession?.transcript || [])
+      .map((segment) => `[${segment.timestamp}] ${segment.speaker}: ${segment.text}`)
+      .join('\n');
+  }
+
+  async function submitChatQueryPayload(queryText) {
     const text = String(queryText || '').trim();
     if (!text) return;
     appendChatMessage('user', text);
     const loadingId = appendChatMessage('assistant', 'Thinking…');
-    const transcriptText = (activeSession?.transcript || [])
-      .map((t) => `[${t.timestamp}] ${t.speaker}: ${t.text}`).join('\n');
+    const transcriptText = buildTranscriptTextForChat();
 
     window.api.chatQuery({
       query: text,
@@ -474,11 +479,10 @@
     submitChatQueryPayload(text);
   }
 
-  function runRecipeQuery(recipe) {
+  async function runRecipeQuery(recipe) {
     appendChatMessage('user', `${recipe.icon || ''} ${recipe.label}`.trim());
     const loadingId = appendChatMessage('assistant', 'Running recipe locally…');
-    const transcriptText = (activeSession?.transcript || [])
-      .map((t) => `[${t.timestamp}] ${t.speaker}: ${t.text}`).join('\n');
+    const transcriptText = buildTranscriptTextForChat();
 
     window.api.chatQuery({
       query: recipe.id,

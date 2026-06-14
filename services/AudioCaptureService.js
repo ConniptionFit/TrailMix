@@ -78,6 +78,7 @@ class AudioCaptureService {
   }
 
   async start({ sinkMonitor, source }) {
+    await this.stopFfmpeg();
     await this.prepareTempDir(true);
 
     const inputFormat = this.buildFfmpegInputFormat();
@@ -249,7 +250,14 @@ class AudioCaptureService {
     this.recordingProcess = null;
 
     await new Promise((resolve) => {
-      processRef.once('close', resolve);
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+
+      processRef.once('close', finish);
 
       try {
         processRef.stdin.write('q');
@@ -257,16 +265,31 @@ class AudioCaptureService {
         try {
           processRef.kill('SIGINT');
         } catch (killErr) {
-          processRef.kill('SIGKILL');
+          try {
+            processRef.kill('SIGKILL');
+          } catch (forceErr) {
+            // Process already exited.
+          }
         }
       }
 
-      setTimeout(resolve, 1500);
+      setTimeout(() => {
+        try {
+          if (!processRef.killed) processRef.kill('SIGKILL');
+        } catch (err) {
+          // Ignore.
+        }
+        finish();
+      }, 2000);
     });
   }
 
   getProcessedChunkCount() {
     return this.processedChunks.size;
+  }
+
+  hasActiveProcess() {
+    return Boolean(this.recordingProcess);
   }
 
   resetProcessedChunks() {
