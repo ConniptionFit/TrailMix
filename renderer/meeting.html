@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <title>TrailMix Meeting</title>
+  <script>
+    (function () {
+      var theme = localStorage.getItem('trailmix-theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', theme);
+    })();
+  </script>
+  <link rel="stylesheet" href="themes.css">
+  <link rel="stylesheet" href="index.css">
+  <link rel="stylesheet" href="meeting.css">
+</head>
+<body class="meeting-window-body">
+  <div id="meeting-app" class="meeting-app">
+    <header class="meeting-header">
+      <div class="meeting-title-block">
+        <input id="input-meeting-title" class="meeting-title-input" type="text" value="New Meeting" maxlength="120">
+        <p id="meeting-title-hint" class="meeting-title-hint">Title will be auto-generated when you finish unless you change it</p>
+      </div>
+      <div class="meeting-header-actions">
+        <button id="btn-meeting-chat-toggle" class="btn-secondary" type="button" title="Ask about this meeting (Ctrl+J)">💬 Ask</button>
+      </div>
+    </header>
+
+    <div class="rec-control-panel card glassmorphic meeting-rec-panel">
+      <div class="rec-status-details">
+        <div id="rec-indicator" class="rec-indicator-static"></div>
+        <div class="rec-info-text">
+          <h3 id="rec-title">Engine Idle</h3>
+          <span id="rec-timer">00:00</span>
+        </div>
+      </div>
+      <div class="rec-actions">
+        <button id="btn-record-toggle" class="btn-record start" type="button">
+          <span class="btn-icon">⏺</span> Start Trail
+        </button>
+        <button id="btn-pause-toggle" class="btn-record pause hidden" type="button">
+          <span class="btn-icon">⏸</span> Pause
+        </button>
+        <button id="btn-resume-past" class="btn-record resume hidden" type="button">
+          <span class="btn-icon">⏯</span> Resume
+        </button>
+      </div>
+    </div>
+
+    <div class="meeting-main">
+      <section class="meeting-editor-pane card glassmorphic">
+        <header class="mix-stage-header">
+          <h2>Jot &amp; Enhance</h2>
+          <p>Distraction-free notes blended with your live transcript.</p>
+        </header>
+        <div id="editor-component-root" class="editor-component-host"></div>
+        <div id="editor-waveform-bars" class="editor-waveform-bars hidden" aria-hidden="true">
+          <div class="waveform-bar"></div><div class="waveform-bar"></div><div class="waveform-bar"></div>
+          <div class="waveform-bar"></div><div class="waveform-bar"></div><div class="waveform-bar"></div>
+          <div class="waveform-bar"></div><div class="waveform-bar"></div><div class="waveform-bar"></div>
+          <div class="waveform-bar"></div><div class="waveform-bar"></div><div class="waveform-bar"></div>
+        </div>
+        <footer class="mix-stage-footer">
+          <div class="mix-stage-footer-left">
+            <button id="btn-toggle-editor-transcript" type="button" class="btn-icon-subtle" title="Toggle transcript panel">〰️</button>
+            <p id="editor-legend" class="editor-legend hidden">
+              <span class="legend-user">Black</span> = your notes ·
+              <span class="legend-ai">Gray</span> = AI context
+            </p>
+          </div>
+          <button id="btn-mix-enhance" class="btn-mix" type="button">✨ Start the Mix</button>
+        </footer>
+      </section>
+
+      <aside id="meeting-transcript-drawer" class="transcript-pane card glassmorphic meeting-transcript-pane">
+        <div class="pane-header">
+          <h2>Transcript</h2>
+          <button id="btn-close-transcript" class="icon-btn-toggle" type="button" title="Close">✕</button>
+        </div>
+        <div id="transcript-container" class="transcript-container">
+          <div class="transcript-empty-state">
+            <span class="empty-icon">🎧</span>
+            <p>Start the Trail to begin live transcription.</p>
+          </div>
+        </div>
+        <button id="btn-jump-latest" class="btn-jump-latest hidden"><span>↓ Jump to latest</span></button>
+      </aside>
+    </div>
+
+    <div id="editor-transcript-panel" class="editor-transcript-panel closed">
+      <div class="editor-transcript-panel-header">
+        <span>Live transcript trace</span>
+        <button id="btn-close-editor-transcript" type="button" class="icon-btn-toggle">✕</button>
+      </div>
+      <div id="editor-transcript-container" class="editor-transcript-container"></div>
+    </div>
+  </div>
+
+  <div id="meeting-chat-widget" class="chat-widget meeting-chat-widget closed">
+    <div class="chat-header">
+      <div class="chat-title">
+        <span class="chat-icon">💬</span>
+        <div>
+          <h4>Meeting Assistant</h4>
+          <span>Primary context: this meeting</span>
+        </div>
+      </div>
+      <button id="btn-meeting-chat-close" class="chat-toggle-btn" type="button">▲</button>
+    </div>
+    <div class="chat-body">
+      <div id="chat-recipes" class="chat-recipes"></div>
+      <div id="chat-messages" class="chat-messages">
+        <div class="msg system">Ask about this meeting. I'll use the current transcript first, and can reference past sessions when you ask.</div>
+      </div>
+    </div>
+    <div class="chat-footer">
+      <input type="text" id="input-chat-query" class="input-chat" placeholder="Ask anything about this meeting…">
+      <button id="btn-chat-send" class="btn-chat-send" type="button">Send</button>
+    </div>
+  </div>
+
+  <div id="recording-conflict-modal" class="modal hidden">
+    <div class="modal-content glassmorphic">
+      <h2>Another Trail is active</h2>
+      <p id="recording-conflict-message">Only one meeting can record at a time.</p>
+      <div class="modal-actions">
+        <button id="btn-conflict-cancel" class="btn-secondary" type="button">Cancel</button>
+        <button id="btn-conflict-stop-current" class="btn-secondary" type="button">Stop current &amp; start here</button>
+        <button id="btn-conflict-open-current" class="btn-primary" type="button">Open active Trail</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="EditorComponent.js"></script>
+  <script src="meeting.js"></script>
+</body>
+</html>

@@ -8,6 +8,7 @@ const { promisify } = require('util');
 const execFileAsync = promisify(execFile);
 const { checkVoiceActivity } = require('../lib/audio-vad');
 const { secureShredFile } = require('../lib/secure-shred');
+const { applyAecToWavBuffers } = require('../lib/audio-aec');
 
 async function splitStereoChannels(chunkWavPath, leftWavPath, rightWavPath) {
   await execFileAsync('ffmpeg', [
@@ -74,12 +75,20 @@ async function transcribeMonoFile(monoWavPath, speakerName, whisperCli, whisperM
   }
 }
 
+async function applyAppLevelAec(leftWavPath, rightWavPath) {
+  const leftBuffer = await fs.promises.readFile(leftWavPath);
+  const rightBuffer = await fs.promises.readFile(rightWavPath);
+  const cleaned = applyAecToWavBuffers(leftBuffer, rightBuffer);
+  await fs.promises.writeFile(rightWavPath, cleaned);
+}
+
 async function processChunk(job) {
   const {
     chunkPath,
     chunkIndex,
     whisperDir,
-    selectedModel
+    selectedModel,
+    aecMode = 'off'
   } = job;
 
   const whisperCli = path.join(whisperDir, 'build', 'bin', 'whisper-cli');
@@ -100,6 +109,14 @@ async function processChunk(job) {
   } catch (err) {
     await secureShredFile(chunkPath);
     throw new Error(`Ffmpeg channel splitting failed: ${err.message}`);
+  }
+
+  if (aecMode === 'app') {
+    try {
+      await applyAppLevelAec(leftWavPath, rightWavPath);
+    } catch (err) {
+      console.error(`App-level AEC failed for chunk ${chunkIndex}`, err);
+    }
   }
 
   const hasLeftVoice = await checkVoiceActivity(leftWavPath);

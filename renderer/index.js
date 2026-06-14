@@ -258,27 +258,37 @@ if (isMiniMode) {
   initTrailSidebar();
   
   // Navigation Tabs
-  const navDashboard = document.getElementById('nav-dashboard');
   const navCalendar = document.getElementById('nav-calendar');
   const navActionItems = document.getElementById('nav-action-items');
   const navHistory = document.getElementById('nav-history');
   const navSettings = document.getElementById('nav-settings');
-  
-  const tabDashboard = document.getElementById('tab-dashboard');
+  const tabHubHome = document.getElementById('tab-hub-home');
   const tabCalendar = document.getElementById('tab-calendar');
   const tabActionItems = document.getElementById('tab-action-items');
   const tabHistory = document.getElementById('tab-history');
   const tabSettings = document.getElementById('tab-settings');
   
   const tabs = [
-    { nav: navDashboard, pane: tabDashboard },
+    { nav: null, pane: tabHubHome },
     { nav: navCalendar, pane: tabCalendar },
     { nav: navActionItems, pane: tabActionItems },
     { nav: navHistory, pane: tabHistory },
     { nav: navSettings, pane: tabSettings }
-  ];
+  ].filter((tab) => tab.pane);
+  
+  function openMeetingForCall(call) {
+    const sessionId = call.id || (call.filePath ? call.filePath.replace(/\.trail.*$/, '').split('/').pop() : null);
+    if (sessionId) window.api.openMeeting(sessionId);
+  }
+
+  const btnNewMeeting = document.getElementById('btn-new-meeting');
+  const btnHubNewMeeting = document.getElementById('btn-hub-new-meeting');
+  const startNewMeeting = () => window.api.createMeeting();
+  if (btnNewMeeting) btnNewMeeting.addEventListener('click', startNewMeeting);
+  if (btnHubNewMeeting) btnHubNewMeeting.addEventListener('click', startNewMeeting);
   
   tabs.forEach(tab => {
+    if (!tab.nav) return;
     tab.nav.addEventListener('click', () => {
       tabs.forEach(t => {
         t.nav.classList.remove('active');
@@ -311,6 +321,7 @@ if (isMiniMode) {
   let lastSegmentTimeMs = null;
   let isUserScrolledUp = false;
 
+  if (btnRecordToggle) {
   if (transcriptContainer) {
     transcriptContainer.addEventListener('scroll', () => {
       const distanceFromBottom = transcriptContainer.scrollHeight - transcriptContainer.scrollTop - transcriptContainer.clientHeight;
@@ -847,25 +858,27 @@ if (isMiniMode) {
     editorLegend.classList.add('hidden');
   }
 
-  btnShowSummary.addEventListener('click', () => {
-    btnShowSummary.classList.add('active');
-    btnShowActions.classList.remove('active');
-    if (btnShowMix) btnShowMix.classList.remove('active');
-    summaryContent.classList.remove('hidden');
-    actionContent.classList.add('hidden');
-    if (mixContent) mixContent.classList.add('hidden');
-    if (analysisPane) analysisPane.classList.remove('mix-focused');
-  });
+  if (btnShowSummary && btnShowActions && summaryContent && actionContent) {
+    btnShowSummary.addEventListener('click', () => {
+      btnShowSummary.classList.add('active');
+      btnShowActions.classList.remove('active');
+      if (btnShowMix) btnShowMix.classList.remove('active');
+      summaryContent.classList.remove('hidden');
+      actionContent.classList.add('hidden');
+      if (mixContent) mixContent.classList.add('hidden');
+      if (analysisPane) analysisPane.classList.remove('mix-focused');
+    });
 
-  btnShowActions.addEventListener('click', () => {
-    btnShowActions.classList.add('active');
-    btnShowSummary.classList.remove('active');
-    if (btnShowMix) btnShowMix.classList.remove('active');
-    actionContent.classList.remove('hidden');
-    summaryContent.classList.add('hidden');
-    if (mixContent) mixContent.classList.add('hidden');
-    if (analysisPane) analysisPane.classList.remove('mix-focused');
-  });
+    btnShowActions.addEventListener('click', () => {
+      btnShowActions.classList.add('active');
+      btnShowSummary.classList.remove('active');
+      if (btnShowMix) btnShowMix.classList.remove('active');
+      actionContent.classList.remove('hidden');
+      summaryContent.classList.add('hidden');
+      if (mixContent) mixContent.classList.add('hidden');
+      if (analysisPane) analysisPane.classList.remove('mix-focused');
+    });
+  }
 
   if (btnShowMix) {
     btnShowMix.addEventListener('click', () => {
@@ -909,6 +922,7 @@ if (isMiniMode) {
       updateWaveformBars(levels);
     });
   }
+  } // end meeting UI (hub has no record controls)
 
   // ----------------------------------------------------
   // Sidebar and History Loading
@@ -1137,14 +1151,6 @@ if (isMiniMode) {
               loadHistoryList();
               if (activeSession && activeSession.filePath === contextMenuTargetCall.filePath) {
                 activeSession = null;
-                document.getElementById('transcript-container').innerHTML = `
-                  <div class="transcript-empty-state">
-                    <span class="empty-icon">🎧</span>
-                    <p>Click "New Transcript" or select a past session from the history sidebar to begin.</p>
-                  </div>
-                `;
-                document.getElementById('summary-content').innerHTML = '<p class="placeholder-text">AI Highlights will be generated automatically at the end of the transcription session.</p>';
-                document.getElementById('action-content').innerHTML = '<p class="placeholder-text">Action items will be extracted at the end of the transcription session.</p>';
               }
             } else {
               alert("Error deleting call: " + res.error);
@@ -1412,12 +1418,11 @@ if (isMiniMode) {
           `;
           card.addEventListener('click', () => {
             tabs.forEach(t => {
-              t.nav.classList.remove('active');
+              t.nav?.classList.remove('active');
               t.pane.classList.remove('active');
             });
-            navDashboard.classList.add('active');
-            tabDashboard.classList.add('active');
-            handleCallSelect(call);
+            if (tabHubHome) tabHubHome.classList.add('active');
+            openMeetingForCall(call);
           });
           historyGrid.appendChild(card);
         }
@@ -1643,11 +1648,7 @@ if (isMiniMode) {
   }
 
   if (window.api.onProcessingTranscriptUpdated) {
-    window.api.onProcessingTranscriptUpdated(({ sessionId, session }) => {
-      if (activeSession && activeSession.id === sessionId) {
-        activeSession.transcript = session.transcript;
-        renderTranscriptWithBreaks(session.transcript, { preserveScroll: true });
-      }
+    window.api.onProcessingTranscriptUpdated(() => {
       loadHistoryList();
     });
   }
@@ -1657,8 +1658,8 @@ if (isMiniMode) {
     window.api.onSessionSummaryReady((session) => {
       console.log('Received session summary ready:', session);
       // Auto-refresh active session if it matches
-      if (activeSession && (activeSession.id === 'live' || activeSession.id === session.id || session.id.includes(activeSession.id) || activeSession.id.includes(session.id))) {
-        displaySession(session);
+      if (activeSession && session.id === activeSession.id) {
+        loadHistoryList();
       }
     });
   }
@@ -1676,12 +1677,10 @@ if (isMiniMode) {
 
   function handleCallSelect(call) {
     if (call.encrypted) {
-      // Check if we can load it directly (checks in-memory key cache inside backend)
       window.api.loadCall(call.filePath).then(res => {
         if (res.success) {
-          displaySession(res.session);
+          openMeetingForCall(res.session || call);
         } else if (res.requirePassword) {
-          // Open password modal
           pendingCallToDecrypt = call;
           modalPasswordInput.value = '';
           modalErrorMessage.classList.add('hidden');
@@ -1689,11 +1688,7 @@ if (isMiniMode) {
         }
       });
     } else {
-      window.api.loadCall(call.filePath).then(res => {
-        if (res.success) {
-          displaySession(res.session);
-        }
-      });
+      openMeetingForCall(call);
     }
   }
 
@@ -1709,8 +1704,8 @@ if (isMiniMode) {
     window.api.decryptCall(pendingCallToDecrypt.filePath, password).then((res) => {
       if (res.success) {
         passwordModal.classList.add('hidden');
-        displaySession(res.session);
-        loadHistoryList(); // Refresh title and summary
+        openMeetingForCall(res.session || pendingCallToDecrypt);
+        loadHistoryList();
       } else {
         modalErrorMessage.classList.remove('hidden');
       }
@@ -1718,73 +1713,10 @@ if (isMiniMode) {
   });
 
   function displaySession(session) {
-    activeSession = session;
-    isUserScrolledUp = false;
-    if (btnJumpLatest) btnJumpLatest.classList.add('hidden');
-    
-    // Highlight in the sidebar
     document.querySelectorAll('.call-list-item').forEach(item => {
-      if (item.getAttribute('data-callid') === session.id) {
-        item.classList.add('selected');
-      } else {
-        item.classList.remove('selected');
-      }
+      item.classList.toggle('selected', item.getAttribute('data-callid') === session.id);
     });
-    
-    // Set Header
-    recTitle.textContent = session.title;
-    recTimer.textContent = session.date;
-    recIndicator.className = 'rec-indicator-static';
-
-    // Show Resume Call button since we loaded a past session
-    if (session.id !== 'live') {
-      btnResumePast.classList.remove('hidden');
-    } else {
-      btnResumePast.classList.add('hidden');
-    }
-    
-    // Load transcript
-    transcriptContainer.innerHTML = '';
-    if (session.transcript && session.transcript.length > 0) {
-      lastSegmentTimeMs = renderTranscriptWithBreaks(session.transcript);
-    } else {
-      transcriptContainer.innerHTML = `
-        <div class="transcript-empty-state">
-          <span class="empty-icon">📝</span>
-          <p>This session has no recorded transcription text.</p>
-        </div>
-      `;
-      lastSegmentTimeMs = null;
-    }
-    
-    // Load summaries
-    renderSummaries();
-  }
-
-  function renderSummaries() {
-    if (!activeSession) return;
-
-    // Render Highlights
-    if (activeSession.summary) {
-      summaryContent.innerHTML = formatAISummary(activeSession.summary);
-    } else {
-      summaryContent.innerHTML = '<p class="placeholder-text">No summary generated.</p>';
-    }
-
-    // Render Action items
-    if (activeSession.actionItems) {
-      actionContent.innerHTML = formatAISummary(activeSession.actionItems);
-    } else {
-      actionContent.innerHTML = '<p class="placeholder-text">No action items extracted.</p>';
-    }
-
-    if (jotEditor) {
-      const editorDocument = normalizeEditorDocument(activeSession);
-      jotEditor.loadDocument(editorDocument);
-      if (editorLegend) {
-        editorLegend.classList.toggle('hidden', editorDocument.mode !== 'mixed');
-      }
-    }
+    openMeetingForCall(session);
   }
 
   // Format AI bullet points to include Jump-to-Context anchors and parse custom Markdown
@@ -1962,6 +1894,16 @@ if (isMiniMode) {
     document.getElementById('check-color-deadlines').checked = saved.colorCodeDeadlines || false;
     document.getElementById('input-user-name').value = saved.userName || '';
     document.getElementById('check-noise-cancel').checked = saved.enableNoiseCancellation !== false;
+    const selectAecMode = document.getElementById('select-aec-mode');
+    if (selectAecMode) selectAecMode.value = saved.aecMode || 'os';
+    const checkAutoUpdate = document.getElementById('check-auto-update');
+    if (checkAutoUpdate) checkAutoUpdate.checked = saved.autoUpdateEnabled !== false;
+    const labelAppVersion = document.getElementById('label-app-version');
+    if (labelAppVersion && window.api.getAppVersion) {
+      window.api.getAppVersion().then((version) => {
+        labelAppVersion.textContent = version || '—';
+      });
+    }
     document.getElementById('input-storage-path').value = saved.customStoragePath || '';
     
     if (selectNoteStyle) selectNoteStyle.value = saved.selectedNoteStyle || 'executive';
@@ -2026,6 +1968,8 @@ if (isMiniMode) {
     document.getElementById('check-color-deadlines'),
     document.getElementById('input-user-name'),
     document.getElementById('check-noise-cancel'),
+    document.getElementById('select-aec-mode'),
+    document.getElementById('check-auto-update'),
     document.getElementById('input-storage-path'),
     selectNoteStyle, textareaNotePrompt, textareaSummaryPrompt, textareaActionPrompt
   ].filter(Boolean);
@@ -2138,6 +2082,8 @@ if (isMiniMode) {
       colorCodeDeadlines: document.getElementById('check-color-deadlines').checked,
       userName: document.getElementById('input-user-name').value.trim(),
       enableNoiseCancellation: document.getElementById('check-noise-cancel').checked,
+      aecMode: document.getElementById('select-aec-mode')?.value || 'os',
+      autoUpdateEnabled: document.getElementById('check-auto-update')?.checked !== false,
       customStoragePath: document.getElementById('input-storage-path').value,
       selectedNoteStyle: selectNoteStyle ? selectNoteStyle.value : 'executive',
       notePromptTemplate: textareaNotePrompt ? textareaNotePrompt.value : '',
@@ -2151,6 +2097,67 @@ if (isMiniMode) {
       alert('Settings saved successfully!');
     });
   });
+
+  // Software updates UI
+  const updatesStatusText = document.getElementById('updates-status-text');
+  const updatesProgressContainer = document.getElementById('updates-progress-container');
+  const updatesProgressPercent = document.getElementById('updates-progress-percent');
+  const updatesProgressFill = document.getElementById('updates-progress-fill');
+  const btnCheckUpdates = document.getElementById('btn-check-updates');
+  const btnInstallUpdate = document.getElementById('btn-install-update');
+
+  function renderUpdateStatus(status) {
+    if (!status || !updatesStatusText) return;
+    if (status.currentVersion) {
+      const labelAppVersion = document.getElementById('label-app-version');
+      if (labelAppVersion) labelAppVersion.textContent = status.currentVersion;
+    }
+    switch (status.state) {
+      case 'checking':
+        updatesStatusText.textContent = 'Checking for updates…';
+        break;
+      case 'available':
+        updatesStatusText.textContent = `Update available: v${status.availableVersion}`;
+        break;
+      case 'downloading':
+        updatesStatusText.textContent = `Downloading update… ${status.progress || 0}%`;
+        if (updatesProgressContainer) updatesProgressContainer.classList.remove('hidden');
+        if (updatesProgressPercent) updatesProgressPercent.textContent = `${status.progress || 0}%`;
+        if (updatesProgressFill) updatesProgressFill.style.width = `${status.progress || 0}%`;
+        break;
+      case 'ready':
+        updatesStatusText.textContent = `Update v${status.availableVersion} ready to install.`;
+        if (btnInstallUpdate) btnInstallUpdate.classList.remove('hidden');
+        if (updatesProgressContainer) updatesProgressContainer.classList.add('hidden');
+        break;
+      case 'up-to-date':
+        updatesStatusText.textContent = 'You are on the latest version.';
+        if (btnInstallUpdate) btnInstallUpdate.classList.add('hidden');
+        break;
+      case 'error':
+        updatesStatusText.textContent = status.error || 'Update check failed.';
+        break;
+      default:
+        updatesStatusText.textContent = 'Ready to check for updates.';
+    }
+  }
+
+  if (window.api.onUpdateStatus) {
+    window.api.onUpdateStatus(renderUpdateStatus);
+  }
+  if (window.api.getUpdateStatus) {
+    window.api.getUpdateStatus().then(renderUpdateStatus);
+  }
+  if (btnCheckUpdates) {
+    btnCheckUpdates.addEventListener('click', () => {
+      window.api.checkForUpdates({ manual: true });
+    });
+  }
+  if (btnInstallUpdate) {
+    btnInstallUpdate.addEventListener('click', () => {
+      window.api.installUpdate();
+    });
+  }
 
   // ----------------------------------------------------
   // AI Chat Agent Widget
@@ -2180,13 +2187,14 @@ if (isMiniMode) {
   }
 
   function toggleChatSidebar(isOpen) {
+    if (!chatAgentWidget) return;
     if (isOpen) {
       chatAgentWidget.classList.remove('closed');
-      btnChatSidebarToggle.classList.add('hidden');
+      if (btnChatSidebarToggle) btnChatSidebarToggle.classList.add('hidden');
       if (globalAskBar) globalAskBar.classList.add('chat-open');
     } else {
       chatAgentWidget.classList.add('closed');
-      btnChatSidebarToggle.classList.remove('hidden');
+      if (btnChatSidebarToggle) btnChatSidebarToggle.classList.remove('hidden');
       if (globalAskBar) globalAskBar.classList.remove('chat-open');
       clearChatHistory();
     }
@@ -2198,14 +2206,18 @@ if (isMiniMode) {
     });
   }
 
-  btnChatSidebarToggle.addEventListener('click', () => {
-    toggleChatSidebar(true);
-  });
+  if (btnChatSidebarToggle) {
+    btnChatSidebarToggle.addEventListener('click', () => {
+      toggleChatSidebar(true);
+    });
+  }
 
-  btnChatSend.addEventListener('click', submitChatQuery);
-  inputChatQuery.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') submitChatQuery();
-  });
+  if (btnChatSend) btnChatSend.addEventListener('click', submitChatQuery);
+  if (inputChatQuery) {
+    inputChatQuery.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submitChatQuery();
+    });
+  }
 
   if (inputGlobalAsk) {
     inputGlobalAsk.addEventListener('focus', () => toggleChatSidebar(true));
@@ -2870,20 +2882,7 @@ if (isMiniMode) {
     window.api.getCallList().then((calls) => {
       const call = calls.find(c => c.id === sourceCallId);
       if (call) {
-        tabs.forEach(t => {
-          t.nav.classList.remove('active');
-          t.pane.classList.remove('active');
-        });
-        navDashboard.classList.add('active');
-        tabDashboard.classList.add('active');
-        
-        handleCallSelect(call).then(() => {
-          if (sourceSegmentId) {
-            setTimeout(() => {
-              window.scrollToTranscriptSegment(sourceSegmentId);
-            }, 250);
-          }
-        });
+        openMeetingForCall(call);
       } else {
         alert("Source call not found (it might have been deleted).");
       }

@@ -154,8 +154,8 @@
       <div class="sidebar-space sidebar-space-workspace">
         <h3 class="sidebar-space-label">Workspace</h3>
         <div class="sidebar-menu">
-          <button id="nav-dashboard" class="sidebar-btn active">
-            <span class="icon">🎙</span><span class="sidebar-label">Live Session</span>
+          <button id="btn-new-meeting" class="sidebar-btn sidebar-btn-primary">
+            <span class="icon">➕</span><span class="sidebar-label">New Meeting</span>
           </button>
           <button id="nav-calendar" class="sidebar-btn">
             <span class="icon">📅</span><span class="sidebar-label">Calendar</span>
@@ -230,136 +230,16 @@
     <!-- Main Content Area -->
     <main class="content-area">
       
-      <!-- Dashboard Tab -->
-      <section id="tab-dashboard" class="tab-pane active">
-        <div class="dashboard-header">
-          <div>
-            <h1>Live Transcription</h1>
-            <p class="subtitle">100% Offline speech-to-text and intelligence engine</p>
-          </div>
+      <!-- Hub Home -->
+      <section id="tab-hub-home" class="tab-pane active">
+        <div class="tab-header">
+          <h1>The Trail</h1>
+          <p>Your meeting history lives here. Start a new meeting or open a past session from the sidebar.</p>
         </div>
-
-        <div class="dashboard-toolbar">
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <select id="select-move-folder" class="input-select" style="font-size: 12px; padding: 6px 12px; min-width: 140px; cursor: pointer;">
-              <!-- Option tags populated dynamically -->
-            </select>
-            <button id="btn-export-obsidian-note" class="btn-secondary" style="font-size: 12px; padding: 6px 12px; display: flex; align-items: center; gap: 4px;">
-              <span>📤</span> Export to Obsidian
-            </button>
-          </div>
-          <button id="btn-toggle-live-trail" class="btn-secondary" style="font-size: 12px; padding: 6px 12px;">
-            📜 Toggle Live Trail
-          </button>
-        </div>
-
-        <div class="rec-control-panel card glassmorphic">
-          <div class="rec-status-details">
-            <div id="rec-indicator" class="rec-indicator-static"></div>
-            <div class="rec-info-text">
-              <h3 id="rec-title">Engine Idle</h3>
-              <span id="rec-timer">00:00</span>
-            </div>
-          </div>
-          <div class="rec-actions" style="display: flex; gap: 10px;">
-            <button id="btn-record-toggle" class="btn-record start">
-              <span class="btn-icon">⏺</span> New Transcript
-            </button>
-            <button id="btn-pause-toggle" class="btn-record pause hidden">
-              <span class="btn-icon">⏸</span> Pause
-            </button>
-            <button id="btn-resume-past" class="btn-record resume hidden">
-              <span class="btn-icon">⏯</span> Resume
-            </button>
-          </div>
-        </div>
-
-        <div class="split-view">
-          <!-- Live Transcript Pane -->
-          <div id="live-trail-drawer" class="transcript-pane card glassmorphic hidden">
-            <div class="pane-header" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <h2>Transcript</h2>
-                <span class="transcript-badge">No audio saved in files</span>
-              </div>
-              <button id="btn-close-live-trail" class="icon-btn-toggle" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 14px;" title="Close Transcript">✕</button>
-            </div>
-            <div id="transcript-container" class="transcript-container">
-              <div class="transcript-empty-state">
-                <span class="empty-icon">🎧</span>
-                <p>Click "New Transcript" or select a past session from the history sidebar to begin.</p>
-              </div>
-            </div>
-            <!-- Jump to Latest Floating Button -->
-            <button id="btn-jump-latest" class="btn-jump-latest hidden">
-              <span>↓ Jump to latest</span>
-            </button>
-          </div>
-
-          <!-- Summarization Pane -->
-          <div class="analysis-pane card glassmorphic">
-            <div class="pane-header">
-              <h2>AI Summaries</h2>
-              <span class="ai-badge">Offline Model</span>
-            </div>
-            
-            <div class="analysis-tabs">
-              <button id="btn-show-summary" class="analysis-tab-btn active">Highlights</button>
-              <button id="btn-show-actions" class="analysis-tab-btn">Action Items</button>
-              <button id="btn-show-mix" class="analysis-tab-btn" data-tab="mix">The Mix</button>
-            </div>
-
-            <div class="analysis-content">
-              <div id="summary-content" class="analysis-text">
-                <p class="placeholder-text">AI Highlights will be generated automatically at the end of the transcription session.</p>
-              </div>
-              <div id="action-content" class="analysis-text hidden">
-                <p class="placeholder-text">Action items will be extracted at the end of the transcription session.</p>
-              </div>
-              <div id="mix-content" class="analysis-text mix-stage hidden">
-                <div class="main-stage-inner">
-                  <header class="mix-stage-header">
-                    <h2>The Mix</h2>
-                    <p>Jot quick thoughts during the meeting. When you're ready, blend them with the full transcript using local AI.</p>
-                  </header>
-                  <div id="editor-component-root" class="editor-component-host"></div>
-                  <div id="editor-waveform-bars" class="editor-waveform-bars hidden" aria-hidden="true">
-                    <div class="waveform-bar" data-bar="0"></div>
-                    <div class="waveform-bar" data-bar="1"></div>
-                    <div class="waveform-bar" data-bar="2"></div>
-                    <div class="waveform-bar" data-bar="3"></div>
-                    <div class="waveform-bar" data-bar="4"></div>
-                    <div class="waveform-bar" data-bar="5"></div>
-                    <div class="waveform-bar" data-bar="6"></div>
-                    <div class="waveform-bar" data-bar="7"></div>
-                    <div class="waveform-bar" data-bar="8"></div>
-                    <div class="waveform-bar" data-bar="9"></div>
-                    <div class="waveform-bar" data-bar="10"></div>
-                    <div class="waveform-bar" data-bar="11"></div>
-                  </div>
-                  <div id="editor-transcript-panel" class="editor-transcript-panel closed">
-                    <div class="editor-transcript-panel-header">
-                      <span>Live transcript trace</span>
-                      <button id="btn-close-editor-transcript" type="button" class="icon-btn-toggle" title="Close transcript panel">✕</button>
-                    </div>
-                    <div id="editor-transcript-container" class="editor-transcript-container"></div>
-                  </div>
-                  <footer class="mix-stage-footer">
-                    <div class="mix-stage-footer-left">
-                      <button id="btn-toggle-editor-transcript" type="button" class="btn-icon-subtle" title="Toggle transcript panel">〰️</button>
-                      <p id="editor-legend" class="editor-legend hidden">
-                        <span class="legend-user">Black</span> = your notes ·
-                        <span class="legend-ai">Gray</span> = AI context from transcript
-                      </p>
-                    </div>
-                    <button id="btn-mix-enhance" class="btn-mix" type="button">
-                      ✨ Start the Mix
-                    </button>
-                  </footer>
-                </div>
-              </div>
-            </div>
-          </div>
+        <div class="card glassmorphic hub-home-card">
+          <h2>Quick actions</h2>
+          <p>Use <strong>New Meeting</strong> in the sidebar to open a distraction-free capture window. All live transcription and Jot &amp; Enhance editing happens there.</p>
+          <button id="btn-hub-new-meeting" class="btn-primary" type="button">➕ New Meeting</button>
         </div>
       </section>
 
@@ -537,13 +417,21 @@
               <p class="field-desc">Select which system device monitor to capture inbound calls or desktop audio.</p>
             </div>
 
-            <div class="settings-field" style="margin-top: 10px;">
+            <div class="settings-field">
               <label class="checkbox-container">
                 <input type="checkbox" id="check-noise-cancel" checked>
                 <span class="checkmark"></span>
-                Enable acoustic noise/echo cancellation
+                Enable acoustic echo cancellation
               </label>
-              <p class="field-desc" style="margin-left: 24px;">Automatically filters system speaker playback from being registered by your microphone to prevent transcribing desktop audio twice.</p>
+              <p class="field-desc" style="margin-left: 24px;">Prevents remote voices from being double-transcribed via your microphone.</p>
+            </div>
+            <div class="settings-field" style="margin-left: 24px;">
+              <label for="select-aec-mode">Echo cancellation method</label>
+              <select id="select-aec-mode" class="input-select">
+                <option value="os" selected>Faster (OS-level) — uses PipeWire/PulseAudio WebRTC AEC</option>
+                <option value="app">Thorough (App-level) — compares system and mic buffers before Whisper</option>
+              </select>
+              <p class="field-desc">Faster offloads AEC to your audio server. Thorough adds software filtering in TrailMix when OS AEC is insufficient.</p>
             </div>
           </div>
 
@@ -624,6 +512,31 @@
             </div>
           </div>
 
+          <!-- Software Updates -->
+          <div class="card glassmorphic settings-card">
+            <h2>Software Updates</h2>
+            <div class="settings-field">
+              <p class="field-desc">Current version: <strong id="label-app-version">—</strong></p>
+              <p id="updates-status-text" class="field-desc">Checking for updates…</p>
+              <div id="updates-progress-container" class="download-progress-container hidden">
+                <div class="progress-bar-label">Downloading: <span id="updates-progress-percent">0%</span></div>
+                <div class="progress-bar-bg"><div id="updates-progress-fill" class="progress-bar-fill"></div></div>
+              </div>
+            </div>
+            <div class="settings-field">
+              <label class="checkbox-container">
+                <input type="checkbox" id="check-auto-update" checked>
+                <span class="checkmark"></span>
+                Auto-update when new releases are available
+              </label>
+              <p class="field-desc" style="margin-left: 24px;">When disabled, updates only run when you click Check for Updates.</p>
+            </div>
+            <div class="settings-actions" style="display: flex; gap: 8px;">
+              <button id="btn-check-updates" class="btn-secondary" type="button">Check for Updates</button>
+              <button id="btn-install-update" class="btn-primary hidden" type="button">Restart to Install</button>
+            </div>
+          </div>
+
           <!-- Security and Encryption -->
           <div class="card glassmorphic settings-card">
             <h2>Security & Encryption</h2>
@@ -644,11 +557,6 @@
       </section>
 
     </main>
-
-    <!-- Floating AI Chat Toggle Button (only visible when chat panel is closed) -->
-    <button id="btn-chat-sidebar-toggle" class="chat-sidebar-toggle-btn" title="Open AI Assistant">
-      <span class="chat-toggle-icon">💬</span> Ask AI
-    </button>
 
     <!-- AI Chat Agent Widget (Collapsible Drawer) -->
     <div id="chat-agent-widget" class="chat-widget closed">
@@ -684,7 +592,7 @@
     <!-- Fixed bottom Ask bar (Ctrl+J) -->
     <div id="global-ask-bar" class="global-ask-bar">
       <button id="btn-global-ask-open" type="button" class="global-ask-icon" title="Open AI chat (Ctrl+J)">💬</button>
-      <input type="text" id="input-global-ask" placeholder="Ask anything about this meeting…" class="global-ask-input">
+      <input type="text" id="input-global-ask" placeholder="Ask anything across your meeting history…" class="global-ask-input">
       <span class="global-ask-hint">Ctrl+J</span>
     </div>
 
@@ -731,7 +639,6 @@
   <!-- Global Tooltip Element -->
   <div id="global-tooltip" class="global-tooltip-el hidden"></div>
 
-  <script src="EditorComponent.js"></script>
   <script src="index.js"></script>
 </body>
 </html>

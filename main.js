@@ -25,6 +25,15 @@ const { coalesceIncomingSegments } = require('./lib/transcript-coalesce');
 const { splitTranscriptIntoBlocks } = require('./lib/processing-blocks');
 const { appEventBus } = require('./lib/event-bus');
 const { CHAT_RECIPES, buildRecipePrompt } = require('./lib/chat-recipes');
+const { WindowManager } = require('./windows/WindowManager');
+const { UpdateService } = require('./services/UpdateService');
+const { enableOsEchoCancellation, disableOsEchoCancellation } = require('./lib/audio-echo-os');
+const {
+  getSession,
+  setSession,
+  createNewSession,
+  applyAutoTitle
+} = require('./lib/session-registry');
 const sqlite3 = require('sqlite3').verbose();
 
 // XDG Compliant Database Path
@@ -106,9 +115,8 @@ async function saveSessionPayloadToDb(sessionId, session) {
 
 function broadcastProcessingProgress() {
   sessionProcessingService.getJobMap().then((jobs) => {
-    if (mainWindow) {
-      mainWindow.webContents.send('processing:jobs-updated', jobs);
-    }
+    const hub = getHubWindow();
+    if (hub) hub.webContents.send('processing:jobs-updated', jobs);
   });
 }
 
@@ -122,16 +130,14 @@ sessionProcessingService.configure({
   saveSessionPayload: saveSessionPayloadToDb,
   onProgress: () => broadcastProcessingProgress(),
   onTranscriptUpdated: ({ sessionId, session }) => {
-    if (mainWindow) {
-      mainWindow.webContents.send('processing:transcript-updated', { sessionId, session });
-    }
+    setSession(session);
+    broadcastToSession(sessionId, 'session:updated', session);
     broadcastProcessingProgress();
   },
   onComplete: (sessionId) => {
     broadcastProcessingProgress();
-    if (mainWindow) {
-      mainWindow.webContents.send('calls:list-updated');
-    }
+    const hub = getHubWindow();
+    if (hub) hub.webContents.send('calls:list-updated');
   },
   runEnrichment: (sessionId) => runSessionEnrichment(sessionId)
 });
@@ -157,11 +163,8 @@ function handleTranscriptionSegments({ chunkIndex, segments }) {
   activeSession.transcript = transcript;
 
   emitted.forEach((segment) => {
-    if (mainWindow) {
-      mainWindow.webContents.send('audio:on-transcription-update', segment);
-    }
-    if (miniWindow) {
-      miniWindow.webContents.send('audio:on-transcription-update', segment);
+    if (activeRecordingSessionId) {
+      broadcastToSession(activeRecordingSessionId, 'audio:on-transcription-update', segment);
     }
   });
 
@@ -180,18 +183,16 @@ audioCaptureService.configure({
       chunkPath,
       chunkIndex,
       whisperDir: WHISPER_DIR,
-      selectedModel: settings.selectedModel
+      selectedModel: settings.selectedModel,
+      aecMode: getAecModeForCapture() === 'app' ? 'app' : 'off'
     });
   },
   onError: () => {
     stopRecordingHandler();
   },
   onLevels: (levels) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('audio:on-levels', levels);
-    }
-    if (miniWindow && !miniWindow.isDestroyed()) {
-      miniWindow.webContents.send('audio:on-levels', levels);
+    if (activeRecordingSessionId) {
+      broadcastToSession(activeRecordingSessionId, 'audio:on-levels', levels);
     }
   }
 });
@@ -232,8 +233,8 @@ function watchCallsDirectory() {
     callsDirWatcher = fs.watch(targetDir, (eventType, filename) => {
       if (filename && filename.endsWith('.trail')) {
         console.log(`Directory change detected: ${eventType} on ${filename}`);
-        if (mainWindow) {
-          mainWindow.webContents.send('calls:list-updated');
+        if (getHubWindow()) {
+          getHubWindow().webContents.send('calls:list-updated');
         }
       }
     });
@@ -243,15 +244,55 @@ function watchCallsDirectory() {
 }
 
 // State Variables
-let mainWindow = null;
-let miniWindow = null;
+let windowManager = null;
+let updateService = new UpdateService();
 let tray = null;
 let isRecording = false;
 let isPaused = false;
 let sessionChunkOffset = 0;
 let diarizationInterval = null;
 let activeSession = null;
-let decryptionKeys = new Map(); // In-memory cache for decrypted session keys
+let activeRecordingSessionId = null;
+let captureMicSourceOverride = null;
+let decryptionKeys = new Map();
+
+function getHubWindow() {
+  return windowManager?.getHubWindow() || null;
+}
+
+function broadcastToSession(sessionId, channel, payload) {
+  windowManager?.broadcastToMeeting(sessionId, channel, payload);
+}
+
+function broadcastRecordingStatus(extra = {}) {
+  const payload = {
+    isRecording,
+    isPaused,
+    sessionId: activeRecordingSessionId,
+    ...extra
+  };
+  if (activeRecordingSessionId) {
+    broadcastToSession(activeRecordingSessionId, 'audio:on-recording-status', payload);
+  }
+}
+
+function getAecModeForCapture() {
+  if (!settings.enableNoiseCancellation) return 'off';
+  return settings.aecMode === 'app' ? 'app' : 'os';
+}
+
+function resolveAecMicSource(baseSource, sinkName) {
+  if (!settings.enableNoiseCancellation || settings.aecMode !== 'os') {
+    return baseSource;
+  }
+  const result = enableOsEchoCancellation({ micSource: baseSource, sinkName });
+  if (result.ok && result.virtualSource) {
+    captureMicSourceOverride = result.virtualSource;
+    return result.virtualSource;
+  }
+  console.warn('OS echo cancellation unavailable, falling back:', result.error);
+  return baseSource;
+}
 
 const DEFAULT_PROMPTS = {
   executive: `Act as an elite executive assistant and structural document compiler. Your task is to process a messy stream of real-time human shorthand ("User Jots") and an unedited text transcription of a meeting room, transforming them into a beautifully typeset, high-signal Markdown document.
@@ -358,6 +399,8 @@ let settings = {
   colorCodeDeadlines: false,
   userName: '',
   enableNoiseCancellation: true,
+  aecMode: 'os',
+  autoUpdateEnabled: true,
   customStoragePath: '',
   selectedNoteStyle: 'executive',
   notePromptTemplate: DEFAULT_PROMPTS.executive,
@@ -379,6 +422,8 @@ if (!settings.selectedNoteStyle) settings.selectedNoteStyle = 'executive';
 if (!settings.notePromptTemplate) settings.notePromptTemplate = DEFAULT_PROMPTS.executive;
 if (!settings.summaryPromptTemplate) settings.summaryPromptTemplate = DEFAULT_PROMPTS.summary;
 if (!settings.actionPromptTemplate) settings.actionPromptTemplate = DEFAULT_PROMPTS.actionItems;
+if (!settings.aecMode) settings.aecMode = 'os';
+if (settings.autoUpdateEnabled === undefined) settings.autoUpdateEnabled = true;
 
 function saveSettings() {
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8');
@@ -596,72 +641,19 @@ async function syncDatabaseWithFiles() {
 // Window & Tray Management
 // ----------------------------------------------------
 
-function createMainWindow() {
-  mainWindow = new BrowserWindow({
-    width: 1100,
-    height: 750,
-    title: 'TrailMix',
-    icon: path.join(PROJECT_DIR, 'assets', 'logo.png'),
-    webPreferences: {
-      preload: path.join(PROJECT_DIR, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false
-    }
-  });
-
-  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
-    console.log(`[Renderer Console] ${message} (${sourceId}:${line})`);
-  });
-
-  mainWindow.loadFile(path.join(PROJECT_DIR, 'renderer', 'index.html'));
-
-  mainWindow.on('minimize', () => {
-    if (isRecording) {
-      createMiniWindow();
-    }
-  });
-
-  mainWindow.on('restore', () => {
-    destroyMiniWindow();
-  });
-
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-    destroyMiniWindow();
-  });
-}
-
-function createMiniWindow() {
-  if (miniWindow) return;
-
-  miniWindow = new BrowserWindow({
-    width: 260,
-    height: 90,
-    frame: false,
-    resizable: false,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    webPreferences: {
-      preload: path.join(PROJECT_DIR, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false
-    }
-  });
-
-  // Load renderer index.html with query param to only render the mini widget
-  miniWindow.loadFile(path.join(PROJECT_DIR, 'renderer', 'index.html'), { query: { mode: 'mini' } });
-
-  // Position at bottom-right of screen
-  const primaryDisplay = screen.getPrimaryDisplay();
-  const { width, height } = primaryDisplay.workAreaSize;
-  miniWindow.setPosition(width - 280, height - 110);
-}
-
-function destroyMiniWindow() {
-  if (miniWindow) {
-    miniWindow.close();
-    miniWindow = null;
+function createHubWindow() {
+  if (!windowManager) {
+    windowManager = new WindowManager({
+      projectDir: PROJECT_DIR,
+      preloadPath: path.join(PROJECT_DIR, 'preload.js')
+    });
   }
+  return windowManager.createHubWindow();
+}
+
+function openMeetingWindow(sessionId) {
+  if (!windowManager) createHubWindow();
+  return windowManager.openMeetingWindow(sessionId);
 }
 
 function updateTray() {
@@ -682,11 +674,12 @@ function updateTray() {
     {
       label: 'Open TrailMix',
       click: () => {
-        if (mainWindow) {
-          mainWindow.restore();
-          mainWindow.focus();
+        const hub = getHubWindow();
+        if (hub) {
+          hub.restore();
+          hub.focus();
         } else {
-          createMainWindow();
+          createHubWindow();
         }
       }
     },
@@ -709,11 +702,12 @@ function setupTray() {
   updateTray();
 
   tray.on('double-click', () => {
-    if (mainWindow) {
-      mainWindow.restore();
-      mainWindow.focus();
+    const hub = getHubWindow();
+    if (hub) {
+      hub.restore();
+      hub.focus();
     } else {
-      createMainWindow();
+      createHubWindow();
     }
   });
 }
@@ -897,11 +891,16 @@ function saveSessionToFileSilently(session) {
 // Recording Controls
 // ----------------------------------------------------
 
-async function startRecordingHandler() {
-  if (isRecording) return;
+async function startRecordingHandler(requestedSessionId = null) {
+  if (requestedSessionId && activeRecordingSessionId && activeRecordingSessionId !== requestedSessionId) {
+    return { conflict: true, activeSessionId: activeRecordingSessionId };
+  }
+
+  if (isRecording && !isPaused) {
+    return { sessionId: activeRecordingSessionId };
+  }
 
   const resumingFromPause = isPaused;
-
   const devices = queryAudioDevices();
   let sink = devices.sink;
   let source = devices.source;
@@ -915,28 +914,33 @@ async function startRecordingHandler() {
 
   if (!sink || !source) {
     console.error('No audio devices found to transcribe.');
-    return;
+    return { error: 'No audio devices found' };
   }
 
   const sinkMonitor = sink.endsWith('.monitor') ? sink : `${sink}.monitor`;
-  console.log(`Starting transcription. Sink monitor: ${sinkMonitor}, Source: ${source}`);
+  source = resolveAecMicSource(source, sink);
+  console.log(`Starting transcription. Sink monitor: ${sinkMonitor}, Source: ${source}, AEC: ${getAecModeForCapture()}`);
 
-  if (!isPaused) {
+  if (!resumingFromPause) {
     transcriptionService.clearQueue();
     audioCaptureService.resetProcessedChunks();
 
-    if (!activeSession || activeSession.id === 'live') {
-      activeSession = {
-        id: 'call_' + Date.now(),
-        date: new Date().toLocaleString(),
-        title: 'New Session ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        transcript: [],
-        summary: '',
-        actionItems: '',
-        encrypted: settings.encryptByDefault
-      };
-      sessionChunkOffset = 0;
+    if (requestedSessionId) {
+      activeSession = getSession(requestedSessionId) || await loadSessionPayloadFromDb(requestedSessionId);
+      if (activeSession) setSession(activeSession);
     }
+
+    if (!activeSession || (requestedSessionId && activeSession.id !== requestedSessionId)) {
+      activeSession = createNewSession({ encryptByDefault: settings.encryptByDefault });
+    }
+
+    if (!activeSession.title) activeSession.title = 'New Meeting';
+    if (activeSession.titleAutoGenerated === undefined) activeSession.titleAutoGenerated = true;
+    if (activeSession.titleUserEdited === undefined) activeSession.titleUserEdited = false;
+
+    activeRecordingSessionId = activeSession.id;
+    setSession(activeSession);
+    sessionChunkOffset = activeSession.transcript?.length ? Math.ceil(activeSession.transcript.length / 2) : 0;
   } else {
     await audioCaptureService.prepareTempDir(true);
   }
@@ -944,21 +948,20 @@ async function startRecordingHandler() {
   isRecording = true;
   isPaused = false;
   updateTray();
-
-  if (mainWindow) {
-    mainWindow.webContents.send('audio:on-recording-status', {
-      isRecording: true,
-      isPaused: false,
-      isNewSession: !resumingFromPause && (!activeSession?.transcript?.length)
-    });
-  }
+  broadcastRecordingStatus({
+    isNewSession: !resumingFromPause && (!activeSession?.transcript?.length)
+  });
 
   try {
     await audioCaptureService.start({ sinkMonitor, source });
+    return { sessionId: activeRecordingSessionId };
   } catch (err) {
     console.error('Failed to start audio capture', err);
     isRecording = false;
+    activeRecordingSessionId = null;
+    disableOsEchoCancellation();
     updateTray();
+    return { error: err.message };
   }
 }
 
@@ -969,9 +972,7 @@ async function pauseRecordingHandler() {
   isPaused = true;
   updateTray();
 
-  if (mainWindow) {
-    mainWindow.webContents.send('audio:on-recording-status', { isRecording: false, isPaused: true });
-  }
+  broadcastRecordingStatus();
 
   if (diarizationInterval) {
     clearInterval(diarizationInterval);
@@ -990,13 +991,16 @@ async function pauseRecordingHandler() {
 async function stopRecordingHandler() {
   if (!isRecording && !isPaused) return;
 
+  const stoppingSessionId = activeRecordingSessionId;
+
   isRecording = false;
   isPaused = false;
   updateTray();
 
-  if (mainWindow) {
-    mainWindow.webContents.send('audio:on-recording-status', { isRecording: false, isPaused: false });
-  }
+  disableOsEchoCancellation();
+  captureMicSourceOverride = null;
+  activeRecordingSessionId = null;
+  broadcastRecordingStatus({ sessionId: stoppingSessionId });
 
   if (diarizationInterval) {
     clearInterval(diarizationInterval);
@@ -1004,12 +1008,18 @@ async function stopRecordingHandler() {
   }
 
   await audioCaptureService.stopFfmpeg();
-  destroyMiniWindow();
+  if (stoppingSessionId) {
+    windowManager?.destroyMiniWindow(stoppingSessionId);
+  }
 
   setTimeout(async () => {
     await audioCaptureService.flushRemainingChunks();
     await transcriptionService.waitForIdle();
-    finalizeAndSaveSession();
+    await finalizeAndSaveSession();
+    if (stoppingSessionId) {
+      const session = getSession(stoppingSessionId) || await loadSessionPayloadFromDb(stoppingSessionId);
+      if (session) broadcastToSession(stoppingSessionId, 'session:updated', session);
+    }
   }, 1000);
 }
 
@@ -1041,7 +1051,9 @@ async function resumeCallTranscriptionHandler(sessionId) {
     }
     
     isPaused = true;
-    startRecordingHandler();
+    setSession(session);
+    await startRecordingHandler(sessionId);
+    openMeetingWindow(sessionId);
     return { success: true };
   } catch (e) {
     return { success: false, error: e.message };
@@ -1063,7 +1075,9 @@ async function runSpeakerDiarizationLLM() {
     const mapping = parseLlmJsonResponse(response);
     console.log('Diarization LLM: Successfully mapped speakers:', mapping);
     applySpeakerLabelMapping(activeSession.transcript, mapping);
-    notifySpeakerLabelsUpdated(mainWindow, mapping);
+    if (activeRecordingSessionId) {
+      broadcastToSession(activeRecordingSessionId, 'audio:on-speaker-labels-updated', mapping);
+    }
   } catch (error) {
     console.error('Diarization LLM failed:', error);
   }
@@ -1146,9 +1160,9 @@ async function runSessionEnrichment(sessionId) {
   const textContent = session.transcript.map((t) => `[${t.timestamp}] ${t.speaker}: ${t.text}`).join('\n');
   if (!textContent.trim()) {
     await saveSessionPayloadToDb(sessionId, session);
-    if (mainWindow) {
-      mainWindow.webContents.send('calls:session-summary-ready', session);
-    }
+    const hub = getHubWindow();
+    if (hub) hub.webContents.send('calls:session-summary-ready', session);
+    broadcastToSession(sessionId, 'session:updated', session);
     return;
   }
 
@@ -1158,20 +1172,18 @@ async function runSessionEnrichment(sessionId) {
       session.actionItems = actionItems;
 
       triggerOllamaContextRename(textContent, async (title, description, tags) => {
-        const oldId = session.id;
-        session.title = title;
-        session.description = description;
-        session.tags = [];
-        session.suggestedTags = tags;
+        applyAutoTitle(session, title, description, tags);
+        setSession(session);
 
         extractTasksFromActionItems(session);
         await saveSessionPayloadToDb(sessionId, session);
 
         try {
           const callsDir = getCallsDir();
-          const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+          const oldId = session.id;
+          const slug = (session.title || 'meeting').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
           const newId = `${slug}_${oldId}`;
-          if (newId !== oldId) {
+          if (newId !== oldId && !session.titleUserEdited) {
             session.id = newId;
             session.filePath = path.join(callsDir, `${newId}.trail`);
             await saveSessionPayloadToDb(newId, session);
@@ -1183,9 +1195,9 @@ async function runSessionEnrichment(sessionId) {
           console.error('Failed to rename session after enrichment', renameErr);
         }
 
-        if (mainWindow) {
-          mainWindow.webContents.send('calls:session-summary-ready', session);
-        }
+        const hub = getHubWindow();
+        if (hub) hub.webContents.send('calls:session-summary-ready', session);
+        broadcastToSession(session.id, 'session:updated', session);
         resolve();
       });
     });
@@ -1203,12 +1215,12 @@ async function finalizeAndSaveSession() {
   const blocks = splitTranscriptIntoBlocks(activeSession.transcript);
   await sessionProcessingService.createJob(sessionId, blocks.length);
 
-  if (mainWindow) {
-    mainWindow.webContents.send('calls:list-updated');
-    broadcastProcessingProgress();
-  }
+  const hub = getHubWindow();
+  if (hub) hub.webContents.send('calls:list-updated');
+  broadcastProcessingProgress();
 
   const finishedSession = activeSession;
+  setSession(finishedSession);
   activeSession = null;
   return finishedSession;
 }
@@ -1356,8 +1368,8 @@ async function saveSessionToFile(session) {
   await saveSessionToDbPromise(session);
   
   // Reload call list on frontend
-  if (mainWindow) {
-    mainWindow.webContents.send('calls:list-updated');
+  if (getHubWindow()) {
+    getHubWindow().webContents.send('calls:list-updated');
   }
   
   // Compliance: Secure file shredding of temporary recordings
@@ -1422,8 +1434,8 @@ ipcMain.handle('settings:get-default-prompts', () => {
 });
 
 ipcMain.handle('settings:select-directory', async () => {
-  if (!mainWindow) return null;
-  const { filePaths } = await dialog.showOpenDialog(mainWindow, {
+  if (!getHubWindow()) return null;
+  const { filePaths } = await dialog.showOpenDialog(getHubWindow(), {
     properties: ['openDirectory', 'createDirectory']
   });
   if (filePaths && filePaths.length > 0) {
@@ -1442,7 +1454,7 @@ ipcMain.handle('settings:save', async (event, newSettings) => {
     const filesToMove = oldExists ? fs.readdirSync(oldStoragePath).filter(f => f.endsWith('.trail') || f.endsWith('.trail.bak')) : [];
     
     if (filesToMove.length > 0) {
-      const choice = await dialog.showMessageBox(mainWindow, {
+      const choice = await dialog.showMessageBox(getHubWindow(), {
         type: 'question',
         buttons: ['Yes', 'No'],
         defaultId: 0,
@@ -1474,6 +1486,10 @@ ipcMain.handle('settings:save', async (event, newSettings) => {
   
   settings = { ...settings, ...newSettings };
   saveSettings();
+
+  if (settings.autoUpdateEnabled !== false) {
+    void updateService.checkForUpdates({ manual: false });
+  }
   
   // Start watcher on the new directory
   watchCallsDirectory();
@@ -1482,15 +1498,14 @@ ipcMain.handle('settings:save', async (event, newSettings) => {
   await syncDatabaseWithFiles();
   
   // Reload call list on frontend
-  if (mainWindow) {
-    mainWindow.webContents.send('calls:list-updated');
+  if (getHubWindow()) {
+    getHubWindow().webContents.send('calls:list-updated');
   }
   return true;
 });
 
-ipcMain.handle('audio:start-recording', () => {
-  startRecordingHandler();
-  return activeSession ? activeSession.id : 'live';
+ipcMain.handle('audio:start-recording', async (event, sessionId) => {
+  return await startRecordingHandler(sessionId);
 });
 
 ipcMain.handle('audio:stop-recording', () => {
@@ -1503,10 +1518,59 @@ ipcMain.handle('audio:pause-recording', () => {
   return true;
 });
 
-ipcMain.handle('audio:resume-recording', () => {
+ipcMain.handle('audio:resume-recording', async (event, sessionId) => {
   if (!isPaused) return false;
-  startRecordingHandler();
-  return true;
+  return await startRecordingHandler(sessionId || activeRecordingSessionId);
+});
+
+ipcMain.handle('audio:get-recording-status', () => ({
+  isRecording,
+  isPaused,
+  sessionId: activeRecordingSessionId
+}));
+
+ipcMain.handle('meetings:open', async (event, sessionId) => {
+  openMeetingWindow(sessionId);
+  return { success: true };
+});
+
+ipcMain.handle('meetings:new', async () => {
+  const session = createNewSession({ encryptByDefault: settings.encryptByDefault });
+  await saveSessionToDbPromise(session);
+  openMeetingWindow(session.id);
+  return { success: true, sessionId: session.id };
+});
+
+ipcMain.handle('meetings:focus', async (event, sessionId) => {
+  const win = windowManager?.getMeetingWindow(sessionId);
+  if (win) {
+    win.focus();
+    return { success: true };
+  }
+  return { success: false };
+});
+
+ipcMain.handle('session:load-meeting', async (event, sessionId) => {
+  let session = getSession(sessionId);
+  if (!session) {
+    session = await loadSessionPayloadFromDb(sessionId);
+    if (session) setSession(session);
+  }
+  return session;
+});
+
+ipcMain.handle('session:set-title', async (event, sessionId, title, userEdited = true) => {
+  let session = getSession(sessionId) || await loadSessionPayloadFromDb(sessionId);
+  if (!session) return { success: false };
+  session.title = title;
+  session.titleUserEdited = userEdited;
+  if (userEdited) session.titleAutoGenerated = false;
+  setSession(session);
+  await saveSessionToDbPromise(session);
+  broadcastToSession(sessionId, 'session:updated', session);
+  const hub = getHubWindow();
+  if (hub) hub.webContents.send('calls:list-updated');
+  return { success: true };
 });
 
 ipcMain.handle('processing:get-jobs', async () => {
@@ -1522,43 +1586,64 @@ ipcMain.handle('calls:resume-transcription', async (event, sessionId) => {
   return await resumeCallTranscriptionHandler(sessionId);
 });
 
-ipcMain.handle('chat:query', async (event, query, activeTranscriptText) => {
+ipcMain.handle('chat:query', async (event, payload, legacyTranscriptText) => {
   try {
     const model = settings.selectedLlm;
-    const rows = await dbAll("SELECT title, date, summary, actionItems, mixNotes, enhancedNotes FROM sessions");
+    const isObjectPayload = payload && typeof payload === 'object';
+    const query = isObjectPayload ? payload.query : payload;
+    const sessionId = isObjectPayload ? payload.sessionId : null;
+    const scope = isObjectPayload ? (payload.scope || 'hub') : 'hub';
+    const activeTranscriptText = isObjectPayload
+      ? (payload.transcriptText || '')
+      : (legacyTranscriptText || '');
 
-    let historyContext = "Here is the context of past calls:\n";
-    rows.forEach(r => {
-      historyContext += `- [${r.date}] Title: ${r.title}\n`;
-      if (r.summary) historyContext += `  Summary: ${r.summary}\n`;
-      if (r.actionItems) historyContext += `  Action Items: ${r.actionItems}\n`;
-      historyContext += `\n`;
-    });
+    const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const rows = await dbAll("SELECT title, date, summary, actionItems, mixNotes, enhancedNotes, mtimeMs FROM sessions");
 
-    const systemPrompt = `You are an offline AI meeting assistant. You have access to the active call's transcript and the history of all past calls.
-Use this context to answer the user's question accurately.
-Be concise, helpful, and write your responses using clean Markdown format (headers, bold, list items, etc.) for great readability in the chat panel. Do not include loose asterisks.`;
+    let historyContext = '';
+    if (scope === 'meeting') {
+      historyContext = 'You are answering about the CURRENT MEETING first. Past sessions are secondary context unless the user explicitly asks about history (e.g. "past week", "recent discussions").\n\n';
+      const recent = rows.filter((r) => (r.mtimeMs || 0) >= oneWeekAgo);
+      historyContext += 'Recent sessions (past 7 days):\n';
+      recent.forEach((r) => {
+        historyContext += `- [${r.date}] ${r.title}\n`;
+        if (r.summary) historyContext += `  Summary: ${r.summary}\n`;
+      });
+    } else {
+      historyContext = 'Here is the context of past calls:\n';
+      rows.forEach((r) => {
+        historyContext += `- [${r.date}] Title: ${r.title}\n`;
+        if (r.summary) historyContext += `  Summary: ${r.summary}\n`;
+        if (r.actionItems) historyContext += `  Action Items: ${r.actionItems}\n`;
+        historyContext += '\n';
+      });
+    }
+
+    const systemPrompt = scope === 'meeting'
+      ? `You are an offline AI meeting assistant focused on the active meeting transcript. Use past session context only when the user asks about broader history or trends. Respond in clean Markdown.`
+      : `You are an offline AI meeting assistant with access to session history. Respond in clean Markdown.`;
 
     const recipePrompt = buildRecipePrompt(query);
     const resolvedQuery = recipePrompt || query;
 
     const userPrompt = `${historyContext}
-Active Call Transcript:
+Current Meeting Transcript (primary):
 ${activeTranscriptText || 'No active transcript.'}
 
 User Question:
 ${resolvedQuery}`;
 
     const requestId = `chat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    void llmService.streamToWindow(mainWindow, requestId, userPrompt, model, systemPrompt).catch((err) => {
+    const targetWindow = BrowserWindow.fromWebContents(event.sender);
+    void llmService.streamToWindow(targetWindow, requestId, userPrompt, model, systemPrompt).catch((err) => {
       console.error('Chat stream error', err);
     });
     return { requestId };
   } catch (err) {
-    console.error("Chat query error", err);
+    console.error('Chat query error', err);
     return {
       requestId: null,
-      error: "Could not query local AI model. Please verify Ollama is running."
+      error: 'Could not query local AI model. Please verify Ollama is running.'
     };
   }
 });
@@ -1638,7 +1723,7 @@ ipcMain.handle('models:download-whisper', async (event, modelName) => {
     proc.stdout.on('data', (data) => {
       // Send download progress to frontend
       const output = data.toString();
-      if (mainWindow) mainWindow.webContents.send('models:on-download-progress', output);
+      if (getHubWindow()) getHubWindow().webContents.send('models:on-download-progress', output);
     });
     
     proc.on('close', (code) => {
@@ -1753,7 +1838,7 @@ ipcMain.handle('calls:save', async (event, callData, password) => {
     }
     
     await saveSessionToDbPromise(callData);
-    if (mainWindow) mainWindow.webContents.send('calls:list-updated');
+    if (getHubWindow()) getHubWindow().webContents.send('calls:list-updated');
     return true;
   } catch (err) {
     console.error(err);
@@ -1774,7 +1859,7 @@ ipcMain.handle('calls:save-silently', async (event, callData) => {
 ipcMain.handle('calls:delete', async (event, sessionId) => {
   try {
     await dbRun("DELETE FROM sessions WHERE id = ?", [sessionId]);
-    if (mainWindow) mainWindow.webContents.send('calls:list-updated');
+    if (getHubWindow()) getHubWindow().webContents.send('calls:list-updated');
     return { success: true };
   } catch (e) {
     return { success: false, error: e.message };
@@ -1786,7 +1871,7 @@ ipcMain.handle('calls:delete-multiple', async (event, sessionIds) => {
     if (sessionIds.length === 0) return { success: true };
     const placeholders = sessionIds.map(() => '?').join(',');
     await dbRun(`DELETE FROM sessions WHERE id IN (${placeholders})`, sessionIds);
-    if (mainWindow) mainWindow.webContents.send('calls:list-updated');
+    if (getHubWindow()) getHubWindow().webContents.send('calls:list-updated');
     return { success: true };
   } catch (e) {
     return { success: false, error: e.message };
@@ -1862,7 +1947,7 @@ ipcMain.handle('calls:merge', async (event, sessionIds) => {
     };
 
     await saveSessionToDbPromise(newSession);
-    if (mainWindow) mainWindow.webContents.send('calls:list-updated');
+    if (getHubWindow()) getHubWindow().webContents.send('calls:list-updated');
     return { success: true, session: newSession };
   } catch (e) {
     return { success: false, error: e.message };
@@ -1903,7 +1988,7 @@ ipcMain.handle('calls:export', async (event, sessionIds) => {
       }
     }
 
-    const { filePath } = await dialog.showSaveDialog(mainWindow, {
+    const { filePath } = await dialog.showSaveDialog(getHubWindow(), {
       title: 'Export Transcripts',
       defaultPath: path.join(app.getPath('downloads'), 'trailmix_export.md'),
       filters: [{ name: 'Markdown/Text Files', extensions: ['md', 'txt'] }]
@@ -2092,7 +2177,7 @@ ipcMain.handle('folders:delete', async (event, id) => {
 ipcMain.handle('calls:move-to-folder', async (event, sessionId, folderId) => {
   try {
     await dbRun("UPDATE sessions SET folder_id = ? WHERE id = ?", [folderId, sessionId]);
-    if (mainWindow) mainWindow.webContents.send('calls:list-updated');
+    if (getHubWindow()) getHubWindow().webContents.send('calls:list-updated');
 
     if (folderId) {
       const folder = await dbGet("SELECT * FROM folders WHERE id = ?", [folderId]);
@@ -2203,15 +2288,32 @@ ipcMain.handle('calls:open-file-location', () => {
 });
 
 ipcMain.on('app:minimize', () => {
-  if (mainWindow) mainWindow.minimize();
+  if (getHubWindow()) getHubWindow().minimize();
 });
 
 ipcMain.on('app:relaunch', () => {
-  if (mainWindow) {
-    mainWindow.restore();
-    mainWindow.focus();
+  if (getHubWindow()) {
+    getHubWindow().restore();
+    getHubWindow().focus();
   }
-  destroyMiniWindow();
+  if (windowManager && activeRecordingSessionId) {
+    windowManager.restoreMeetingFromMini(activeRecordingSessionId);
+  }
+});
+
+ipcMain.handle('app:get-version', () => app.getVersion());
+
+ipcMain.handle('updates:check', async (event, options = {}) => {
+  return updateService.checkForUpdates(options);
+});
+
+ipcMain.handle('updates:install', async () => {
+  updateService.quitAndInstall();
+  return { success: true };
+});
+
+ipcMain.handle('updates:get-status', () => {
+  return updateService.getStatus(app.getVersion());
 });
 
 function cleanupStaleLoopbackModules() {
@@ -2242,13 +2344,21 @@ app.whenReady().then(async () => {
   await initDatabase();
   await sessionProcessingService.initSchema();
   await sessionProcessingService.recoverInterruptedJobs();
-  createMainWindow();
+  createHubWindow();
+  updateService.configure({
+    getHubWindow,
+    getAutoUpdateEnabled: () => settings.autoUpdateEnabled !== false
+  });
+  updateService.getStatus(app.getVersion());
+  if (settings.autoUpdateEnabled !== false) {
+    void updateService.checkForUpdates({ manual: false });
+  }
   setupTray();
   watchCallsDirectory();
   broadcastProcessingProgress();
   
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
+    if (BrowserWindow.getAllWindows().length === 0) createHubWindow();
   });
 });
 

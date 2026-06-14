@@ -50,14 +50,15 @@ class TranscriptionService {
     }
   }
 
-  enqueueChunk({ chunkPath, chunkIndex, whisperDir, selectedModel }) {
+  enqueueChunk({ chunkPath, chunkIndex, whisperDir, selectedModel, aecMode = 'off' }) {
     const jobId = `${chunkIndex}_${Date.now()}`;
     this.queue.push({
       jobId,
       chunkPath,
       chunkIndex,
       whisperDir,
-      selectedModel
+      selectedModel,
+      aecMode
     });
     this.processQueue();
   }

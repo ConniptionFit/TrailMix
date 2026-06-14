@@ -1,0 +1,95 @@
+.meeting-window-body {
+  margin: 0;
+  background: var(--bg-main);
+  overflow: hidden;
+}
+
+.meeting-app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 16px 18px 12px;
+  gap: 12px;
+}
+
+.meeting-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.meeting-title-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--text-main);
+  font-size: 22px;
+  font-weight: 600;
+  outline: none;
+  padding: 0;
+}
+
+.meeting-title-hint {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.meeting-title-hint.hidden {
+  display: none;
+}
+
+.meeting-main {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.meeting-editor-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.meeting-editor-pane .editor-component-host {
+  flex: 1;
+  min-height: 240px;
+}
+
+.meeting-transcript-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.meeting-transcript-pane .transcript-container {
+  flex: 1;
+  min-height: 0;
+}
+
+.meeting-chat-widget {
+  position: fixed;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 360px;
+  z-index: 50;
+}
+
+.meeting-chat-widget.closed {
+  width: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (max-width: 900px) {
+  .meeting-main {
+    grid-template-columns: 1fr;
+  }
+  .meeting-transcript-pane {
+    max-height: 220px;
+  }
+}
