@@ -98,6 +98,48 @@ if (isMiniMode) {
     }
     return speakerName;
   }
+
+  const llmStreamBuffers = new Map();
+  const llmStreamRenderTimers = new Map();
+  const llmStreamWaiters = new Map();
+
+  window.api.onLlmStreamChunk((payload) => {
+    const waiter = llmStreamWaiters.get(payload.requestId);
+    if (!waiter) return;
+
+    if (payload.token) {
+      const nextBuffer = (llmStreamBuffers.get(payload.requestId) || '') + payload.token;
+      llmStreamBuffers.set(payload.requestId, nextBuffer);
+
+      if (!llmStreamRenderTimers.has(payload.requestId)) {
+        llmStreamRenderTimers.set(payload.requestId, requestAnimationFrame(() => {
+          llmStreamRenderTimers.delete(payload.requestId);
+          waiter.onUpdate(llmStreamBuffers.get(payload.requestId) || '');
+        }));
+      }
+    }
+
+    if (payload.done) {
+      const finalText = payload.fullResponse || llmStreamBuffers.get(payload.requestId) || '';
+      llmStreamBuffers.delete(payload.requestId);
+      llmStreamRenderTimers.delete(payload.requestId);
+      llmStreamWaiters.delete(payload.requestId);
+      waiter.onUpdate(finalText);
+
+      if (payload.error) {
+        waiter.reject(new Error(payload.error));
+      } else {
+        waiter.resolve(finalText);
+      }
+    }
+  });
+
+  function waitForLlmStream(requestId, onUpdate) {
+    return new Promise((resolve, reject) => {
+      llmStreamBuffers.set(requestId, '');
+      llmStreamWaiters.set(requestId, { onUpdate, resolve, reject });
+    });
+  }
   
   // Navigation Tabs
   const navDashboard = document.getElementById('nav-dashboard');
@@ -553,12 +595,22 @@ if (isMiniMode) {
         mixEnhancedPreview.innerHTML = '<p class="placeholder-text">AI is enhancing your notes using meeting context...</p>';
       }
       
-      window.api.mixEnhance(jots, transcriptText).then(response => {
+      window.api.mixEnhance(jots, transcriptText).then((result) => {
+        if (!result || !result.requestId) {
+          throw new Error(result?.error || 'Failed to start Mix & Enhance.');
+        }
+
+        return waitForLlmStream(result.requestId, (partialText) => {
+          if (mixEnhancedPreview) {
+            mixEnhancedPreview.innerHTML = formatAISummary(partialText || '');
+          }
+        });
+      }).then((response) => {
         activeSession.enhancedNotes = response;
         if (mixEnhancedPreview) {
           mixEnhancedPreview.innerHTML = formatAISummary(response);
         }
-        
+
         window.api.saveCall(activeSession).then(() => {
           console.log("Enhanced notes saved successfully");
         });
@@ -1846,8 +1898,17 @@ if (isMiniMode) {
       ? activeSession.transcript.map(t => `[${t.timestamp}] ${t.speaker}: ${t.text}`).join('\n') 
       : 'No transcript active.';
       
-    window.api.chatQuery(text, transcriptText).then((response) => {
-      updateChatMessage(loadingId, response);
+    window.api.chatQuery(text, transcriptText).then((result) => {
+      if (!result || !result.requestId) {
+        updateChatMessage(loadingId, result?.error || 'Could not query local AI model.');
+        return;
+      }
+
+      waitForLlmStream(result.requestId, (partialText) => {
+        updateChatMessage(loadingId, partialText || '');
+      }).catch((err) => {
+        updateChatMessage(loadingId, `Error: ${err.message}`);
+      });
     });
   }
 
@@ -1859,8 +1920,17 @@ if (isMiniMode) {
       ? activeSession.transcript.map(t => `[${t.timestamp}] ${t.speaker}: ${t.text}`).join('\n') 
       : 'No transcript active.';
       
-    window.api.chatQuery(presetType, transcriptText).then((response) => {
-      updateChatMessage(loadingId, response);
+    window.api.chatQuery(presetType, transcriptText).then((result) => {
+      if (!result || !result.requestId) {
+        updateChatMessage(loadingId, result?.error || 'Could not query local AI model.');
+        return;
+      }
+
+      waitForLlmStream(result.requestId, (partialText) => {
+        updateChatMessage(loadingId, partialText || '');
+      }).catch((err) => {
+        updateChatMessage(loadingId, `Error: ${err.message}`);
+      });
     });
   }
 

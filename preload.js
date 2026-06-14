@@ -82,6 +82,12 @@ contextBridge.exposeInMainWorld('api', {
   chatQuery: (query, transcriptText) => ipcRenderer.invoke('chat:query', query, transcriptText),
   saveCallSilently: (callData) => ipcRenderer.invoke('calls:save-silently', callData),
   mixEnhance: (jots, transcriptText) => ipcRenderer.invoke('chat:mix-enhance', jots, transcriptText),
+  onLlmStreamChunk: (callback) => {
+    const subscription = (event, data) => callback(data);
+    ipcRenderer.on('llm:stream-chunk', subscription);
+    return () => ipcRenderer.removeListener('llm:stream-chunk', subscription);
+  },
+  cancelLlmStream: (requestId) => ipcRenderer.invoke('llm:cancel', requestId),
 
   // Folders & Obsidian Export (v0.3)
   getFolders: () => ipcRenderer.invoke('folders:get'),
