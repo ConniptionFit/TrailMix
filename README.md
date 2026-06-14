@@ -45,7 +45,7 @@ TrailMix records system audio and your microphone, transcribes speech locally wi
 |------|----------------|
 | **Live capture** | Dual-channel recording (system + mic), real-time transcript, pause/resume |
 | **The Mix** | Jot plain notes during a session; AI blends them with the transcript after you stop |
-| **AI assistant** | Transcript-aware chat, streaming responses, auto summary & action items |
+| **Mix-Master** | Transcript-aware offline AI chat, streaming responses, auto summary & action items |
 | **The Trail** | Searchable session history, folders (Campfire Preserves), merge & export |
 | **Nuts and Bolts** | Model picker, audio routing, themes, encryption, custom prompts |
 

@@ -362,6 +362,7 @@ if (isMiniMode) {
     });
   }
 
+  if (btnRecordToggle) {
   btnRecordToggle.addEventListener('click', () => {
     if (btnRecordToggle.classList.contains('start')) {
       // Clear active session to start a brand new one
@@ -385,16 +386,18 @@ if (isMiniMode) {
       if (editorLegend) editorLegend.classList.add('hidden');
       
       lastSegmentTimeMs = null;
-      window.api.startRecording().then(sessionId => {
-        if (activeSession && activeSession.id === 'live' && sessionId) {
-          activeSession.id = sessionId;
+      window.api.startRecording().then((result) => {
+        if (activeSession && activeSession.id === 'live' && result?.sessionId) {
+          activeSession.id = result.sessionId;
         }
       });
     } else {
       window.api.stopRecording();
     }
   });
+  }
 
+  if (btnPauseToggle) {
   btnPauseToggle.addEventListener('click', () => {
     if (btnPauseToggle.innerHTML.includes('Pause')) {
       window.api.pauseRecording();
@@ -402,7 +405,9 @@ if (isMiniMode) {
       window.api.resumeRecording();
     }
   });
+  }
 
+  if (btnResumePast) {
   btnResumePast.addEventListener('click', () => {
     if (activeSession && activeSession.id && activeSession.id !== 'live') {
       window.api.resumeCallTranscription(activeSession.id).then(res => {
@@ -416,9 +421,11 @@ if (isMiniMode) {
       });
     }
   });
+  }
 
   // Recording Status listener
   window.api.onRecordingStatus((status) => {
+    if (!btnRecordToggle || !btnPauseToggle || !recTimer) return;
     const { isRecording, isPaused, isNewSession } = status;
 
     if (isRecording && !isPaused) {
@@ -2371,7 +2378,7 @@ if (isMiniMode) {
 
   const CHAT_WELCOME_HTML = `
     <div class="msg system">
-      Hi! I am your offline assistant. Ask me questions or use a Recipe above to run post-meeting logic on your notes.
+      Hi! I'm Mix-Master, your offline meeting AI. Ask questions or use a recipe above to analyze your notes and transcript.
     </div>
   `;
 

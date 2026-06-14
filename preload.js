@@ -16,6 +16,11 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('audio:on-transcription-update', subscription);
     return () => ipcRenderer.removeListener('audio:on-transcription-update', subscription);
   },
+  onTranscriptionCorrection: (callback) => {
+    const subscription = (event, data) => callback(data);
+    ipcRenderer.on('audio:on-transcription-correction', subscription);
+    return () => ipcRenderer.removeListener('audio:on-transcription-correction', subscription);
+  },
   onRecordingStatus: (callback) => {
     const subscription = (event, data) => callback(data);
     ipcRenderer.on('audio:on-recording-status', subscription);
@@ -86,7 +91,7 @@ contextBridge.exposeInMainWorld('api', {
   // Live Pause & Resume / Resume Past Sessions
   pauseRecording: () => ipcRenderer.invoke('audio:pause-recording'),
   resumeRecording: () => ipcRenderer.invoke('audio:resume-recording'),
-  resumeCallTranscription: (filePath) => ipcRenderer.invoke('calls:resume-transcription', filePath),
+  resumeCallTranscription: (sessionId) => ipcRenderer.invoke('calls:resume-transcription', sessionId),
 
   // Timeline Tasks
   getTasks: () => ipcRenderer.invoke('tasks:get'),
