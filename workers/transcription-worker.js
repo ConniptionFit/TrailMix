@@ -8,7 +8,7 @@ const { promisify } = require('util');
 const execFileAsync = promisify(execFile);
 const { checkVoiceActivity } = require('../lib/audio-vad');
 const { secureShredFile } = require('../lib/secure-shred');
-const { applyAecToWavBuffers } = require('../lib/audio-aec');
+const { applyAecToWavBuffers, isMicDominatedBySystemEcho } = require('../lib/audio-aec');
 const { resolveWhisperCli } = require('../lib/resolve-whisper-cli');
 
 async function splitStereoChannels(chunkWavPath, leftWavPath, rightWavPath) {
@@ -83,6 +83,53 @@ async function applyAppLevelAec(leftWavPath, rightWavPath) {
   await fs.promises.writeFile(rightWavPath, cleaned);
 }
 
+function normalizeTranscriptText(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function textSimilarity(a, b) {
+  const left = normalizeTranscriptText(a).split(' ').filter(Boolean);
+  const right = normalizeTranscriptText(b).split(' ').filter(Boolean);
+  if (!left.length || !right.length) return 0;
+
+  const rightSet = new Set(right);
+  const overlap = left.filter((word) => rightSet.has(word)).length;
+  return overlap / Math.max(left.length, right.length);
+}
+
+function dedupeEchoSegments(segments) {
+  const inbound = segments.filter((segment) => segment.speaker !== 'You');
+  const mic = segments.filter((segment) => segment.speaker === 'You');
+  const kept = [...inbound];
+
+  mic.forEach((segment) => {
+    const isEcho = inbound.some((other) => (
+      Math.abs(other.fromMs - segment.fromMs) < 1500
+      && textSimilarity(other.text, segment.text) >= 0.55
+    ));
+    if (!isEcho) kept.push(segment);
+  });
+
+  return kept.sort((a, b) => a.fromMs - b.fromMs);
+}
+
+async function shouldTranscribeMicChannel(leftWavPath, rightWavPath, aecMode) {
+  if (aecMode === 'off') return true;
+
+  const leftBuffer = await fs.promises.readFile(leftWavPath);
+  const rightBuffer = await fs.promises.readFile(rightWavPath);
+  if (isMicDominatedBySystemEcho(leftBuffer, rightBuffer)) {
+    return false;
+  }
+
+  const hasRightVoice = await checkVoiceActivity(rightWavPath);
+  return hasRightVoice;
+}
+
 async function processChunk(job) {
   const {
     chunkPath,
@@ -114,7 +161,7 @@ async function processChunk(job) {
     throw new Error(`Ffmpeg channel splitting failed: ${err.message}`);
   }
 
-  if (aecMode === 'app') {
+  if (aecMode === 'app' || aecMode === 'guard') {
     try {
       await applyAppLevelAec(leftWavPath, rightWavPath);
     } catch (err) {
@@ -123,7 +170,7 @@ async function processChunk(job) {
   }
 
   const hasLeftVoice = await checkVoiceActivity(leftWavPath);
-  const hasRightVoice = await checkVoiceActivity(rightWavPath);
+  let hasRightVoice = await checkVoiceActivity(rightWavPath);
 
   if (!hasLeftVoice && !hasRightVoice) {
     console.log(`VAD noise gate: Chunk ${chunkIndex} Left & Right are silent. Dropping chunk.`);
@@ -147,6 +194,15 @@ async function processChunk(job) {
   }
 
   if (hasRightVoice) {
+    if (hasLeftVoice && aecMode !== 'off') {
+      hasRightVoice = await shouldTranscribeMicChannel(leftWavPath, rightWavPath, aecMode);
+      if (!hasRightVoice) {
+        console.log(`Bleed gate: Chunk ${chunkIndex} mic channel dominated by system echo. Skipping You.`);
+      }
+    }
+  }
+
+  if (hasRightVoice) {
     try {
       const rightSegments = await transcribeMonoFile(rightWavPath, 'You', whisperCli, whisperModel);
       allSegments.push(...rightSegments);
@@ -157,13 +213,17 @@ async function processChunk(job) {
     await secureShredFile(rightWavPath);
   }
 
-  allSegments.sort((a, b) => a.fromMs - b.fromMs);
+  const dedupedSegments = allSegments.some((segment) => segment.speaker === 'You')
+    && allSegments.some((segment) => segment.speaker !== 'You')
+    ? dedupeEchoSegments(allSegments)
+    : allSegments;
+  dedupedSegments.sort((a, b) => a.fromMs - b.fromMs);
 
   await secureShredFile(chunkPath);
   await secureShredFile(leftWavPath);
   await secureShredFile(rightWavPath);
 
-  return allSegments;
+  return dedupedSegments;
 }
 
 parentPort.on('message', async (message) => {

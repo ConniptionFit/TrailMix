@@ -2322,17 +2322,17 @@ body {
 
 /* Transcript dual-channel bubbles */
 .transcript-bubble.bubble-system {
-  align-self: flex-start;
+  align-self: flex-end;
   background: rgba(148, 163, 184, 0.12);
   border: 1px solid rgba(148, 163, 184, 0.22);
-  border-bottom-left-radius: 2px;
+  border-bottom-right-radius: 2px;
 }
 
 .transcript-bubble.bubble-mic {
-  align-self: flex-end;
+  align-self: flex-start;
   background: rgba(164, 198, 57, 0.1);
   border: 1px solid rgba(164, 198, 57, 0.24);
-  border-bottom-right-radius: 2px;
+  border-bottom-left-radius: 2px;
 }
 
 .line-speaker.system {
