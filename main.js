@@ -190,6 +190,7 @@ transcriptionService.configure({
 
 audioCaptureService.configure({
   onChunkReady: ({ chunkPath, chunkIndex }) => {
+    if (!isRecording && !isPaused && !flushingFinalChunks) return;
     transcriptionService.enqueueChunk({
       chunkPath,
       chunkIndex,
@@ -264,6 +265,7 @@ let updateService = new UpdateService();
 let tray = null;
 let isRecording = false;
 let isPaused = false;
+let flushingFinalChunks = false;
 let sessionChunkOffset = 0;
 let diarizationInterval = null;
 let activeSession = null;
@@ -1150,7 +1152,7 @@ async function pauseRecordingHandler() {
 }
 
 async function stopRecordingHandler() {
-  if (!isRecording && !isPaused) return;
+  if (!isRecording && !isPaused && !audioCaptureService.hasActiveProcess()) return;
 
   const stoppingSessionId = activeRecordingSessionId;
 
@@ -1173,25 +1175,41 @@ async function stopRecordingHandler() {
     windowManager?.destroyMiniWindow(stoppingSessionId);
   }
 
-  setTimeout(async () => {
-    try {
-      await audioCaptureService.flushRemainingChunks();
-      await transcriptionService.waitForIdle();
-      await finalizeAndSaveSession();
-      if (stoppingSessionId) {
-        const session = getSession(stoppingSessionId) || await loadSessionPayloadFromDb(stoppingSessionId);
-        if (session) broadcastToSession(stoppingSessionId, 'session:updated', session);
-      }
-    } catch (err) {
-      console.error('Error finalizing recording session:', err);
+  flushingFinalChunks = true;
+  try {
+    await audioCaptureService.flushRemainingChunks();
+    await transcriptionService.waitForIdle();
+    await finalizeAndSaveSession();
+    if (stoppingSessionId) {
+      const session = getSession(stoppingSessionId) || await loadSessionPayloadFromDb(stoppingSessionId);
+      if (session) broadcastToSession(stoppingSessionId, 'session:updated', session);
     }
-  }, 1000);
+  } catch (err) {
+    console.error('Error finalizing recording session:', err);
+  } finally {
+    flushingFinalChunks = false;
+  }
 }
 
 async function resumeCallTranscriptionHandler(sessionId) {
   try {
     if (isRecording && activeRecordingSessionId && activeRecordingSessionId !== sessionId) {
       return { success: false, conflict: true, activeSessionId: activeRecordingSessionId };
+    }
+
+    if (isRecording && activeRecordingSessionId === sessionId) {
+      const meetingWindow = openMeetingWindow(sessionId);
+      const rebroadcastStatus = () => broadcastRecordingStatus({ isNewSession: false });
+      if (meetingWindow && !meetingWindow.isDestroyed()) {
+        if (meetingWindow.webContents.isLoading()) {
+          meetingWindow.webContents.once('did-finish-load', rebroadcastStatus);
+        } else {
+          rebroadcastStatus();
+        }
+      } else {
+        rebroadcastStatus();
+      }
+      return { success: true, alreadyRecording: true };
     }
 
     const res = await dbGet("SELECT * FROM sessions WHERE id = ?", [sessionId]);
@@ -1779,6 +1797,39 @@ ipcMain.handle('calls:resume-transcription', async (event, sessionId) => {
   return await resumeCallTranscriptionHandler(sessionId);
 });
 
+function formatTranscriptForChat(transcript) {
+  if (!Array.isArray(transcript) || transcript.length === 0) return '';
+  return transcript
+    .map((segment) => `[${segment.timestamp || '00:00'}] ${segment.speaker}: ${segment.text}`)
+    .join('\n');
+}
+
+async function resolveTranscriptForChat(sessionId, fallbackText = '') {
+  let session = null;
+  if (sessionId) {
+    session = getSession(sessionId) || await loadSessionPayloadFromDb(sessionId);
+  }
+  if (!session && activeSession && (!sessionId || activeSession.id === sessionId)) {
+    session = activeSession;
+  }
+
+  const transcriptText = formatTranscriptForChat(session?.transcript);
+  if (transcriptText) return transcriptText;
+  return String(fallbackText || '').trim();
+}
+
+function buildMeetingNotesContext(session) {
+  if (!session) return '';
+  const parts = [];
+  if (session.mixNotes?.trim()) {
+    parts.push(`Mix notes:\n${session.mixNotes.trim()}`);
+  }
+  if (session.enhancedNotes?.trim()) {
+    parts.push(`Enhanced notes:\n${session.enhancedNotes.trim()}`);
+  }
+  return parts.join('\n\n');
+}
+
 ipcMain.handle('chat:query', async (event, payload, legacyTranscriptText) => {
   try {
     const model = settings.selectedLlm;
@@ -1786,15 +1837,25 @@ ipcMain.handle('chat:query', async (event, payload, legacyTranscriptText) => {
     const query = isObjectPayload ? payload.query : payload;
     const sessionId = isObjectPayload ? payload.sessionId : null;
     const scope = isObjectPayload ? (payload.scope || 'hub') : 'hub';
-    const activeTranscriptText = isObjectPayload
+    const fallbackTranscriptText = isObjectPayload
       ? (payload.transcriptText || '')
       : (legacyTranscriptText || '');
+
+    const recipePrompt = buildRecipePrompt(query);
+    const isRecipe = Boolean(recipePrompt);
+    const resolvedQuery = recipePrompt || query;
+
+    const sessionForContext = sessionId
+      ? (getSession(sessionId) || await loadSessionPayloadFromDb(sessionId) || activeSession)
+      : activeSession;
+    const activeTranscriptText = await resolveTranscriptForChat(sessionId, fallbackTranscriptText);
+    const notesContext = scope === 'meeting' ? buildMeetingNotesContext(sessionForContext) : '';
 
     const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
     const rows = await dbAll("SELECT title, date, summary, actionItems, mixNotes, enhancedNotes, mtimeMs FROM sessions");
 
     let historyContext = '';
-    if (scope === 'meeting') {
+    if (scope === 'meeting' && !isRecipe) {
       historyContext = 'You are answering about the CURRENT MEETING first. Past sessions are secondary context unless the user explicitly asks about history (e.g. "past week", "recent discussions").\n\n';
       const recent = rows.filter((r) => (r.mtimeMs || 0) >= oneWeekAgo);
       historyContext += 'Recent sessions (past 7 days):\n';
@@ -1802,7 +1863,7 @@ ipcMain.handle('chat:query', async (event, payload, legacyTranscriptText) => {
         historyContext += `- [${r.date}] ${r.title}\n`;
         if (r.summary) historyContext += `  Summary: ${r.summary}\n`;
       });
-    } else {
+    } else if (scope !== 'meeting') {
       historyContext = 'Here is the context of past calls:\n';
       rows.forEach((r) => {
         historyContext += `- [${r.date}] Title: ${r.title}\n`;
@@ -1812,15 +1873,15 @@ ipcMain.handle('chat:query', async (event, payload, legacyTranscriptText) => {
       });
     }
 
-    const systemPrompt = scope === 'meeting'
-      ? `You are an offline AI meeting assistant focused on the active meeting transcript. Use past session context only when the user asks about broader history or trends. Respond in clean Markdown.`
-      : `You are an offline AI meeting assistant with access to session history. Respond in clean Markdown.`;
+    let systemPrompt = scope === 'meeting'
+      ? 'You are an offline AI meeting assistant focused on the active meeting transcript. Use past session context only when the user asks about broader history or trends. Respond in clean Markdown.'
+      : 'You are an offline AI meeting assistant with access to session history. Respond in clean Markdown.';
 
-    const recipePrompt = buildRecipePrompt(query);
-    const resolvedQuery = recipePrompt || query;
+    if (isRecipe) {
+      systemPrompt += ' You are executing a structured meeting recipe. Provide a detailed, substantive answer using the transcript and notes. Never reply with only "Okay", "Sure", "Subject", or other one-word acknowledgments.';
+    }
 
-    const userPrompt = `${historyContext}
-Current Meeting Transcript (primary):
+    const userPrompt = `${historyContext}${notesContext ? `${notesContext}\n\n` : ''}Current Meeting Transcript (primary):
 ${activeTranscriptText || 'No active transcript.'}
 
 User Question:
