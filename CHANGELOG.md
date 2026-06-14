@@ -29,6 +29,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.2] - 2026-06-14
+
+### Added
+- README logo header using `assets/logo.png` (same icon as the app window and system tray)
+- Step-by-step **Installation guide** and **How to use TrailMix** sections
+- Five UI screenshots in `docs/screenshots/` (dark/light themes, live session, The Mix, settings, action items)
+- `scripts/capture-screenshots.js` to regenerate documentation screenshots
+
+### Changed
+- Expanded README with first-launch setup, usage walkthrough, screenshot gallery, and troubleshooting tables
+
+---
+
 ## [0.3.0] - 2026-06-13
 
 ### Added
@@ -58,6 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Electron desktop app with local whisper.cpp transcription and Ollama integration
 
+[0.3.2]: https://github.com/ConniptionFit/TrailMix/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/ConniptionFit/TrailMix/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/ConniptionFit/TrailMix/compare/v0.2...v0.3.0
 [0.2.0]: https://github.com/ConniptionFit/TrailMix/releases/tag/v0.2

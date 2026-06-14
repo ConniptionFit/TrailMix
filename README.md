@@ -1,49 +1,53 @@
-# TrailMix
+<p align="center">
+  <img src="assets/logo.png" alt="TrailMix logo" width="120">
+</p>
 
-**Local-first AI note-taking and live transcription for Linux**
+<h1 align="center">TrailMix</h1>
 
-TrailMix captures system audio and microphone input, transcribes speech offline with [whisper.cpp](https://github.com/ggerganov/whisper.cpp), and enriches your notes with a local LLM via [Ollama](https://ollama.com). Everything stays on your machine—no cloud APIs, no account required.
+<p align="center">
+  <strong>Local-first AI note-taking and live transcription for Linux</strong>
+</p>
+
+<p align="center">
+  Capture meetings offline · Jot notes · Blend with AI · Keep everything on your machine
+</p>
+
+---
+
+TrailMix records system audio and your microphone, transcribes speech locally with [whisper.cpp](https://github.com/ggerganov/whisper.cpp), and enriches your notes with a local LLM through [Ollama](https://ollama.com). No cloud APIs. No account required.
+
+<p align="center">
+  <img src="docs/screenshots/01-live-session-dark.png" alt="TrailMix live transcription session in dark theme" width="900">
+</p>
+
+---
+
+## Table of contents
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation guide](#installation-guide)
+- [First launch setup](#first-launch-setup)
+- [How to use TrailMix](#how-to-use-trailmix)
+- [Screenshots](#screenshots)
+- [Configuration reference](#configuration-reference)
+- [Privacy & security](#privacy--security)
+- [Architecture](#architecture)
+- [Development](#development)
+- [Troubleshooting](#troubleshooting)
+- [Changelog](#changelog)
 
 ---
 
 ## Features
 
-### Live capture & transcription
-- **Dual-channel recording** — system audio (meetings, calls) and microphone in stereo, split and transcribed independently to reduce overlap collisions
-- **Real-time transcript** — 2-second chunks processed in a background worker thread so the UI stays responsive
-- **Speaker diarization** — local LLM assigns speaker labels after each session
-- **Pause / resume** — continue recording without losing context
-
-### The Mix (Jot & Enhance)
-- Jot plain-text notes during a session; AI blends them with the transcript after you stop
-- Mixed document model: **your words in bold**, AI context in gray
-- Customizable note-taking style templates (Executive, Bullet, Narrative, and more)
-- Manual re-run via **Start the Mix** anytime
-
-### AI assistant
-- Collapsible chat panel with transcript-aware Q&A (local RAG over the active session)
-- Streaming LLM responses for chat and Mix & Enhance
-- Automatic summary, action items, title, description, and tag suggestions on session finalize
-
-### Session management
-- **The Trail** — collapsible sidebar listing all sessions with search and multi-select
-- **Campfire Preserves** — organize sessions into folders
-- Merge, export, delete, and find related sessions
-- Obsidian vault export per folder
-- Optional AES-256-GCM encryption at rest (PBKDF2 key derivation)
-
-### Tasks & timeline
-- Action items extracted from transcripts and stored in SQLite
-- Toggle completion, omit, or bulk-delete from the timeline view
-- Optional deadline color-coding
-
-### Nuts and Bolts (settings)
-- Whisper model selection and in-app download
-- Ollama model picker
-- PulseAudio source/sink device selection
-- Custom storage path (XDG-friendly defaults)
-- Editable LLM prompt templates for notes, summaries, and action items
-- **Dark** and **light** themes (Granola-inspired light mode)
+| Area | What you get |
+|------|----------------|
+| **Live capture** | Dual-channel recording (system + mic), real-time transcript, pause/resume |
+| **The Mix** | Jot plain notes during a session; AI blends them with the transcript after you stop |
+| **AI assistant** | Transcript-aware chat, streaming responses, auto summary & action items |
+| **The Trail** | Searchable session history, folders (Campfire Preserves), merge & export |
+| **Nuts and Bolts** | Model picker, audio routing, themes, encryption, custom prompts |
 
 ---
 
@@ -51,140 +55,273 @@ TrailMix captures system audio and microphone input, transcribes speech offline 
 
 | Dependency | Purpose |
 |------------|---------|
-| **Linux** (primary target) | PulseAudio for audio routing |
-| **Node.js** 18+ | Runtime |
+| **Linux** | Primary platform; uses PulseAudio for audio routing |
+| **Node.js 18+** | Application runtime |
 | **ffmpeg** | Audio capture and chunking |
-| **`pactl`** (PulseAudio) | Device enumeration |
-| **Ollama** | Local LLM inference |
-| **whisper.cpp** | Offline speech-to-text (see setup below) |
-| **build tools** | `make`, `git`, C++ compiler (for whisper.cpp) |
+| **`pactl`** (PulseAudio utils) | Microphone and system-audio device discovery |
+| **Ollama** | Local LLM for summaries, chat, diarization, and The Mix |
+| **whisper.cpp** | Offline speech-to-text (installed via setup script) |
+| **Build tools** | `make`, `git`, and a C++ compiler to compile whisper.cpp |
 
-> **Note:** System-audio capture is Linux/PulseAudio-specific today. macOS and Windows ports would require alternate capture backends.
+> **Platform note:** System-audio capture currently targets PulseAudio on Linux. macOS and Windows would need alternate capture backends.
 
 ---
 
-## Installation
+## Installation guide
 
-### 1. Clone the repository
+Follow these steps in order on a fresh machine.
+
+### Step 1 — Install system packages
+
+**Debian / Ubuntu**
+
+```bash
+sudo apt update
+sudo apt install -y git curl build-essential ffmpeg pulseaudio-utils
+```
+
+**Fedora**
+
+```bash
+sudo dnf install -y git curl gcc-c++ make ffmpeg pulseaudio-utils
+```
+
+**Arch**
+
+```bash
+sudo pacman -S git curl base-devel ffmpeg pulseaudio
+```
+
+Verify the tools are available:
+
+```bash
+ffmpeg -version
+pactl --version
+node --version   # should be v18 or newer
+```
+
+### Step 2 — Install Ollama
+
+Install from [ollama.com/download](https://ollama.com/download), then pull a model:
+
+```bash
+# Default used by TrailMix settings
+ollama pull gemma3:1b
+
+# Recommended for better summaries (if you have enough RAM)
+ollama pull llama3.2:3b
+```
+
+Confirm Ollama is running:
+
+```bash
+ollama list
+curl -s http://127.0.0.1:11434/api/tags | head
+```
+
+### Step 3 — Clone TrailMix
 
 ```bash
 git clone https://github.com/ConniptionFit/TrailMix.git
 cd TrailMix
 ```
 
-### 2. Install Node dependencies
+### Step 4 — Install Node dependencies
 
 ```bash
 npm install
 ```
 
-### 3. Set up whisper.cpp and models
+### Step 5 — Build whisper.cpp and download models
 
 ```bash
 chmod +x scripts/setup-whisper.sh
 ./scripts/setup-whisper.sh
 ```
 
-This clones whisper.cpp into `bin/whisper.cpp`, compiles the binary, and downloads the `tiny` and `base` GGML models.
+This script will:
 
-### 4. Install and start Ollama
+1. Clone [whisper.cpp](https://github.com/ggerganov/whisper.cpp) into `bin/whisper.cpp`
+2. Compile the `main` binary
+3. Download **tiny** and **base** GGML models
 
-Install [Ollama](https://ollama.com/download) and pull a model (the default in settings is `gemma3:1b`):
-
-```bash
-ollama pull gemma3:1b
-```
-
-Use a larger model (e.g. `llama3.2`, `mistral`) for better summaries and diarization if your hardware allows.
-
-### 5. System packages (Debian/Ubuntu example)
+Confirm the binary exists:
 
 ```bash
-sudo apt update
-sudo apt install ffmpeg pulseaudio-utils build-essential git
+ls -la bin/whisper.cpp/main
+ls bin/whisper.cpp/models/
 ```
 
----
-
-## Quick start
+### Step 6 — Launch the app
 
 ```bash
 npm start
 ```
 
-1. Open **Nuts and Bolts** (⚙️) and confirm your microphone, system audio sink, Whisper model, and Ollama model.
-2. Click **Start Recording** on the dashboard (or use the system tray).
-3. Jot notes in **The Mix** tab while the live transcript streams in **The Trail**.
-4. Click **Stop** — TrailMix runs diarization, summary, action items, and auto-enhance in the background.
-5. Review the blended notes, chat with the transcript, or export to Obsidian.
+TrailMix opens with the ![TrailMix icon](assets/logo.png) logo in the sidebar and system tray.
 
 ---
 
-## Project structure
+## First launch setup
 
-```
-TrailMix/
-├── main.js                 # Electron main process, IPC, session orchestration
-├── preload.js              # Secure renderer ↔ main bridge
-├── encryption.js           # AES-256-GCM encrypt/decrypt
-├── lib/                    # Shared utilities
-│   ├── audio-vad.js
-│   ├── editor-document.js  # Jot & Enhance document model
-│   ├── enhance-notes.js
-│   ├── format-timestamp.js
-│   ├── llm-utils.js
-│   ├── secure-shred.js
-│   ├── speaker-diarization.js
-│   └── task-db.js
-├── services/               # Background service layer
-│   ├── AudioCaptureService.js
-│   ├── TranscriptionService.js
-│   ├── LLMInferenceService.js
-│   └── EnhanceNotesService.js
-├── workers/
-│   └── transcription-worker.js   # ffmpeg + whisper in worker_threads
-├── renderer/               # UI (vanilla JS, no bundler)
-│   ├── index.html
-│   ├── index.js
-│   ├── index.css
-│   ├── themes.css          # Dark + light semantic tokens
-│   └── EditorComponent.js  # The Mix editor
-├── scripts/
-│   └── setup-whisper.sh
-└── data/                   # Local app data (gitignored)
-    ├── settings.json
-    ├── calls/              # Session JSON (optional custom path)
-    └── temp_rec/           # Recording chunks
+Before your first recording, open **Nuts and Bolts** (⚙️ in the sidebar) and walk through these cards:
+
+### 1. Appearance
+
+Choose **Dark** (classic TrailMix) or **Light** (paper-like reading mode). The theme persists in `localStorage`.
+
+<p align="center">
+  <img src="docs/screenshots/03-nuts-and-bolts-dark.png" alt="Nuts and Bolts settings — appearance, models, and audio routing" width="900">
+</p>
+
+### 2. Local AI models
+
+| Setting | Recommendation |
+|---------|----------------|
+| **Whisper model** | `ggml-base.bin` for balance; `ggml-tiny.bin` on low-end hardware |
+| **Ollama model** | `gemma3:1b` minimum; `llama3.2:3b` or larger for better summaries |
+
+Use **Download Selected Whisper Model** if you need to fetch a model from inside the app.
+
+### 3. Audio devices & routing
+
+| Setting | What to pick |
+|---------|--------------|
+| **Microphone** | Your physical mic (e.g. `Built-in Audio Analog Stereo`) |
+| **System audio** | A **monitor** source — usually named `Monitor of …` — to capture meeting/call audio playing through speakers or headphones |
+
+List available PulseAudio devices from a terminal:
+
+```bash
+pactl list sources short
+pactl list sinks short
 ```
 
-Configuration and the task database live under `~/.config/trailmix/` (XDG Base Directory).
+Pick the monitor source that matches your active output device.
+
+### 4. User profile (optional)
+
+Enter your name under **User Profile** so speaker diarization can label you as **You** instead of a generic speaker.
+
+### 5. Encryption (optional)
+
+Enable **Encrypt sessions by default** and set a password if you want session files stored as AES-256-GCM blobs.
 
 ---
 
-## Configuration
+## How to use TrailMix
 
-Settings are stored in `data/settings.json` and exposed in **Nuts and Bolts**:
+### Record a live session
+
+1. Go to **Live Session** in the sidebar.
+2. Click **New Transcript** — TrailMix starts capturing system audio and your microphone.
+3. Optionally open **Toggle Live Trail** to watch the transcript stream in real time.
+4. Switch to the **The Mix** tab and jot quick thoughts while the meeting continues.
+5. Click **Stop Transcribing** when finished.
+
+After you stop, TrailMix automatically:
+
+- Runs speaker diarization (local LLM)
+- Generates **Highlights** and **Action Items**
+- Blends your jots with the transcript in **The Mix** (if you wrote any)
+- Suggests a title, description, and tags
+- Saves the session silently to disk
+
+<p align="center">
+  <img src="docs/screenshots/02-the-mix-dark.png" alt="The Mix — jots in bold with AI context in gray" width="900">
+</p>
+
+### The Mix (Jot & Enhance)
+
+**The Mix** is where your notes meet the transcript:
+
+- Type plain jots in the text area during or after a session
+- Click **✨ Start the Mix** to run local AI enhancement
+- **Bold text** = your original jots
+- **Gray text** = AI-added context from the transcript
+
+You can re-run The Mix anytime after editing your jots. Choose a note-taking style (Executive, Bullet, Narrative, etc.) under **Nuts and Bolts → Note-Taking Style**.
+
+### Browse past sessions (The Trail)
+
+The sidebar lists every saved session under **The Trail**:
+
+- **Search** by title, description, or `#tag`
+- **Right-click** a session for open, export, merge, delete, or find related
+- **Campfire Preserves** — drag sessions into folders for organization
+- **Select Multiple** from the ☰ menu for bulk merge, export, or delete
+
+### Action Items
+
+Open **Action Items** in the sidebar to see tasks extracted across all sessions. Check items off, omit them, or jump back to the source session.
+
+<p align="center">
+  <img src="docs/screenshots/05-action-items-light.png" alt="Action Items view in light theme" width="900">
+</p>
+
+### Ask AI (chat)
+
+Click the **💬 Ask AI** floating button to open the chat panel. Questions are answered using the **currently loaded session transcript** as context — fully offline through Ollama.
+
+Preset prompts (summarize, list decisions, etc.) are available from the chat header.
+
+### Export
+
+| Action | How |
+|--------|-----|
+| **Export selected sessions** | Multi-select in The Trail → 📤 bulk export |
+| **Export to Obsidian** | Choose a folder, then click **Export to Obsidian** on the dashboard toolbar |
+| **Open file location** | Right-click a session → open in file manager |
+
+### System tray
+
+TrailMix minimizes to the system tray. Double-click the tray icon to restore the window. The tray shows **Transcribing…** while a session is active.
+
+---
+
+## Screenshots
+
+| View | Dark theme | Light theme |
+|------|------------|-------------|
+| Live session | ![Live session dark](docs/screenshots/01-live-session-dark.png) | ![Live session light](docs/screenshots/04-live-session-light.png) |
+| The Mix | ![The Mix](docs/screenshots/02-the-mix-dark.png) | — |
+| Nuts and Bolts | ![Settings](docs/screenshots/03-nuts-and-bolts-dark.png) | — |
+| Action Items | — | ![Action items](docs/screenshots/05-action-items-light.png) |
+
+---
+
+## Configuration reference
+
+Settings live in `data/settings.json` and are editable in **Nuts and Bolts**:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `selectedModel` | `ggml-base.bin` | Whisper GGML model file |
 | `selectedLlm` | `gemma3:1b` | Ollama model tag |
 | `encryptByDefault` | `false` | Encrypt new sessions on save |
-| `selectedMic` / `selectedSink` | `default` | PulseAudio devices |
-| `selectedNoteStyle` | `executive` | Mix prompt preset |
+| `selectedMic` / `selectedSink` | `default` | PulseAudio input / monitor source |
+| `selectedNoteStyle` | `executive` | The Mix prompt preset |
 | `customStoragePath` | *(empty)* | Override session storage directory |
-| `userName` | *(empty)* | Used in diarization prompts |
+| `userName` | *(empty)* | Label used in diarization prompts |
 
-Prompt templates support a `{transcriptText}` placeholder and can be edited per style in settings.
+Prompt templates support a `{transcriptText}` placeholder.
+
+Session files and the SQLite task database:
+
+| Path | Contents |
+|------|----------|
+| `data/calls/` (or custom path) | Session JSON / encrypted blobs |
+| `~/.config/trailmix/db.sqlite` | Folders, tasks, metadata |
+| `data/temp_rec/` | Temporary audio chunks (gitignored) |
 
 ---
 
 ## Privacy & security
 
-- **No network calls for AI** — Whisper and Ollama run entirely on localhost
-- **Optional encryption** — sessions can be saved as AES-256-GCM blobs; passwords are not sent anywhere
-- **Secure delete** — optional shredding of temporary audio chunks after processing
-- **Local SQLite** — tasks and folder metadata stay in `~/.config/trailmix/db.sqlite`
+- **No cloud AI** — Whisper and Ollama run entirely on localhost
+- **Optional encryption** — AES-256-GCM with PBKDF2 key derivation; passwords never leave your machine
+- **Secure delete** — temporary audio chunks can be shredded after processing
+- **Local SQLite** — folder and task metadata stays in `~/.config/trailmix/`
 
 ---
 
@@ -203,44 +340,49 @@ Prompt templates support a `{transcriptText}` placeholder and can be edited per 
                                    PulseAudio      (worker_threads)
 ```
 
-Transcription runs in a Node `worker_threads` worker so ffmpeg conversion and whisper inference do not block the Electron main loop. LLM requests stream tokens back to the renderer via `llm:stream-chunk` IPC events.
+### Project structure
+
+```
+TrailMix/
+├── assets/logo.png         # App icon (window, tray, docs)
+├── main.js                 # Electron main process
+├── preload.js              # Secure IPC bridge
+├── encryption.js           # AES-256-GCM
+├── lib/                    # Shared utilities
+├── services/               # Audio, transcription, LLM, enhance
+├── workers/                # Background transcription worker
+├── renderer/               # UI (vanilla JS)
+├── scripts/                # Setup and screenshot utilities
+└── docs/screenshots/       # README screenshots
+```
 
 ---
 
 ## Development
 
 ```bash
-# Run in development
+# Run locally
 npm start
+
+# Regenerate README screenshots (requires xvfb on headless systems)
+xvfb-run -a npx electron scripts/capture-screenshots.js
 
 # Package (requires electron-builder configuration)
 npm run package
 ```
 
-### Key IPC channels
-
-| Channel | Description |
-|---------|-------------|
-| `audio:start-recording` / `audio:stop-recording` | Session lifecycle |
-| `audio:on-transcription-update` | Live segment push to renderer |
-| `chat:query` | Transcript-aware chat |
-| `chat:mix-enhance` | Manual Jot & Enhance |
-| `calls:save` / `calls:load` | Encrypted session persistence |
-| `folders:*` | Campfire Preserves CRUD |
-| `tasks:*` | Timeline action items |
-
-See `preload.js` for the full renderer API surface.
-
 ---
 
 ## Troubleshooting
 
-| Problem | Things to check |
-|---------|-----------------|
-| No system audio | Select the correct PulseAudio **monitor** sink in Nuts and Bolts; verify `pactl list sources` shows a `.monitor` device |
-| Transcription empty | Confirm `bin/whisper.cpp/main` exists and the selected model is in `bin/whisper.cpp/models/` |
-| LLM errors | Ensure `ollama serve` is running and the selected model is pulled |
-| ffmpeg not found | Install ffmpeg and ensure it is on `PATH` |
+| Problem | What to try |
+|---------|-------------|
+| **Mic / System shows "None"** | Open Nuts and Bolts → pick devices manually; run `pactl list sources short` |
+| **No system audio in transcript** | Select a `.monitor` source, not the raw output sink |
+| **Empty transcription** | Verify `bin/whisper.cpp/main` exists and the model is in `bin/whisper.cpp/models/` |
+| **LLM / Mix errors** | Ensure `ollama serve` is running and the model is pulled (`ollama list`) |
+| **ffmpeg not found** | Install ffmpeg and confirm it is on your `PATH` |
+| **Whisper compile fails** | Install `build-essential` (or equivalent) and re-run `./scripts/setup-whisper.sh` |
 
 ---
 
@@ -261,3 +403,7 @@ MIT — see [package.json](./package.json).
 - [whisper.cpp](https://github.com/ggerganov/whisper.cpp) — offline speech recognition
 - [Ollama](https://ollama.com) — local LLM runtime
 - [Electron](https://www.electronjs.org) — desktop shell
+
+<p align="center">
+  <img src="assets/logo.png" alt="TrailMix" width="64">
+</p>
