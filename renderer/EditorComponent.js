@@ -9,7 +9,7 @@ class EditorComponent {
   constructor(container, options = {}) {
     this.container = container;
     this.options = {
-      placeholder: 'Jot down quick thoughts, shorthand, or talking points during the meeting...',
+      placeholder: 'Jot quick thoughts during the meeting…',
       onChange: null,
       debounceMs: 400,
       ...options
@@ -100,31 +100,45 @@ class EditorComponent {
     this.surface.contentEditable = 'true';
     this.surface.innerHTML = '';
     this.surface.textContent = this.document.plainText || '';
-    this.statusEl.textContent = 'Plain jots — saved automatically';
+    this.statusEl.textContent = 'Your jots — saved as you type';
     this.updatePlaceholderVisibility();
   }
 
-  renderMixedDocument() {
-    this.surface.classList.remove('editor-mode-plain');
+  renderMixedDocument(animate = false) {
+    this.surface.classList.remove('editor-mode-plain', 'is-transitioning');
     this.surface.classList.add('editor-mode-mixed');
     this.surface.contentEditable = 'false';
     this.surface.innerHTML = '';
 
     this.document.spans.forEach((span) => {
       const spanEl = document.createElement('span');
-      spanEl.className = span.origin === 'user'
-        ? 'editor-span editor-span-user'
-        : 'editor-span editor-span-ai';
+      const isAi = span.origin !== 'user';
+      spanEl.className = isAi
+        ? 'editor-span editor-span-ai'
+        : 'editor-span editor-span-user';
+      if (animate && isAi) {
+        spanEl.classList.add('is-new');
+      }
       spanEl.dataset.origin = span.origin;
       spanEl.dataset.spanId = span.id;
       spanEl.textContent = span.text;
       this.surface.appendChild(spanEl);
     });
 
+    if (animate) {
+      this.surface.classList.add('is-transitioning');
+      window.setTimeout(() => {
+        this.surface.classList.remove('is-transitioning');
+        this.surface.querySelectorAll('.editor-span-ai.is-new').forEach((node) => {
+          node.classList.remove('is-new');
+        });
+      }, 400);
+    }
+
     const enhancedAt = this.document.enhancedAt
       ? new Date(this.document.enhancedAt).toLocaleString()
-      : 'recently';
-    this.statusEl.textContent = `Enhanced notes — your jots in bold, AI context in gray (${enhancedAt})`;
+      : 'just now';
+    this.statusEl.textContent = `The Mix is complete · your jots in bold, AI context in gray (${enhancedAt})`;
     this.placeholderEl.classList.add('hidden');
   }
 
@@ -154,14 +168,18 @@ class EditorComponent {
   setEnhancing(isEnhancing) {
     this.surface.classList.toggle('is-enhancing', isEnhancing);
     if (isEnhancing) {
-      this.statusEl.textContent = 'Enhancing notes against full transcript...';
-    } else {
-      this.renderDocument();
+      this.statusEl.textContent = 'Running The Mix — local AI is blending your jots with the transcript…';
+    } else if (this.document?.mode !== 'mixed') {
+      this.statusEl.textContent = 'Your jots — saved as you type';
     }
   }
 
   applyEnhancedDocument(document) {
     this.document = document;
+    if (this.document.mode === 'mixed' && this.document.spans?.length) {
+      this.renderMixedDocument(true);
+      return;
+    }
     this.renderDocument();
   }
 

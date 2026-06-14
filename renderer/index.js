@@ -186,6 +186,42 @@ if (isMiniMode) {
       llmStreamWaiters.set(requestId, { onUpdate, resolve, reject });
     });
   }
+
+  function initThemeToggle() {
+    const btnDark = document.getElementById('btn-theme-dark');
+    const btnLight = document.getElementById('btn-theme-light');
+    if (!btnDark || !btnLight) return;
+
+    function applyTheme(theme) {
+      document.documentElement.setAttribute('data-theme', theme);
+      localStorage.setItem('trailmix-theme', theme);
+      btnDark.classList.toggle('active', theme === 'dark');
+      btnLight.classList.toggle('active', theme === 'light');
+    }
+
+    const savedTheme = localStorage.getItem('trailmix-theme') || 'dark';
+    applyTheme(savedTheme);
+
+    btnDark.addEventListener('click', () => applyTheme('dark'));
+    btnLight.addEventListener('click', () => applyTheme('light'));
+  }
+
+  function initTrailSidebar() {
+    const sidebar = document.getElementById('sidebar');
+    const toggle = document.getElementById('btn-trail-toggle');
+    if (!sidebar || !toggle) return;
+
+    const savedCollapsed = localStorage.getItem('trailmix-trail-collapsed') === 'true';
+    if (savedCollapsed) sidebar.classList.add('collapsed');
+
+    toggle.addEventListener('click', () => {
+      sidebar.classList.toggle('collapsed');
+      localStorage.setItem('trailmix-trail-collapsed', sidebar.classList.contains('collapsed'));
+    });
+  }
+
+  initThemeToggle();
+  initTrailSidebar();
   
   // Navigation Tabs
   const navDashboard = document.getElementById('nav-dashboard');
@@ -578,6 +614,7 @@ if (isMiniMode) {
   const editorHost = document.getElementById('editor-component-root');
   const btnMixEnhance = document.getElementById('btn-mix-enhance');
   const editorLegend = document.getElementById('editor-legend');
+  const analysisPane = document.querySelector('.analysis-pane');
 
   let jotEditor = null;
   if (editorHost && window.EditorComponent) {
@@ -601,6 +638,7 @@ if (isMiniMode) {
     summaryContent.classList.remove('hidden');
     actionContent.classList.add('hidden');
     if (mixContent) mixContent.classList.add('hidden');
+    if (analysisPane) analysisPane.classList.remove('mix-focused');
   });
 
   btnShowActions.addEventListener('click', () => {
@@ -610,6 +648,7 @@ if (isMiniMode) {
     actionContent.classList.remove('hidden');
     summaryContent.classList.add('hidden');
     if (mixContent) mixContent.classList.add('hidden');
+    if (analysisPane) analysisPane.classList.remove('mix-focused');
   });
 
   if (btnShowMix) {
@@ -618,6 +657,7 @@ if (isMiniMode) {
       btnShowSummary.classList.remove('active');
       btnShowActions.classList.remove('active');
       if (mixContent) mixContent.classList.remove('hidden');
+      if (analysisPane) analysisPane.classList.add('mix-focused');
       summaryContent.classList.add('hidden');
       actionContent.classList.add('hidden');
     });
@@ -636,7 +676,8 @@ if (isMiniMode) {
       syncSessionFromEditorDocument(activeSession, currentDocument);
 
       btnMixEnhance.disabled = true;
-      btnMixEnhance.innerHTML = '✨ Enhancing...';
+      btnMixEnhance.innerHTML = '✨ Mixing…';
+      btnMixEnhance.classList.add('is-mixing');
       jotEditor.setEnhancing(true);
 
       try {
@@ -666,7 +707,8 @@ if (isMiniMode) {
         jotEditor.setEnhancing(false);
       } finally {
         btnMixEnhance.disabled = false;
-        btnMixEnhance.innerHTML = '✨ Enhance Notes';
+        btnMixEnhance.innerHTML = '✨ Start the Mix';
+        btnMixEnhance.classList.remove('is-mixing');
       }
     });
   }
@@ -938,7 +980,7 @@ if (isMiniMode) {
           });
         }
       } else {
-        headerTitle.textContent = 'Recent Transcriptions';
+        headerTitle.textContent = 'The Trail';
       }
     }
 
