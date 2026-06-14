@@ -134,6 +134,52 @@ if (isMiniMode) {
     }
   });
 
+  function normalizeEditorDocument(session) {
+    if (!session) {
+      return { version: 1, mode: 'plain', plainText: '', spans: [], enhancedAt: null };
+    }
+
+    if (session.editorDocument) {
+      let rawDocument = session.editorDocument;
+      if (typeof rawDocument === 'string') {
+        try {
+          rawDocument = JSON.parse(rawDocument);
+        } catch (err) {
+          rawDocument = null;
+        }
+      }
+
+      if (rawDocument?.mode === 'mixed' && Array.isArray(rawDocument.spans) && rawDocument.spans.length > 0) {
+        return rawDocument;
+      }
+
+      return {
+        version: 1,
+        mode: 'plain',
+        plainText: rawDocument?.plainText || session.mixNotes || '',
+        spans: [],
+        enhancedAt: null
+      };
+    }
+
+    return {
+      version: 1,
+      mode: 'plain',
+      plainText: session.mixNotes || '',
+      spans: [],
+      enhancedAt: null
+    };
+  }
+
+  function syncSessionFromEditorDocument(session, document) {
+    session.mixNotes = document.plainText || '';
+    session.editorDocument = document;
+    if (document.mode !== 'mixed') {
+      session.enhancedNotes = '';
+    }
+    return session;
+  }
+
   function waitForLlmStream(requestId, onUpdate) {
     return new Promise((resolve, reject) => {
       llmStreamBuffers.set(requestId, '');
@@ -247,10 +293,8 @@ if (isMiniMode) {
       document.getElementById('summary-content').innerHTML = '<p class="placeholder-text">AI Highlights will be generated automatically at the end of the transcription session.</p>';
       document.getElementById('action-content').innerHTML = '<p class="placeholder-text">Action items will be extracted at the end of the transcription session.</p>';
       
-      const textareaMixJots = document.getElementById('textarea-mix-jots');
-      const mixEnhancedPreview = document.getElementById('mix-enhanced-preview');
-      if (textareaMixJots) textareaMixJots.value = '';
-      if (mixEnhancedPreview) mixEnhancedPreview.innerHTML = '<p class="placeholder-text">Your enhanced notes will display here after you click "Mix & Enhance".</p>';
+      if (jotEditor) jotEditor.resetPlain();
+      if (editorLegend) editorLegend.classList.add('hidden');
       
       lastSegmentTimeMs = null;
       window.api.startRecording().then(sessionId => {
@@ -531,9 +575,24 @@ if (isMiniMode) {
   const summaryContent = document.getElementById('summary-content');
   const actionContent = document.getElementById('action-content');
   const mixContent = document.getElementById('mix-content');
-  const textareaMixJots = document.getElementById('textarea-mix-jots');
+  const editorHost = document.getElementById('editor-component-root');
   const btnMixEnhance = document.getElementById('btn-mix-enhance');
-  const mixEnhancedPreview = document.getElementById('mix-enhanced-preview');
+  const editorLegend = document.getElementById('editor-legend');
+
+  let jotEditor = null;
+  if (editorHost && window.EditorComponent) {
+    jotEditor = new window.EditorComponent(editorHost, {
+      onChange: (document) => {
+        if (!activeSession) return;
+        syncSessionFromEditorDocument(activeSession, document);
+        window.api.saveCallSilently(activeSession);
+      }
+    });
+  }
+
+  if (editorLegend) {
+    editorLegend.classList.add('hidden');
+  }
 
   btnShowSummary.addEventListener('click', () => {
     btnShowSummary.classList.add('active');
@@ -564,65 +623,51 @@ if (isMiniMode) {
     });
   }
 
-  let mixNotesSaveTimeout = null;
-  if (textareaMixJots) {
-    textareaMixJots.addEventListener('input', () => {
-      if (!activeSession) return;
-      activeSession.mixNotes = textareaMixJots.value;
-      
-      clearTimeout(mixNotesSaveTimeout);
-      mixNotesSaveTimeout = setTimeout(() => {
-        window.api.saveCallSilently(activeSession);
-      }, 500);
-    });
-  }
-
   if (btnMixEnhance) {
-    btnMixEnhance.addEventListener('click', () => {
-      if (!activeSession) return;
-      const transcriptText = activeSession.transcript 
-        ? activeSession.transcript.map(t => `[${t.timestamp}] ${t.speaker}: ${t.text}`).join('\n') 
-        : '';
-      const jots = textareaMixJots ? textareaMixJots.value.trim() : '';
-      if (!jots) {
-        alert("Please enter some rough jots first!");
+    btnMixEnhance.addEventListener('click', async () => {
+      if (!activeSession || !jotEditor) return;
+
+      const currentDocument = jotEditor.getDocument();
+      if (!currentDocument.plainText.trim()) {
+        alert('Please enter some jots first!');
         return;
       }
-      
+
+      syncSessionFromEditorDocument(activeSession, currentDocument);
+
       btnMixEnhance.disabled = true;
       btnMixEnhance.innerHTML = '✨ Enhancing...';
-      if (mixEnhancedPreview) {
-        mixEnhancedPreview.innerHTML = '<p class="placeholder-text">AI is enhancing your notes using meeting context...</p>';
-      }
-      
-      window.api.mixEnhance(jots, transcriptText).then((result) => {
-        if (!result || !result.requestId) {
-          throw new Error(result?.error || 'Failed to start Mix & Enhance.');
+      jotEditor.setEnhancing(true);
+
+      try {
+        const result = await window.api.mixEnhance({
+          plainText: currentDocument.plainText,
+          editorDocument: currentDocument,
+          transcript: activeSession.transcript || []
+        });
+
+        if (!result?.success) {
+          throw new Error(result?.error || 'Failed to enhance notes.');
         }
 
-        return waitForLlmStream(result.requestId, (partialText) => {
-          if (mixEnhancedPreview) {
-            mixEnhancedPreview.innerHTML = formatAISummary(partialText || '');
-          }
-        });
-      }).then((response) => {
-        activeSession.enhancedNotes = response;
-        if (mixEnhancedPreview) {
-          mixEnhancedPreview.innerHTML = formatAISummary(response);
+        activeSession.editorDocument = result.editorDocument;
+        activeSession.enhancedNotes = result.enhancedNotes;
+        activeSession.mixNotes = result.editorDocument.plainText || currentDocument.plainText;
+        jotEditor.applyEnhancedDocument(result.editorDocument);
+
+        if (editorLegend) {
+          editorLegend.classList.remove('hidden');
         }
 
-        window.api.saveCall(activeSession).then(() => {
-          console.log("Enhanced notes saved successfully");
-        });
-      }).catch(err => {
+        await window.api.saveCall(activeSession);
+      } catch (err) {
         console.error(err);
-        if (mixEnhancedPreview) {
-          mixEnhancedPreview.innerHTML = `<p class="placeholder-text" style="color: var(--text-critical);">Error enhancing notes: ${err.message || err}</p>`;
-        }
-      }).finally(() => {
+        alert(err.message || 'Failed to enhance notes.');
+        jotEditor.setEnhancing(false);
+      } finally {
         btnMixEnhance.disabled = false;
-        btnMixEnhance.innerHTML = '✨ Mix & Enhance';
-      });
+        btnMixEnhance.innerHTML = '✨ Enhance Notes';
+      }
     });
   }
 
@@ -1460,17 +1505,11 @@ if (isMiniMode) {
       actionContent.innerHTML = '<p class="placeholder-text">No action items extracted.</p>';
     }
 
-    // Render Mix Notes
-    const textareaMixJots = document.getElementById('textarea-mix-jots');
-    const mixEnhancedPreview = document.getElementById('mix-enhanced-preview');
-    if (textareaMixJots) {
-      textareaMixJots.value = activeSession.mixNotes || '';
-    }
-    if (mixEnhancedPreview) {
-      if (activeSession.enhancedNotes) {
-        mixEnhancedPreview.innerHTML = formatAISummary(activeSession.enhancedNotes);
-      } else {
-        mixEnhancedPreview.innerHTML = '<p class="placeholder-text">Your enhanced notes will display here after you click "Mix & Enhance".</p>';
+    if (jotEditor) {
+      const editorDocument = normalizeEditorDocument(activeSession);
+      jotEditor.loadDocument(editorDocument);
+      if (editorLegend) {
+        editorLegend.classList.toggle('hidden', editorDocument.mode !== 'mixed');
       }
     }
   }

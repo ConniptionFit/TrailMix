@@ -307,22 +307,19 @@
                 <p class="placeholder-text">Action items will be extracted at the end of the transcription session.</p>
               </div>
               <div id="mix-content" class="analysis-text hidden" style="display: flex; flex-direction: column; gap: 12px; height: 100%;">
-                <div class="mix-editor-container" style="display: flex; flex-direction: column; gap: 6px; flex-grow: 1; min-height: 140px;">
-                  <label for="textarea-mix-jots" style="font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Your Rough Jots</label>
-                  <textarea id="textarea-mix-jots" class="input-chat" style="flex-grow: 1; resize: none; font-family: inherit; font-size: 12px; line-height: 1.5; padding: 10px;" placeholder="Jot down quick thoughts, shorthand, or talking points during the meeting..."></textarea>
+                <div class="mix-editor-container" style="display: flex; flex-direction: column; gap: 6px; flex-grow: 1; min-height: 280px;">
+                  <label for="editor-component-root" style="font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Jot & Enhance Notes</label>
+                  <div id="editor-component-root" class="editor-component-host"></div>
                 </div>
-                
-                <div style="display: flex; justify-content: flex-end; gap: 8px; align-items: center; margin-top: 4px;">
+
+                <div style="display: flex; justify-content: space-between; gap: 8px; align-items: center; margin-top: 4px;">
+                  <p id="editor-legend" class="editor-legend">
+                    <span class="legend-user">Bold</span> = your jots ·
+                    <span class="legend-ai">Gray</span> = AI context from transcript
+                  </p>
                   <button id="btn-mix-enhance" class="btn-primary" style="font-size: 12px; padding: 8px 14px; font-weight: 600; display: flex; align-items: center; gap: 6px;">
-                    ✨ Mix & Enhance
+                    ✨ Enhance Notes
                   </button>
-                </div>
-                
-                <div class="mix-enhanced-container" style="display: flex; flex-direction: column; gap: 6px; flex-grow: 1; min-height: 140px; border-top: 1px solid rgba(255, 255, 255, 0.05); padding-top: 12px;">
-                  <label style="font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Enhanced Notes Preview</label>
-                  <div id="mix-enhanced-preview" class="analysis-text" style="flex-grow: 1; overflow-y: auto; padding: 10px; background: rgba(0, 0, 0, 0.15); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 6px; min-height: 120px;">
-                    <p class="placeholder-text">Your enhanced notes will display here after you click "Mix & Enhance".</p>
-                  </div>
                 </div>
               </div>
             </div>
@@ -676,6 +673,7 @@
   <!-- Global Tooltip Element -->
   <div id="global-tooltip" class="global-tooltip-el hidden"></div>
 
+  <script src="EditorComponent.js"></script>
   <script src="index.js"></script>
 </body>
 </html>

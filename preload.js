@@ -81,7 +81,7 @@ contextBridge.exposeInMainWorld('api', {
   // Chat Agent
   chatQuery: (query, transcriptText) => ipcRenderer.invoke('chat:query', query, transcriptText),
   saveCallSilently: (callData) => ipcRenderer.invoke('calls:save-silently', callData),
-  mixEnhance: (jots, transcriptText) => ipcRenderer.invoke('chat:mix-enhance', jots, transcriptText),
+  mixEnhance: (payload) => ipcRenderer.invoke('chat:mix-enhance', payload),
   onLlmStreamChunk: (callback) => {
     const subscription = (event, data) => callback(data);
     ipcRenderer.on('llm:stream-chunk', subscription);

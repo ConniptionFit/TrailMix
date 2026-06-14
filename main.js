@@ -18,6 +18,8 @@ const { secureShredFile } = require('./lib/secure-shred');
 const { AudioCaptureService } = require('./services/AudioCaptureService');
 const { TranscriptionService } = require('./services/TranscriptionService');
 const { LLMInferenceService } = require('./services/LLMInferenceService');
+const { EnhanceNotesService } = require('./services/EnhanceNotesService');
+const { documentFromSession } = require('./lib/editor-document');
 const sqlite3 = require('sqlite3').verbose();
 
 // XDG Compliant Database Path
@@ -66,6 +68,7 @@ const WHISPER_DIR = path.join(PROJECT_DIR, 'bin', 'whisper.cpp');
 const audioCaptureService = new AudioCaptureService({ tempDir: TEMP_DIR });
 const transcriptionService = new TranscriptionService();
 const llmService = new LLMInferenceService();
+const enhanceNotesService = new EnhanceNotesService(llmService);
 
 function handleTranscriptionSegments({ chunkIndex, segments }) {
   if (!activeSession) return;
@@ -886,8 +889,9 @@ async function pauseRecordingHandler() {
   await audioCaptureService.stopFfmpeg();
 
   setTimeout(async () => {
+    const chunkCount = await audioCaptureService.countChunkCandidates();
     await audioCaptureService.flushRemainingChunks();
-    sessionChunkOffset += await audioCaptureService.countChunkCandidates();
+    sessionChunkOffset += chunkCount;
   }, 1000);
 }
 
@@ -1010,6 +1014,30 @@ Do not include any reasoning, markdown formatting, or conversational text. Outpu
     });
 }
 
+async function runEnhanceNotesForSession(session) {
+  if (!session) return null;
+
+  const editorDocument = documentFromSession(session);
+  if (!editorDocument.plainText.trim()) {
+    return null;
+  }
+
+  const fullTranscript = enhanceNotesService.buildFullTranscript(session.transcript);
+  const systemPrompt = settings.notePromptTemplate || DEFAULT_PROMPTS.executive;
+
+  try {
+    return await enhanceNotesService.enhanceDocument({
+      editorDocument,
+      fullTranscript,
+      model: settings.selectedLlm,
+      systemPrompt
+    });
+  } catch (err) {
+    console.error('Enhance notes failed:', err);
+    return null;
+  }
+}
+
 async function finalizeAndSaveSession() {
   if (!activeSession) return;
   
@@ -1018,6 +1046,8 @@ async function finalizeAndSaveSession() {
   
   // Run final speaker diarization
   await diarizeSpeakersPromise();
+
+  const enhancePromise = runEnhanceNotesForSession(activeSession);
   
   const textContent = activeSession.transcript.map(t => `[${t.timestamp}] ${t.speaker}: ${t.text}`).join('\n');
   
@@ -1026,7 +1056,13 @@ async function finalizeAndSaveSession() {
       activeSession.summary = summary;
       activeSession.actionItems = actionItems;
       
-      triggerOllamaContextRename(textContent, (title, description, tags) => {
+      triggerOllamaContextRename(textContent, async (title, description, tags) => {
+        const enhanceResult = await enhancePromise;
+        if (enhanceResult) {
+          activeSession.editorDocument = enhanceResult.editorDocument;
+          activeSession.enhancedNotes = enhanceResult.enhancedNotes;
+        }
+
         const oldId = activeSession.id;
         const callsDir = getCallsDir();
         const oldFilePath = path.join(callsDir, `${oldId}.trail`);
@@ -1068,6 +1104,12 @@ async function finalizeAndSaveSession() {
       });
     });
   } else {
+    const enhanceResult = await enhancePromise;
+    if (enhanceResult) {
+      activeSession.editorDocument = enhanceResult.editorDocument;
+      activeSession.enhancedNotes = enhanceResult.enhancedNotes;
+    }
+
     saveSessionToFile(activeSession);
     if (mainWindow) {
       mainWindow.webContents.send('calls:session-summary-ready', activeSession);
@@ -1418,28 +1460,30 @@ ${query}`;
   }
 });
 
-ipcMain.handle('chat:mix-enhance', async (event, jots, transcriptText) => {
+ipcMain.handle('chat:mix-enhance', async (event, payload) => {
   try {
-    const model = settings.selectedLlm;
-    const systemPrompt = settings.notePromptTemplate || DEFAULT_PROMPTS.executive;
-
-    const userPrompt = `User's Rough Jots:
-${jots || 'No jots provided.'}
-
-Raw Transcript:
-${transcriptText || 'No transcript text available.'}
-
-Enhanced Notes:`;
-
-    const requestId = `mix_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    void llmService.streamToWindow(mainWindow, requestId, userPrompt, model, systemPrompt).catch((err) => {
-      console.error('Mix & Enhance stream error', err);
+    const transcript = Array.isArray(payload?.transcript) ? payload.transcript : [];
+    const editorDocument = documentFromSession({
+      mixNotes: payload?.plainText || payload?.jots || '',
+      editorDocument: payload?.editorDocument || null
     });
-    return { requestId };
+
+    const result = await enhanceNotesService.enhanceDocument({
+      editorDocument,
+      fullTranscript: enhanceNotesService.buildFullTranscript(transcript),
+      model: settings.selectedLlm,
+      systemPrompt: settings.notePromptTemplate || DEFAULT_PROMPTS.executive
+    });
+
+    if (!result) {
+      return { success: false, error: 'Add some jots before enhancing notes.' };
+    }
+
+    return { success: true, ...result };
   } catch (err) {
     console.error("Mix & Enhance error", err);
     return {
-      requestId: null,
+      success: false,
       error: "Failed to run Mix & Enhance. Please ensure Ollama is running and the model is loaded."
     };
   }
@@ -1871,7 +1915,7 @@ ipcMain.handle('calls:export-obsidian', async (event, folderId, exportDir) => {
           mdContent += `Tags: ${session.tags.map(t => `#${t}`).join(' ')}\n`;
         }
         mdContent += `\n---\n\n`;
-        mdContent += `## Jots (Manual Notes)\n${session.mixNotes || 'No manual jots.'}\n\n`;
+        mdContent += `## Jots (Manual Notes)\n${session.mixNotes || session.editorDocument?.plainText || 'No manual jots.'}\n\n`;
         mdContent += `## Blended Notes (AI Enhanced)\n${session.enhancedNotes || 'No enhanced notes.'}\n\n`;
         mdContent += `## Highlights Summary\n${session.summary || 'No summary.'}\n\n`;
         mdContent += `## Action Items\n${session.actionItems || 'No action items.'}\n`;
