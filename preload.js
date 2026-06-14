@@ -83,7 +83,7 @@ contextBridge.exposeInMainWorld('api', {
   saveCallSilently: (callData) => ipcRenderer.invoke('calls:save-silently', callData),
   mixEnhance: (jots, transcriptText) => ipcRenderer.invoke('chat:mix-enhance', jots, transcriptText),
 
-  // Folders & Obsidian Export (v0.2)
+  // Folders & Obsidian Export (v0.3)
   getFolders: () => ipcRenderer.invoke('folders:get'),
   createFolder: (name) => ipcRenderer.invoke('folders:create', name),
   deleteFolder: (id) => ipcRenderer.invoke('folders:delete', id),

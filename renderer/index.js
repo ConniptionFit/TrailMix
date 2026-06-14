@@ -44,8 +44,60 @@ if (isMiniMode) {
   mainApp.classList.remove('hidden');
   miniWidget.classList.add('hidden');
   globalTooltip = document.getElementById('global-tooltip');
-  
-  miniWidget.classList.add('hidden');
+
+  function formatTimerSeconds(totalSeconds) {
+    const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
+    const seconds = (totalSeconds % 60).toString().padStart(2, '0');
+    return `${minutes}:${seconds}`;
+  }
+
+  function formatGapDuration(timeDiffMs) {
+    const minutes = Math.floor(timeDiffMs / 60000);
+    const seconds = Math.floor((timeDiffMs % 60000) / 1000);
+    let text = '';
+    if (minutes > 0) text += `${minutes}m `;
+    text += `${seconds}s`;
+    return text;
+  }
+
+  function getSegmentTimestampMs(segment) {
+    return segment.wallTimeMs || segment.timestampMs;
+  }
+
+  function applySpeakerLabelMapping(transcript, mapping) {
+    let updatedAny = false;
+
+    transcript.forEach((segment, index) => {
+      let label = mapping[segment.id];
+      if (!label) {
+        label = mapping[(index + 1).toString()] || mapping[index + 1];
+      }
+
+      if (!label) return;
+
+      if (label !== 'You' && segment.speaker.toLowerCase() === 'you') {
+        return;
+      }
+
+      if (segment.speaker !== label) {
+        segment.speaker = label;
+        updatedAny = true;
+      }
+    });
+
+    return updatedAny;
+  }
+
+  function getDisplaySpeakerName(speakerName) {
+    const normalizedSpeaker = speakerName.toLowerCase();
+    if (normalizedSpeaker === 'you' || normalizedSpeaker === 'me') {
+      return 'Me';
+    }
+    if (normalizedSpeaker === 'speaker 1') {
+      return 'Them';
+    }
+    return speakerName;
+  }
   
   // Navigation Tabs
   const navDashboard = document.getElementById('nav-dashboard');
@@ -218,9 +270,7 @@ if (isMiniMode) {
       clearInterval(recordingInterval);
       recordingInterval = setInterval(() => {
         recordingSeconds++;
-        const m = Math.floor(recordingSeconds / 60).toString().padStart(2, '0');
-        const s = (recordingSeconds % 60).toString().padStart(2, '0');
-        recTimer.textContent = `${m}:${s}`;
+        recTimer.textContent = formatTimerSeconds(recordingSeconds);
       }, 1000);
       
       if (!activeSession || activeSession.id === 'live') {
@@ -289,16 +339,11 @@ if (isMiniMode) {
     if (emptyState) emptyState.remove();
     
     // Render visual gap divider if a large silence/break occurred (> 30 seconds)
-    const currentSegmentTime = segment.wallTimeMs || segment.timestampMs;
+    const currentSegmentTime = getSegmentTimestampMs(segment);
     if (lastSegmentTimeMs !== null) {
       const timeDiff = currentSegmentTime - lastSegmentTimeMs;
       if (timeDiff > 30000) {
-        const m = Math.floor(timeDiff / 60000);
-        const s = Math.floor((timeDiff % 60000) / 1000);
-        let gapText = '';
-        if (m > 0) gapText += `${m}m `;
-        gapText += `${s}s`;
-        appendBreakDivider(gapText);
+        appendBreakDivider(formatGapDuration(timeDiff));
       }
     }
     
@@ -317,57 +362,13 @@ if (isMiniMode) {
   // Speaker Label Updates Listener
   window.api.onSpeakerLabelsUpdated((mapping) => {
     console.log('Received speaker labels mapping update:', mapping);
-    if (!activeSession || !activeSession.transcript) return;
-    
-    let updatedAny = false;
-    activeSession.transcript.forEach((seg, index) => {
-      // mapping could have segment IDs or turn indices (1-based string or integer)
-      let label = mapping[seg.id];
-      if (!label) {
-        label = mapping[(index + 1).toString()] || mapping[index + 1];
-      }
-      
-      if (label) {
-        if (label !== 'You' && seg.speaker.toLowerCase() === 'you') {
-          // ignore mapping if it tries to overwrite You
-        } else if (seg.speaker !== label) {
-          seg.speaker = label;
-          updatedAny = true;
-        }
-      }
-    });
-    
-    if (updatedAny) {
-      console.log('Speakers updated. Re-rendering transcript pane to split/merge bubbles...');
-      const currentScrollTop = transcriptContainer.scrollTop;
-      const wasAtBottom = (transcriptContainer.scrollHeight - transcriptContainer.scrollTop - transcriptContainer.clientHeight) < 50;
-      
-      transcriptContainer.innerHTML = '';
-      let lastTime = null;
-      activeSession.transcript.forEach((seg) => {
-        const segTime = seg.wallTimeMs || seg.timestampMs;
-        if (lastTime !== null) {
-          const timeDiff = segTime - lastTime;
-          if (timeDiff > 30000) {
-            const m = Math.floor(timeDiff / 60000);
-            const s = Math.floor((timeDiff % 60000) / 1000);
-            let gapText = '';
-            if (m > 0) gapText += `${m}m `;
-            gapText += `${s}s`;
-            appendBreakDivider(gapText);
-          }
-        }
-        appendTranscriptLine(seg);
-        lastTime = segTime;
-      });
-      lastSegmentTimeMs = lastTime;
-      
-      if (wasAtBottom) {
-        transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
-      } else {
-        transcriptContainer.scrollTop = currentScrollTop;
-      }
-    }
+    if (!activeSession?.transcript) return;
+
+    const updatedAny = applySpeakerLabelMapping(activeSession.transcript, mapping);
+    if (!updatedAny) return;
+
+    console.log('Speakers updated. Re-rendering transcript pane to split/merge bubbles...');
+    lastSegmentTimeMs = renderTranscriptWithBreaks(activeSession.transcript, { preserveScroll: true });
   });
 
   const speakerColors = {};
@@ -404,7 +405,7 @@ if (isMiniMode) {
     let merged = false;
     
     const isMe = segment.speaker.toLowerCase() === 'you' || segment.speaker.toLowerCase() === 'me';
-    const displaySpeakerName = isMe ? 'Me' : (segment.speaker.toLowerCase() === 'speaker 1' ? 'Them' : segment.speaker);
+    const displaySpeakerName = getDisplaySpeakerName(segment.speaker);
     
     if (lastLineDiv && lastLineDiv.classList.contains('transcript-line')) {
       const speakerSpan = lastLineDiv.querySelector('.line-speaker');
@@ -448,6 +449,37 @@ if (isMiniMode) {
     if (!isUserScrolledUp) {
       transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
     }
+  }
+
+  function renderTranscriptWithBreaks(transcript, options = {}) {
+    const { preserveScroll = false } = options;
+    const currentScrollTop = transcriptContainer.scrollTop;
+    const wasAtBottom = (transcriptContainer.scrollHeight - transcriptContainer.scrollTop - transcriptContainer.clientHeight) < 50;
+
+    transcriptContainer.innerHTML = '';
+    let lastTime = null;
+
+    transcript.forEach((segment) => {
+      const segmentTime = getSegmentTimestampMs(segment);
+      if (lastTime !== null) {
+        const timeDiff = segmentTime - lastTime;
+        if (timeDiff > 30000) {
+          appendBreakDivider(formatGapDuration(timeDiff));
+        }
+      }
+      appendTranscriptLine(segment);
+      lastTime = segmentTime;
+    });
+
+    if (preserveScroll) {
+      transcriptContainer.scrollTop = wasAtBottom
+        ? transcriptContainer.scrollHeight
+        : currentScrollTop;
+    } else if (!isUserScrolledUp) {
+      transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
+    }
+
+    return lastTime;
   }
 
   // Summary Tab Toggle
@@ -1344,24 +1376,7 @@ if (isMiniMode) {
     // Load transcript
     transcriptContainer.innerHTML = '';
     if (session.transcript && session.transcript.length > 0) {
-      let lastTime = null;
-      session.transcript.forEach((seg) => {
-        const segTime = seg.wallTimeMs || seg.timestampMs;
-        if (lastTime !== null) {
-          const timeDiff = segTime - lastTime;
-          if (timeDiff > 30000) {
-            const m = Math.floor(timeDiff / 60000);
-            const s = Math.floor((timeDiff % 60000) / 1000);
-            let gapText = '';
-            if (m > 0) gapText += `${m}m `;
-            gapText += `${s}s`;
-            appendBreakDivider(gapText);
-          }
-        }
-        appendTranscriptLine(seg);
-        lastTime = segTime;
-      });
-      lastSegmentTimeMs = lastTime;
+      lastSegmentTimeMs = renderTranscriptWithBreaks(session.transcript);
     } else {
       transcriptContainer.innerHTML = `
         <div class="transcript-empty-state">

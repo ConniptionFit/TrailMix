@@ -4,6 +4,15 @@ const fs = require('fs');
 const os = require('os');
 const { exec, execSync, spawn } = require('child_process');
 const encryption = require('./encryption');
+const { parseLlmJsonResponse, applyPromptTemplate } = require('./lib/llm-utils');
+const {
+  getSpeakerDiarizationSystemPrompt,
+  buildDiarizationTurns,
+  buildDiarizationPrompt,
+  applySpeakerLabelMapping,
+  notifySpeakerLabelsUpdated
+} = require('./lib/speaker-diarization');
+const { formatTaskRow } = require('./lib/task-db');
 const sqlite3 = require('sqlite3').verbose();
 
 // XDG Compliant Database Path
@@ -218,11 +227,7 @@ let settings = {
   selectedNoteStyle: 'executive',
   notePromptTemplate: DEFAULT_PROMPTS.executive,
   summaryPromptTemplate: DEFAULT_PROMPTS.summary,
-  actionPromptTemplate: DEFAULT_PROMPTS.actionItems,
-  customAgents: [
-    { name: 'Summary Agent', prompt: 'Summarize the meeting highlights and key decisions.' },
-    { name: 'Action Items Agent', prompt: 'Extract and list actionable next steps with owners.' }
-  ]
+  actionPromptTemplate: DEFAULT_PROMPTS.actionItems
 };
 
 // Load settings
@@ -727,63 +732,6 @@ function queryAudioDevices() {
     microphones, 
     outputs 
   };
-}
-
-// ----------------------------------------------------
-// Stereo Channel Energy Diarization
-// ----------------------------------------------------
-
-/**
- * Calculates Left and Right channel energy for a specified timestamp segment.
- * @param {string} wavPath Path to the 16kHz stereo WAV file
- * @param {number} startMs Segment start time in ms
- * @param {number} endMs Segment end time in ms
- * @returns {{rmsL: number, rmsR: number}} Left and Right RMS values
- */
-function calculateChannelEnergy(wavPath, startMs, endMs) {
-  try {
-    const fd = fs.openSync(wavPath, 'r');
-    const stats = fs.fstatSync(fd);
-    
-    // 16kHz stereo 16-bit PCM: 4 bytes per sample (2 channels * 2 bytes)
-    // 1 second of audio = 16000 * 4 = 64000 bytes
-    const bytesPerSecond = 64000;
-    const headerOffset = 44; // Standard WAV PCM header size
-    
-    const startByte = headerOffset + Math.floor((startMs / 1000) * bytesPerSecond);
-    const endByte = Math.min(stats.size, headerOffset + Math.floor((endMs / 1000) * bytesPerSecond));
-    
-    const length = endByte - startByte;
-    if (length <= 0) return { rmsL: 0, rmsR: 0 };
-    
-    const buffer = Buffer.alloc(length);
-    fs.readSync(fd, buffer, 0, length, startByte);
-    fs.closeSync(fd);
-    
-    let sumL = 0;
-    let sumR = 0;
-    let count = 0;
-    
-    for (let i = 0; i < buffer.length; i += 4) {
-      if (i + 3 < buffer.length) {
-        const valL = buffer.readInt16LE(i);
-        const valR = buffer.readInt16LE(i + 2);
-        sumL += valL * valL;
-        sumR += valR * valR;
-        count++;
-      }
-    }
-    
-    if (count === 0) return { rmsL: 0, rmsR: 0 };
-    
-    return {
-      rmsL: Math.sqrt(sumL / count),
-      rmsR: Math.sqrt(sumR / count)
-    };
-  } catch (error) {
-    console.error('Error analyzing channel energy', error);
-    return { rmsL: 0, rmsR: 0 };
-  }
 }
 
 // ----------------------------------------------------
@@ -1328,120 +1276,29 @@ async function resumeCallTranscriptionHandler(sessionId) {
   }
 }
 
-function runSpeakerDiarizationLLM() {
-  if (!activeSession || !activeSession.transcript || activeSession.transcript.length === 0) return;
-  
-  const model = settings.selectedLlm;
-  const systemPrompt = `You are a local speaker attribution assistant. Your job is to analyze the conversation turns of a transcript and differentiate/label the speakers.
-The user is "You" (their name is "${settings.userName || 'You'}"). Always leave the speaker "You" as "You" (do not change it).
-Other turns are currently labeled as "Speaker 1". All inbound speakers are mixed on the inbound audio channel. Differentiate them based on conversational context, flow, and text.
-Assign them identifiers like "Speaker 1", "Speaker 2" if you cannot deduce their names. Limit the number of unique inbound speakers identified to a maximum of 5.
-If you can deduce their actual name or role (e.g. "Sarah", "Netflix Support Agent", "BestBuy Support") from what they say in the transcript, use that descriptive name/label instead.
-Output your results ONLY as a valid JSON object mapping turnIndex strings (e.g. "1", "2") to their corrected speaker labels. Do not include any reasoning, markdown formatting (like \`\`\`json), or conversational text. Output ONLY the raw JSON object.`;
+async function runSpeakerDiarizationLLM() {
+  if (!activeSession?.transcript?.length) return;
 
-  const turns = activeSession.transcript.map((t, index) => {
-    return { turnIndex: index + 1, speaker: t.speaker, text: t.text };
-  });
-  
-  const prompt = `Here is the current transcript segments list:\n\n${JSON.stringify(turns, null, 2)}\n\nAnalyze the segments and return the JSON map of speaker labels.`;
-  
-  console.log("Diarization LLM: Analyzing transcript for speaker names and turns...");
-  queryOllama(prompt, model, systemPrompt)
-    .then(response => {
-      try {
-        let cleanText = response.trim();
-        const firstBrace = cleanText.indexOf('{');
-        const lastBrace = cleanText.lastIndexOf('}');
-        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-          cleanText = cleanText.substring(firstBrace, lastBrace + 1);
-        } else {
-          if (cleanText.includes('```')) {
-            const match = cleanText.match(/```(?:json)?\s*([\s\S]+?)\s*```/);
-            if (match) cleanText = match[1];
-          }
-        }
-        
-        const mapping = JSON.parse(cleanText);
-        console.log("Diarization LLM: Successfully mapped speakers:", mapping);
-        
-        activeSession.transcript.forEach((seg, index) => {
-          let label = mapping[seg.id];
-          if (!label) {
-            label = mapping[(index + 1).toString()] || mapping[index + 1];
-          }
-          if (label) {
-            if (label !== 'You' && seg.speaker === 'You') {
-              // ignore mapping if it tries to overwrite You
-            } else {
-              seg.speaker = label;
-            }
-          }
-        });
-        
-        if (mainWindow) {
-          mainWindow.webContents.send('audio:on-speaker-labels-updated', mapping);
-        }
-      } catch (e) {
-        console.error("Diarization LLM: Failed to parse JSON mapping. Raw response:", response, e);
-      }
-    })
-    .catch(err => {
-      console.error("Diarization LLM: Ollama query failed", err);
-    });
+  const model = settings.selectedLlm;
+  const systemPrompt = getSpeakerDiarizationSystemPrompt(settings.userName);
+  const turns = buildDiarizationTurns(activeSession.transcript);
+  const prompt = buildDiarizationPrompt(turns);
+
+  console.log('Diarization LLM: Analyzing transcript for speaker names and turns...');
+
+  try {
+    const response = await queryOllama(prompt, model, systemPrompt);
+    const mapping = parseLlmJsonResponse(response);
+    console.log('Diarization LLM: Successfully mapped speakers:', mapping);
+    applySpeakerLabelMapping(activeSession.transcript, mapping);
+    notifySpeakerLabelsUpdated(mainWindow, mapping);
+  } catch (error) {
+    console.error('Diarization LLM failed:', error);
+  }
 }
 
 async function diarizeSpeakersPromise() {
-  if (!activeSession || !activeSession.transcript || activeSession.transcript.length === 0) return;
-  
-  const model = settings.selectedLlm;
-  const systemPrompt = `You are a local speaker attribution assistant. Your job is to analyze the conversation turns of a transcript and differentiate/label the speakers.
-The user is "You" (their name is "${settings.userName || 'You'}"). Always leave the speaker "You" as "You" (do not change it).
-Other turns are currently labeled as "Speaker 1". All inbound speakers are mixed on the inbound audio channel. Differentiate them based on conversational context, flow, and text.
-Assign them identifiers like "Speaker 1", "Speaker 2" if you cannot deduce their names. Limit the number of unique inbound speakers identified to a maximum of 5.
-If you can deduce their actual name or role (e.g. "Sarah", "Netflix Support Agent", "BestBuy Support") from what they say in the transcript, use that descriptive name/label instead.
-Output your results ONLY as a valid JSON object mapping turnIndex strings (e.g. "1", "2") to their corrected speaker labels. Do not include any reasoning, markdown formatting (like \`\`\`json), or conversational text. Output ONLY the raw JSON object.`;
-
-  const turns = activeSession.transcript.map((t, index) => {
-    return { turnIndex: index + 1, speaker: t.speaker, text: t.text };
-  });
-  
-  const prompt = `Here is the current transcript segments list:\n\n${JSON.stringify(turns, null, 2)}\n\nAnalyze the segments and return the JSON map of speaker labels.`;
-  
-  try {
-    const response = await queryOllama(prompt, model, systemPrompt);
-    let cleanText = response.trim();
-    const firstBrace = cleanText.indexOf('{');
-    const lastBrace = cleanText.lastIndexOf('}');
-    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-      cleanText = cleanText.substring(firstBrace, lastBrace + 1);
-    } else {
-      if (cleanText.includes('```')) {
-        const match = cleanText.match(/```(?:json)?\s*([\s\S]+?)\s*```/);
-        if (match) cleanText = match[1];
-      }
-    }
-    const mapping = JSON.parse(cleanText);
-    
-    activeSession.transcript.forEach((seg, index) => {
-      let label = mapping[seg.id];
-      if (!label) {
-        label = mapping[(index + 1).toString()] || mapping[index + 1];
-      }
-      if (label) {
-        if (label !== 'You' && seg.speaker === 'You') {
-          // ignore
-        } else {
-          seg.speaker = label;
-        }
-      }
-    });
-    
-    if (mainWindow) {
-      mainWindow.webContents.send('audio:on-speaker-labels-updated', mapping);
-    }
-  } catch (e) {
-    console.error("Diarization final promise failed", e);
-  }
+  await runSpeakerDiarizationLLM();
 }
 
 function triggerOllamaContextRename(transcriptText, callback) {
@@ -1454,13 +1311,7 @@ Do not include any reasoning, markdown formatting, or conversational text. Outpu
   queryOllama(prompt, model, systemPrompt)
     .then(response => {
       try {
-        let cleanText = response.trim();
-        const firstBrace = cleanText.indexOf('{');
-        const lastBrace = cleanText.lastIndexOf('}');
-        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-          cleanText = cleanText.substring(firstBrace, lastBrace + 1);
-        }
-        const meta = JSON.parse(cleanText);
+        const meta = parseLlmJsonResponse(response);
         
         let tags = meta.suggestedTags || [];
         if (!Array.isArray(tags)) tags = [];
@@ -1551,20 +1402,6 @@ async function finalizeAndSaveSession() {
 // ----------------------------------------------------
 // Timeline Tasks Manager
 // ----------------------------------------------------
-const TASKS_FILE = path.join(DATA_DIR, 'tasks.json');
-
-function getTasksList() {
-  if (!fs.existsSync(TASKS_FILE)) return [];
-  try {
-    return JSON.parse(fs.readFileSync(TASKS_FILE, 'utf8'));
-  } catch (e) {
-    return [];
-  }
-}
-
-function saveTasksList(tasks) {
-  fs.writeFileSync(TASKS_FILE, JSON.stringify(tasks, null, 2), 'utf8');
-}
 
 function parseDeadlineDate(text) {
   const lowercase = text.toLowerCase();
@@ -1725,20 +1562,14 @@ async function saveSessionToFile(session) {
 
 function triggerOllamaSummary(transcriptText, callback) {
   const model = settings.selectedLlm;
-  
-  let summaryPrompt = settings.summaryPromptTemplate || DEFAULT_PROMPTS.summary;
-  if (summaryPrompt.includes('{transcriptText}')) {
-    summaryPrompt = summaryPrompt.replace('{transcriptText}', transcriptText);
-  } else {
-    summaryPrompt = `${summaryPrompt}\n\n${transcriptText}`;
-  }
-  
-  let actionItemsPrompt = settings.actionPromptTemplate || DEFAULT_PROMPTS.actionItems;
-  if (actionItemsPrompt.includes('{transcriptText}')) {
-    actionItemsPrompt = actionItemsPrompt.replace('{transcriptText}', transcriptText);
-  } else {
-    actionItemsPrompt = `${actionItemsPrompt}\n\n${transcriptText}`;
-  }
+  const summaryPrompt = applyPromptTemplate(
+    settings.summaryPromptTemplate || DEFAULT_PROMPTS.summary,
+    transcriptText
+  );
+  const actionItemsPrompt = applyPromptTemplate(
+    settings.actionPromptTemplate || DEFAULT_PROMPTS.actionItems,
+    transcriptText
+  );
   
   // Request summary
   queryOllama(summaryPrompt, model)
@@ -2422,15 +2253,29 @@ ipcMain.handle('calls:move-to-folder', async (event, sessionId, folderId) => {
   }
 });
 
-// Tasks Management (v0.2)
+// Tasks Management (v0.3)
+async function saveTaskToDb(task) {
+  await dbRun(`INSERT INTO tasks (
+    id, text, assignee, completed, dueDate, omitted,
+    sourceCallId, sourceCallTitle, sourceSegmentId, sourceTimestamp
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+    task.id,
+    task.text,
+    task.assignee || 'Unassigned',
+    task.completed ? 1 : 0,
+    task.dueDate || '',
+    task.omitted ? 1 : 0,
+    task.sourceCallId,
+    task.sourceCallTitle || '',
+    task.sourceSegmentId || '',
+    task.sourceTimestamp || ''
+  ]);
+}
+
 async function getTasksListFromDb() {
   try {
     const rows = await dbAll("SELECT * FROM tasks");
-    return rows.map(r => ({
-      ...r,
-      completed: r.completed === 1,
-      omitted: r.omitted === 1
-    }));
+    return rows.map(formatTaskRow);
   } catch (err) {
     console.error("Error getting tasks from DB:", err);
     return [];
@@ -2443,11 +2288,10 @@ ipcMain.handle('tasks:get', async () => {
 
 ipcMain.handle('tasks:toggle', async (event, taskId) => {
   try {
-    const task = await dbGet("SELECT * FROM tasks WHERE id = ?", [taskId]);
+    const task = formatTaskRow(await dbGet("SELECT * FROM tasks WHERE id = ?", [taskId]));
     if (task) {
-      const newCompleted = task.completed === 1 ? 0 : 1;
-      await dbRun("UPDATE tasks SET completed = ? WHERE id = ?", [newCompleted, taskId]);
-      task.completed = newCompleted === 1;
+      task.completed = !task.completed;
+      await dbRun("UPDATE tasks SET completed = ? WHERE id = ?", [task.completed ? 1 : 0, taskId]);
       return { success: true, task };
     }
     return { success: false, error: 'Task not found' };
@@ -2469,10 +2313,8 @@ ipcMain.handle('tasks:set-omitted', async (event, taskId, omitted) => {
   try {
     const omittedVal = omitted ? 1 : 0;
     await dbRun("UPDATE tasks SET omitted = ? WHERE id = ?", [omittedVal, taskId]);
-    const task = await dbGet("SELECT * FROM tasks WHERE id = ?", [taskId]);
+    const task = formatTaskRow(await dbGet("SELECT * FROM tasks WHERE id = ?", [taskId]));
     if (task) {
-      task.completed = task.completed === 1;
-      task.omitted = task.omitted === 1;
       return { success: true, task };
     }
     return { success: false, error: 'Task not found' };
