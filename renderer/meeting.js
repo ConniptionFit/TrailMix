@@ -102,7 +102,6 @@
   const meetingTitleHint = document.getElementById('meeting-title-hint');
   const btnRecordToggle = document.getElementById('btn-record-toggle');
   const btnPauseToggle = document.getElementById('btn-pause-toggle');
-  const btnResumePast = document.getElementById('btn-resume-past');
   const recIndicator = document.getElementById('rec-indicator');
   const recTitle = document.getElementById('rec-title');
   const recTimer = document.getElementById('rec-timer');
@@ -112,8 +111,6 @@
   const btnMixEnhance = document.getElementById('btn-mix-enhance');
   const editorLegend = document.getElementById('editor-legend');
   const editorWaveformBars = document.getElementById('editor-waveform-bars');
-  const editorTranscriptPanel = document.getElementById('editor-transcript-panel');
-  const editorTranscriptContainer = document.getElementById('editor-transcript-container');
   const conflictModal = document.getElementById('recording-conflict-modal');
   const conflictMessage = document.getElementById('recording-conflict-message');
 
@@ -207,12 +204,9 @@
         window.api.saveCallSilently(activeSession);
       },
       onTraceTranscript: (ref) => {
-        if (!ref) return;
-        editorTranscriptPanel.classList.remove('closed');
-        if (ref.segmentId) {
-          const line = document.getElementById(`line-${ref.segmentId}`);
-          if (line) line.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
+        if (!ref?.segmentId) return;
+        const line = document.getElementById(`line-${ref.segmentId}`);
+        if (line) line.scrollIntoView({ behavior: 'smooth', block: 'center' });
       },
       onEnhanceRequest: (template) => runMixEnhance(template),
       onRegenerateRequest: (template) => runMixEnhance(template)
@@ -247,7 +241,46 @@
     if (pendingRecordingStart) startRecordingFlow();
   });
 
+  function canResumeSession() {
+    return Boolean(activeSession?.transcript?.length);
+  }
+
+  function updateIdleRecordButton() {
+    if (!btnRecordToggle) return;
+    if (canResumeSession()) {
+      btnRecordToggle.className = 'btn-record start';
+      btnRecordToggle.innerHTML = '<span class="btn-icon">⏯</span> Resume Trail';
+    } else {
+      btnRecordToggle.className = 'btn-record start';
+      btnRecordToggle.innerHTML = '<span class="btn-icon">⏺</span> Start Trail';
+    }
+  }
+
+  async function resumeRecordingFlow() {
+    const targetSessionId = activeSession?.id || sessionId;
+    const result = await window.api.resumeCallTranscription(targetSessionId);
+    if (result?.conflict) {
+      showConflictModal(result.activeSessionId);
+      return;
+    }
+    if (result?.requirePassword) {
+      alert('Unlock this Trail with your password before resuming.');
+      return;
+    }
+    if (!result?.success) {
+      alert(result?.error || 'Could not resume this Trail.');
+      return;
+    }
+    if (activeSession && result?.sessionId) {
+      activeSession.id = result.sessionId;
+    }
+  }
+
   async function startRecordingFlow() {
+    if (canResumeSession()) {
+      await resumeRecordingFlow();
+      return;
+    }
     const result = await window.api.startRecording(sessionId);
     if (result?.conflict) {
       showConflictModal(result.activeSessionId);
@@ -271,22 +304,6 @@
     else window.api.resumeRecording();
   });
 
-  btnResumePast?.addEventListener('click', async () => {
-    if (!activeSession?.id) return;
-    const result = await window.api.resumeCallTranscription(activeSession.id);
-    if (result?.conflict) {
-      showConflictModal(result.activeSessionId);
-      return;
-    }
-    if (result?.requirePassword) {
-      alert('Unlock this Trail with your password before resuming.');
-      return;
-    }
-    if (!result?.success) {
-      alert(result?.error || 'Could not resume this Trail.');
-    }
-  });
-
   if (transcriptContainer) {
     transcriptContainer.addEventListener('scroll', () => {
       const distanceFromBottom = transcriptContainer.scrollHeight - transcriptContainer.scrollTop - transcriptContainer.clientHeight;
@@ -301,18 +318,6 @@
     btnJumpLatest?.classList.add('hidden');
   });
 
-  document.getElementById('btn-close-transcript')?.addEventListener('click', () => {
-    document.getElementById('meeting-transcript-drawer')?.classList.add('closed');
-  });
-
-  document.getElementById('btn-toggle-editor-transcript')?.addEventListener('click', () => {
-    editorTranscriptPanel?.classList.toggle('closed');
-  });
-
-  document.getElementById('btn-close-editor-transcript')?.addEventListener('click', () => {
-    editorTranscriptPanel?.classList.add('closed');
-  });
-
   function getElapsedSecondsFromTranscript(transcript) {
     if (!transcript?.length) return 0;
     const lastSegment = transcript[transcript.length - 1];
@@ -320,7 +325,8 @@
   }
 
   function applyRecordingStatus(status) {
-    if (status.sessionId && status.sessionId !== sessionId && status.isRecording) return;
+    if (status.sessionId && status.sessionId !== sessionId
+      && status.sessionId !== activeSession?.id && status.isRecording) return;
 
     if (status.isRecording && !status.isPaused) {
       btnRecordToggle.className = 'btn-record stop';
@@ -328,7 +334,6 @@
       btnPauseToggle.className = 'btn-record pause';
       btnPauseToggle.innerHTML = '<span class="btn-icon">⏸</span> Pause';
       btnPauseToggle.classList.remove('hidden');
-      btnResumePast.classList.add('hidden');
       recIndicator.className = 'rec-indicator-active';
       recTitle.textContent = 'Transcribing…';
 
@@ -354,7 +359,6 @@
       btnPauseToggle.className = 'btn-record start';
       btnPauseToggle.innerHTML = '<span class="btn-icon">▶</span> Resume';
       btnPauseToggle.classList.remove('hidden');
-      btnResumePast.classList.add('hidden');
       recIndicator.className = 'rec-indicator-static';
       recTitle.textContent = 'Paused';
       clearInterval(recordingInterval);
@@ -362,10 +366,8 @@
       return;
     }
 
-    btnRecordToggle.className = 'btn-record start';
-    btnRecordToggle.innerHTML = '<span class="btn-icon">⏺</span> Start Trail';
+    updateIdleRecordButton();
     btnPauseToggle.classList.add('hidden');
-    btnResumePast.classList.toggle('hidden', !(activeSession?.transcript?.length));
     recIndicator.className = 'rec-indicator-static';
     recTitle.textContent = 'Engine Idle';
     clearInterval(recordingInterval);
@@ -384,6 +386,22 @@
     renderTranscript(activeSession.transcript);
   });
 
+  function removeTranscriptLines(segmentIds) {
+    segmentIds.forEach((segmentId) => {
+      document.getElementById(`line-${segmentId}`)?.remove();
+    });
+    if (activeSession?.transcript) {
+      const removed = new Set(segmentIds);
+      activeSession.transcript = activeSession.transcript.filter((segment) => !removed.has(segment.id));
+    }
+  }
+
+  window.api.onTranscriptionCorrection?.((payload) => {
+    if (!payload?.removedSegmentIds?.length) return;
+    if (payload.sessionId && payload.sessionId !== sessionId && payload.sessionId !== activeSession?.id) return;
+    removeTranscriptLines(payload.removedSegmentIds);
+  });
+
   window.api.onTranscriptionUpdate((segment) => {
     if (!activeSession) return;
     const currentTime = getSegmentTimestampMs(segment);
@@ -399,12 +417,25 @@
     appendTranscriptLine(segment);
   });
 
+  function isSameMeetingSession(session) {
+    if (!session) return false;
+    return session.id === sessionId
+      || session.id === activeSession?.id
+      || session.previousId === sessionId;
+  }
+
   window.api.onSessionUpdated((session) => {
-    if (!session || session.id !== sessionId) return;
+    if (!isSameMeetingSession(session)) return;
     activeSession = session;
+    if (session.id && session.id !== sessionId) {
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.set('sessionId', session.id);
+      window.history.replaceState({}, '', nextUrl.toString());
+    }
     updateTitleUi();
     if (session.transcript) renderTranscript(session.transcript);
     if (jotEditor) jotEditor.loadDocument(normalizeEditorDocument(session));
+    updateIdleRecordButton();
   });
 
   window.api.onAudioLevels?.((levels) => {
@@ -540,6 +571,7 @@
     updateTitleUi();
     renderTranscript(session.transcript || []);
     if (jotEditor) jotEditor.loadDocument(normalizeEditorDocument(session));
+    updateIdleRecordButton();
     window.api.getRecordingStatus().then((status) => {
       if (status?.sessionId === sessionId && (status.isRecording || status.isPaused)) {
         applyRecordingStatus({

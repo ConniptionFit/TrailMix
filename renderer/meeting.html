@@ -37,9 +37,6 @@
         <button id="btn-pause-toggle" class="btn-record pause hidden" type="button">
           <span class="btn-icon">⏸</span> Pause
         </button>
-        <button id="btn-resume-past" class="btn-record resume hidden" type="button">
-          <span class="btn-icon">⏯</span> Resume
-        </button>
       </div>
     </div>
 
@@ -58,7 +55,6 @@
         </div>
         <footer class="mix-stage-footer">
           <div class="mix-stage-footer-left">
-            <button id="btn-toggle-editor-transcript" type="button" class="btn-icon-subtle" title="Toggle transcript trace">〰️</button>
             <p id="editor-legend" class="editor-legend hidden">
               <span class="legend-user">Dark</span> = your Mix-Ins ·
               <span class="legend-ai">Gray</span> = AI trail context
@@ -86,30 +82,22 @@
           <div class="chat-title">
             <span class="chat-icon">💬</span>
             <div>
-              <h4>Trail Guide</h4>
-              <span>Ask about this meeting</span>
+              <h4>Mix-Master</h4>
+              <span>Your meeting AI</span>
             </div>
           </div>
         </div>
         <div class="chat-body">
           <div id="chat-recipes" class="chat-recipes"></div>
           <div id="chat-messages" class="chat-messages">
-            <div class="msg system">Ask about this meeting. I'll use the current transcript first, and can reference past sessions when you ask.</div>
+            <div class="msg system">Ask Mix-Master about this meeting. I'll use the live transcript first, and can reference past sessions when you ask.</div>
           </div>
         </div>
         <div class="chat-footer">
-          <input type="text" id="input-chat-query" class="input-chat" placeholder="Ask anything about this meeting…">
+          <input type="text" id="input-chat-query" class="input-chat" placeholder="Ask Mix-Master anything about this meeting…">
           <button id="btn-chat-send" class="btn-chat-send" type="button">Send</button>
         </div>
       </div>
-    </div>
-
-    <div id="editor-transcript-panel" class="editor-transcript-panel closed">
-      <div class="editor-transcript-panel-header">
-        <span>Live transcript trace</span>
-        <button id="btn-close-editor-transcript" type="button" class="icon-btn-toggle">✕</button>
-      </div>
-      <div id="editor-transcript-container" class="editor-transcript-container"></div>
     </div>
   </div>
 

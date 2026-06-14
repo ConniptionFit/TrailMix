@@ -97,6 +97,20 @@ class WindowManager {
     return [...this.meetingWindows.keys()];
   }
 
+  rekeyMeetingWindow(oldSessionId, newSessionId) {
+    if (!oldSessionId || !newSessionId || oldSessionId === newSessionId) return null;
+    const existing = this.getMeetingWindow(oldSessionId);
+    if (!existing) return null;
+    this.meetingWindows.delete(oldSessionId);
+    this.meetingWindows.set(newSessionId, existing);
+    const mini = this.miniWindows.get(oldSessionId);
+    if (mini) {
+      this.miniWindows.delete(oldSessionId);
+      this.miniWindows.set(newSessionId, mini);
+    }
+    return existing;
+  }
+
   broadcastToMeeting(sessionId, channel, payload) {
     const win = this.getMeetingWindow(sessionId);
     if (win) win.webContents.send(channel, payload);

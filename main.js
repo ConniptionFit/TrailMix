@@ -31,8 +31,10 @@ const { enableOsEchoCancellation, disableOsEchoCancellation } = require('./lib/a
 const {
   getSession,
   setSession,
+  deleteSession,
   createNewSession,
-  applyAutoTitle
+  applyAutoTitle,
+  sessionRegistry
 } = require('./lib/session-registry');
 const {
   ROOT_FOLDER_ID,
@@ -45,6 +47,7 @@ const {
   relativePathFromFolderId
 } = require('./lib/storage-layout');
 const { resolveWhisperCli } = require('./lib/resolve-whisper-cli');
+const { correctBleedInTranscript } = require('./lib/transcript-bleed-correction');
 const sqlite3 = require('sqlite3').verbose();
 
 // XDG Compliant Database Path
@@ -118,6 +121,82 @@ async function loadSessionPayloadFromDb(sessionId) {
   }
 }
 
+async function resolveSessionRecord(sessionId) {
+  if (!sessionId || sessionId === 'live') return null;
+
+  let session = getSession(sessionId);
+  if (session) return { session, canonicalId: session.id };
+
+  const directRow = await dbGet('SELECT * FROM sessions WHERE id = ?', [sessionId]);
+  if (directRow?.encrypted) {
+    const cachedKey = decryptionKeys.get(sessionId) || settings.encryptionPassword;
+    if (!cachedKey) {
+      return { requirePassword: true };
+    }
+  }
+
+  session = await loadSessionPayloadFromDb(sessionId);
+  if (session) {
+    setSession(session);
+    return { session, canonicalId: session.id };
+  }
+
+  for (const registered of sessionRegistry.values()) {
+    if (!registered?.id) continue;
+    if (registered.id === sessionId || registered.id.endsWith(`_${sessionId}`)) {
+      setSession(registered);
+      return { session: registered, canonicalId: registered.id };
+    }
+  }
+
+  await syncDatabaseWithFiles();
+  session = await loadSessionPayloadFromDb(sessionId);
+  if (session) {
+    setSession(session);
+    return { session, canonicalId: session.id };
+  }
+
+  const rows = await dbAll('SELECT id, encrypted FROM sessions');
+  const renamed = rows.find((row) => row.id.endsWith(`_${sessionId}`) || row.id.includes(sessionId));
+  if (renamed) {
+    if (renamed.encrypted) {
+      const cachedKey = decryptionKeys.get(renamed.id) || settings.encryptionPassword;
+      if (!cachedKey) {
+        return { requirePassword: true };
+      }
+    }
+    session = await loadSessionPayloadFromDb(renamed.id);
+    if (session) {
+      setSession(session);
+      return { session, canonicalId: session.id };
+    }
+  }
+
+  const callsDir = getCallsDir();
+  const { trailFiles } = scanStorageLayout(callsDir);
+  const trailMatch = trailFiles.find((file) => (
+    file.sessionId === sessionId || file.sessionId.endsWith(`_${sessionId}`)
+  ));
+  if (trailMatch) {
+    await upsertSessionFromTrailFile(trailMatch);
+    session = await loadSessionPayloadFromDb(trailMatch.sessionId);
+    if (session) {
+      setSession(session);
+      return { session, canonicalId: session.id };
+    }
+  }
+
+  return null;
+}
+
+function broadcastTranscriptCorrection(sessionId, removedSegmentIds) {
+  if (!sessionId || !removedSegmentIds?.length) return;
+  broadcastToSession(sessionId, 'audio:on-transcription-correction', {
+    sessionId,
+    removedSegmentIds
+  });
+}
+
 async function saveSessionPayloadToDb(sessionId, session) {
   if (!session) return;
   session.id = sessionId;
@@ -170,16 +249,24 @@ function handleTranscriptionSegments({ chunkIndex, segments }) {
     };
   });
 
-  const { transcript, emitted } = coalesceIncomingSegments(activeSession.transcript, rawSegments);
-  activeSession.transcript = transcript;
+  const { transcript: mergedTranscript, emitted } = coalesceIncomingSegments(activeSession.transcript, rawSegments);
+  const { transcript: correctedTranscript, removedSegmentIds } = correctBleedInTranscript(mergedTranscript);
+  activeSession.transcript = correctedTranscript;
 
-  emitted.forEach((segment) => {
+  const emittedIds = new Set(emitted.map((segment) => segment.id));
+  const visibleEmissions = emitted.filter((segment) => !removedSegmentIds.includes(segment.id));
+
+  visibleEmissions.forEach((segment) => {
     if (activeRecordingSessionId) {
       broadcastToSession(activeRecordingSessionId, 'audio:on-transcription-update', segment);
     }
   });
 
-  if (emitted.length > 0) {
+  if (removedSegmentIds.length > 0 && activeRecordingSessionId) {
+    broadcastTranscriptCorrection(activeRecordingSessionId, removedSegmentIds);
+  }
+
+  if (visibleEmissions.length > 0 || removedSegmentIds.length > 0) {
     saveSessionToFileSilently(activeSession);
   }
 }
@@ -1212,23 +1299,20 @@ async function resumeCallTranscriptionHandler(sessionId) {
       return { success: true, alreadyRecording: true };
     }
 
-    const res = await dbGet("SELECT * FROM sessions WHERE id = ?", [sessionId]);
-    if (!res) return { success: false, error: 'Session not found' };
-    
-    let session = null;
-    if (res.encrypted) {
-      const cachedKey = decryptionKeys.get(sessionId);
-      if (!cachedKey) {
-        return { success: false, requirePassword: true };
-      }
-      const decrypted = encryption.decrypt(res.encrypted_payload, cachedKey);
-      session = JSON.parse(decrypted);
-    } else {
-      session = JSON.parse(res.encrypted_payload || '{}');
+    const resolved = await resolveSessionRecord(sessionId);
+    if (!resolved) return { success: false, error: 'Session not found' };
+    if (resolved.requirePassword) {
+      return { success: false, requirePassword: true };
     }
-    
+
+    const { session, canonicalId } = resolved;
+    if (canonicalId !== sessionId) {
+      deleteSession(sessionId);
+      windowManager?.rekeyMeetingWindow(sessionId, canonicalId);
+    }
+
     activeSession = session;
-    activeRecordingSessionId = sessionId;
+    activeRecordingSessionId = canonicalId;
     
     // Calculate sessionChunkOffset based on the last segment timestamp
     if (activeSession.transcript && activeSession.transcript.length > 0) {
@@ -1240,9 +1324,9 @@ async function resumeCallTranscriptionHandler(sessionId) {
     
     isPaused = true;
     setSession(session);
-    const meetingWindow = openMeetingWindow(sessionId);
+    const meetingWindow = openMeetingWindow(canonicalId);
     const rebroadcastStatus = () => broadcastRecordingStatus({ isNewSession: false });
-    await startRecordingHandler(sessionId);
+    await startRecordingHandler(canonicalId);
     if (meetingWindow && !meetingWindow.isDestroyed()) {
       if (meetingWindow.webContents.isLoading()) {
         meetingWindow.webContents.once('did-finish-load', rebroadcastStatus);
@@ -1252,7 +1336,7 @@ async function resumeCallTranscriptionHandler(sessionId) {
     } else {
       rebroadcastStatus();
     }
-    return { success: true };
+    return { success: true, sessionId: canonicalId };
   } catch (e) {
     return { success: false, error: e.message };
   }
@@ -1382,12 +1466,16 @@ async function runSessionEnrichment(sessionId) {
           const slug = (session.title || 'meeting').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
           const newId = `${slug}_${oldId}`;
           if (newId !== oldId && !session.titleUserEdited) {
+            session.previousId = oldId;
             session.id = newId;
             session.filePath = path.join(callsDir, `${newId}.trail`);
             await saveSessionPayloadToDb(newId, session);
             await dbRun('DELETE FROM sessions WHERE id = ?', [oldId]);
             const oldPath = path.join(callsDir, `${oldId}.trail.bak`);
             if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+            deleteSession(oldId);
+            setSession(session);
+            windowManager?.rekeyMeetingWindow(oldId, newId);
           }
         } catch (renameErr) {
           console.error('Failed to rename session after enrichment', renameErr);
@@ -1396,6 +1484,9 @@ async function runSessionEnrichment(sessionId) {
         const hub = getHubWindow();
         if (hub) hub.webContents.send('calls:session-summary-ready', session);
         broadcastToSession(session.id, 'session:updated', session);
+        if (session.previousId && session.previousId !== session.id) {
+          broadcastToSession(session.previousId, 'session:updated', session);
+        }
         resolve();
       });
     });
