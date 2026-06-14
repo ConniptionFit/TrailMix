@@ -23,6 +23,8 @@ const { SessionProcessingService, PROCESSING_STATUS } = require('./services/Sess
 const { documentFromSession } = require('./lib/editor-document');
 const { coalesceIncomingSegments } = require('./lib/transcript-coalesce');
 const { splitTranscriptIntoBlocks } = require('./lib/processing-blocks');
+const { appEventBus } = require('./lib/event-bus');
+const { CHAT_RECIPES, buildRecipePrompt } = require('./lib/chat-recipes');
 const sqlite3 = require('sqlite3').verbose();
 
 // XDG Compliant Database Path
@@ -183,6 +185,14 @@ audioCaptureService.configure({
   },
   onError: () => {
     stopRecordingHandler();
+  },
+  onLevels: (levels) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('audio:on-levels', levels);
+    }
+    if (miniWindow && !miniWindow.isDestroyed()) {
+      miniWindow.webContents.send('audio:on-levels', levels);
+    }
   }
 });
 
@@ -386,7 +396,9 @@ function initDatabase() {
       // Folders Table
       db.run(`CREATE TABLE IF NOT EXISTS folders (
         id TEXT PRIMARY KEY,
-        name TEXT NOT NULL
+        name TEXT NOT NULL,
+        icon TEXT DEFAULT '📁',
+        description TEXT DEFAULT ''
       )`, (err) => { if (err) console.error("Error creating folders table", err); });
 
       // Sessions Table
@@ -431,15 +443,29 @@ function initDatabase() {
   });
 }
 
+async function migrateFolderColumns() {
+  const columns = await dbAll("PRAGMA table_info(folders)");
+  const columnNames = columns.map((column) => column.name);
+
+  if (!columnNames.includes('icon')) {
+    await dbRun("ALTER TABLE folders ADD COLUMN icon TEXT DEFAULT '📁'");
+  }
+  if (!columnNames.includes('description')) {
+    await dbRun("ALTER TABLE folders ADD COLUMN description TEXT DEFAULT ''");
+  }
+}
+
 async function migrateOldData() {
   try {
     // 1. Setup default folders if empty
     const existingFolders = await dbAll("SELECT * FROM folders");
     if (existingFolders.length === 0) {
-      await dbRun("INSERT INTO folders (id, name) VALUES (?, ?)", ["work", "Work"]);
-      await dbRun("INSERT INTO folders (id, name) VALUES (?, ?)", ["personal", "Personal"]);
-      await dbRun("INSERT INTO folders (id, name) VALUES (?, ?)", ["drafts", "Drafts"]);
+      await dbRun("INSERT INTO folders (id, name, icon, description) VALUES (?, ?, ?, ?)", ["work", "Work", "💼", "Professional meetings and work sessions"]);
+      await dbRun("INSERT INTO folders (id, name, icon, description) VALUES (?, ?, ?, ?)", ["personal", "Personal", "🏠", "Private personal notes"]);
+      await dbRun("INSERT INTO folders (id, name, icon, description) VALUES (?, ?, ?, ?)", ["drafts", "Drafts", "📝", "In-progress and unsorted notes"]);
     }
+
+    await migrateFolderColumns();
 
     // 2. Tasks migration
     const TASKS_FILE = path.join(DATA_DIR, 'tasks.json');
@@ -1095,6 +1121,7 @@ async function runEnhanceNotesForSession(session) {
     return await enhanceNotesService.enhanceDocument({
       editorDocument,
       fullTranscript,
+      transcriptSegments: session.transcript || [],
       model: settings.selectedLlm,
       systemPrompt
     });
@@ -1512,12 +1539,15 @@ ipcMain.handle('chat:query', async (event, query, activeTranscriptText) => {
 Use this context to answer the user's question accurately.
 Be concise, helpful, and write your responses using clean Markdown format (headers, bold, list items, etc.) for great readability in the chat panel. Do not include loose asterisks.`;
 
+    const recipePrompt = buildRecipePrompt(query);
+    const resolvedQuery = recipePrompt || query;
+
     const userPrompt = `${historyContext}
 Active Call Transcript:
 ${activeTranscriptText || 'No active transcript.'}
 
 User Question:
-${query}`;
+${resolvedQuery}`;
 
     const requestId = `chat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     void llmService.streamToWindow(mainWindow, requestId, userPrompt, model, systemPrompt).catch((err) => {
@@ -1533,6 +1563,10 @@ ${query}`;
   }
 });
 
+ipcMain.handle('chat:get-recipes', async () => {
+  return CHAT_RECIPES;
+});
+
 ipcMain.handle('chat:mix-enhance', async (event, payload) => {
   try {
     const transcript = Array.isArray(payload?.transcript) ? payload.transcript : [];
@@ -1541,11 +1575,17 @@ ipcMain.handle('chat:mix-enhance', async (event, payload) => {
       editorDocument: payload?.editorDocument || null
     });
 
+    const templateKey = payload?.template || settings.selectedNoteStyle || 'executive';
+    const systemPrompt = templateKey === 'custom'
+      ? (settings.notePromptTemplate || DEFAULT_PROMPTS.executive)
+      : (DEFAULT_PROMPTS[templateKey] || settings.notePromptTemplate || DEFAULT_PROMPTS.executive);
+
     const result = await enhanceNotesService.enhanceDocument({
       editorDocument,
       fullTranscript: enhanceNotesService.buildFullTranscript(transcript),
+      transcriptSegments: transcript,
       model: settings.selectedLlm,
-      systemPrompt: settings.notePromptTemplate || DEFAULT_PROMPTS.executive
+      systemPrompt
     });
 
     if (!result) {
@@ -2015,11 +2055,26 @@ ipcMain.handle('folders:get', async () => {
   }
 });
 
-ipcMain.handle('folders:create', async (event, name) => {
+ipcMain.handle('folders:create', async (event, payload) => {
   try {
+    const name = typeof payload === 'string' ? payload : payload?.name;
+    const icon = typeof payload === 'object' ? (payload?.icon || '📁') : '📁';
+    const description = typeof payload === 'object' ? (payload?.description || '') : '';
     const id = 'folder_' + Date.now();
-    await dbRun("INSERT INTO folders (id, name) VALUES (?, ?)", [id, name]);
-    return { success: true, folder: { id, name } };
+    await dbRun("INSERT INTO folders (id, name, icon, description) VALUES (?, ?, ?, ?)", [id, name, icon, description]);
+    return { success: true, folder: { id, name, icon, description } };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('folders:update', async (event, folder) => {
+  try {
+    await dbRun(
+      "UPDATE folders SET name = ?, icon = ?, description = ? WHERE id = ?",
+      [folder.name, folder.icon || '📁', folder.description || '', folder.id]
+    );
+    return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
   }
@@ -2038,10 +2093,27 @@ ipcMain.handle('calls:move-to-folder', async (event, sessionId, folderId) => {
   try {
     await dbRun("UPDATE sessions SET folder_id = ? WHERE id = ?", [folderId, sessionId]);
     if (mainWindow) mainWindow.webContents.send('calls:list-updated');
+
+    if (folderId) {
+      const folder = await dbGet("SELECT * FROM folders WHERE id = ?", [folderId]);
+      const session = await dbGet("SELECT title FROM sessions WHERE id = ?", [sessionId]);
+      void appEventBus.emitWorkflowEvent('note:added-to-folder', {
+        sessionId,
+        folderId,
+        folderName: folder?.name || null,
+        sessionTitle: session?.title || null
+      });
+    }
+
     return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
   }
+});
+
+ipcMain.handle('workflow:register-trigger', async (event, eventName, trigger) => {
+  appEventBus.registerWorkflowTrigger(eventName, trigger);
+  return { success: true };
 });
 
 // Tasks Management (v0.3)

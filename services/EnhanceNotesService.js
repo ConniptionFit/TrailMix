@@ -25,6 +25,7 @@ class EnhanceNotesService {
   async enhanceDocument({
     editorDocument,
     fullTranscript,
+    transcriptSegments = [],
     model,
     systemPrompt
   }) {
@@ -35,7 +36,7 @@ class EnhanceNotesService {
 
     const userPrompt = buildEnhanceNotesPrompt(jots, fullTranscript, systemPrompt);
     const rawResponse = await this.llmService.queryComplete(userPrompt, model, systemPrompt);
-    const parsed = parseEnhanceNotesResponse(rawResponse, jots);
+    const parsed = parseEnhanceNotesResponse(rawResponse, jots, transcriptSegments);
     const mixedDocument = applyMixedSpans(editorDocument, parsed.spans);
     mixedDocument.enhancedAt = new Date().toISOString();
 

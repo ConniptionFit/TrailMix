@@ -24,6 +24,11 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('audio:on-speaker-labels-updated', subscription);
     return () => ipcRenderer.removeListener('audio:on-speaker-labels-updated', subscription);
   },
+  onAudioLevels: (callback) => {
+    const subscription = (event, data) => callback(data);
+    ipcRenderer.on('audio:on-levels', subscription);
+    return () => ipcRenderer.removeListener('audio:on-levels', subscription);
+  },
   onCallListUpdated: (callback) => {
     const subscription = (event) => callback();
     ipcRenderer.on('calls:list-updated', subscription);
@@ -80,6 +85,7 @@ contextBridge.exposeInMainWorld('api', {
 
   // Chat Agent
   chatQuery: (query, transcriptText) => ipcRenderer.invoke('chat:query', query, transcriptText),
+  getChatRecipes: () => ipcRenderer.invoke('chat:get-recipes'),
   saveCallSilently: (callData) => ipcRenderer.invoke('calls:save-silently', callData),
   mixEnhance: (payload) => ipcRenderer.invoke('chat:mix-enhance', payload),
   onLlmStreamChunk: (callback) => {
@@ -104,8 +110,11 @@ contextBridge.exposeInMainWorld('api', {
 
   // Folders & Obsidian Export (v0.3)
   getFolders: () => ipcRenderer.invoke('folders:get'),
-  createFolder: (name) => ipcRenderer.invoke('folders:create', name),
+  createFolder: (payload) => ipcRenderer.invoke('folders:create', payload),
+  updateFolder: (folder) => ipcRenderer.invoke('folders:update', folder),
   deleteFolder: (id) => ipcRenderer.invoke('folders:delete', id),
   moveToFolder: (sessionId, folderId) => ipcRenderer.invoke('calls:move-to-folder', sessionId, folderId),
-  exportObsidian: (folderId, exportDir) => ipcRenderer.invoke('calls:export-obsidian', folderId, exportDir)
+  exportObsidian: (folderId, exportDir) => ipcRenderer.invoke('calls:export-obsidian', folderId, exportDir),
+
+  registerWorkflowTrigger: (eventName, trigger) => ipcRenderer.invoke('workflow:register-trigger', eventName, trigger)
 });

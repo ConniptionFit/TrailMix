@@ -1,20 +1,62 @@
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
+const { computeStereoLevels } = require('../lib/audio-levels');
+
+function detectAudioBackend() {
+  try {
+    const pulseInfo = execSync('pactl info 2>/dev/null', { encoding: 'utf8' });
+    if (/PipeWire/i.test(pulseInfo)) {
+      return 'pipewire';
+    }
+  } catch (err) {
+    // Fall through to pulse.
+  }
+
+  try {
+    execSync('wpctl status 2>/dev/null', { encoding: 'utf8' });
+    return 'pipewire';
+  } catch (err) {
+    return 'pulse';
+  }
+}
+
+function ensurePipeWireLoopback() {
+  try {
+    const modules = execSync('pactl list short modules 2>/dev/null', { encoding: 'utf8' });
+    if (/module-loopback/i.test(modules)) {
+      return { ok: true, message: 'PipeWire loopback module already loaded' };
+    }
+
+    execSync('pactl load-module module-loopback latency_msec=1 2>/dev/null', { encoding: 'utf8' });
+    return { ok: true, message: 'Loaded libpipewire-module-loopback via pactl' };
+  } catch (err) {
+    return { ok: false, message: err.message };
+  }
+}
 
 class AudioCaptureService {
   constructor({ tempDir }) {
     this.tempDir = tempDir;
     this.recordingProcess = null;
     this.chunkPollTimer = null;
+    this.levelPollTimer = null;
     this.processedChunks = new Set();
     this.onChunkReady = null;
     this.onError = null;
+    this.onLevels = null;
+    this.audioBackend = detectAudioBackend();
+    this.latestLevels = { left: 0, right: 0, combined: 0 };
   }
 
-  configure({ onChunkReady, onError }) {
+  configure({ onChunkReady, onError, onLevels }) {
     this.onChunkReady = onChunkReady;
     this.onError = onError;
+    this.onLevels = onLevels;
+  }
+
+  getAudioBackend() {
+    return this.audioBackend;
   }
 
   async prepareTempDir(reset = true) {
@@ -25,13 +67,22 @@ class AudioCaptureService {
     this.processedChunks.clear();
   }
 
+  buildFfmpegInputFormat() {
+    if (this.audioBackend === 'pipewire') {
+      ensurePipeWireLoopback();
+      return 'pipewire';
+    }
+    return 'pulse';
+  }
+
   async start({ sinkMonitor, source }) {
     await this.prepareTempDir(true);
 
+    const inputFormat = this.buildFfmpegInputFormat();
     const ffmpegArgs = [
       '-y',
-      '-f', 'pulse', '-i', sinkMonitor,
-      '-f', 'pulse', '-i', source,
+      '-f', inputFormat, '-i', sinkMonitor,
+      '-f', inputFormat, '-i', source,
       '-filter_complex', '[0:a]pan=mono|c0=c0[left]; [1:a]pan=mono|c0=c0[right]; [left][right]amerge=inputs=2[a]',
       '-map', '[a]',
       '-f', 'segment',
@@ -45,17 +96,24 @@ class AudioCaptureService {
 
     this.recordingProcess = spawn('ffmpeg', ffmpegArgs);
 
+    this.recordingProcess.stderr.on('data', (chunk) => {
+      const text = chunk.toString();
+      if (/error/i.test(text)) {
+        console.error('ffmpeg:', text.trim());
+      }
+    });
+
     this.recordingProcess.on('error', (err) => {
       console.error('Ffmpeg recording error', err);
       if (this.onError) this.onError(err);
     });
 
     this.startChunkPolling();
+    this.startLevelPolling();
   }
 
   async resumeCapture() {
     await this.prepareTempDir(true);
-    // Caller must re-spawn ffmpeg through start(); resume only resets temp state.
   }
 
   startChunkPolling() {
@@ -68,10 +126,60 @@ class AudioCaptureService {
     }, 1000);
   }
 
+  startLevelPolling() {
+    this.stopLevelPolling();
+
+    this.levelPollTimer = setInterval(() => {
+      this.pollAudioLevels().catch((err) => {
+        console.error('Level polling failed', err);
+      });
+    }, 120);
+  }
+
   stopChunkPolling() {
     if (this.chunkPollTimer) {
       clearInterval(this.chunkPollTimer);
       this.chunkPollTimer = null;
+    }
+  }
+
+  stopLevelPolling() {
+    if (this.levelPollTimer) {
+      clearInterval(this.levelPollTimer);
+      this.levelPollTimer = null;
+    }
+  }
+
+  async pollAudioLevels() {
+    if (!fs.existsSync(this.tempDir)) return;
+
+    const files = await fs.promises.readdir(this.tempDir);
+    const wavChunks = files
+      .filter((file) => this.isChunkCandidate(file))
+      .sort();
+
+    if (wavChunks.length === 0) return;
+
+    const latestChunk = wavChunks[wavChunks.length - 1];
+    const chunkPath = path.join(this.tempDir, latestChunk);
+
+    try {
+      const stats = await fs.promises.stat(chunkPath);
+      if (stats.size < 1024) return;
+
+      const levels = computeStereoLevels(chunkPath);
+      this.latestLevels = levels;
+
+      if (this.onLevels) {
+        this.onLevels({
+          left: levels.left,
+          right: levels.right,
+          combined: levels.combined,
+          backend: this.audioBackend
+        });
+      }
+    } catch (err) {
+      // Chunk may still be writing.
     }
   }
 
@@ -120,6 +228,7 @@ class AudioCaptureService {
 
   async stopFfmpeg() {
     this.stopChunkPolling();
+    this.stopLevelPolling();
 
     if (!this.recordingProcess) return;
 
@@ -153,5 +262,7 @@ class AudioCaptureService {
 }
 
 module.exports = {
-  AudioCaptureService
+  AudioCaptureService,
+  detectAudioBackend,
+  ensurePipeWireLoopback
 };

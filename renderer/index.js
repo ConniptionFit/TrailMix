@@ -209,15 +209,43 @@ if (isMiniMode) {
   function initTrailSidebar() {
     const sidebar = document.getElementById('sidebar');
     const toggle = document.getElementById('btn-trail-toggle');
+    const appLayout = document.getElementById('main-app');
     if (!sidebar || !toggle) return;
 
     const savedCollapsed = localStorage.getItem('trailmix-trail-collapsed') === 'true';
     if (savedCollapsed) sidebar.classList.add('collapsed');
 
-    toggle.addEventListener('click', () => {
+    function toggleSidebar() {
       sidebar.classList.toggle('collapsed');
       localStorage.setItem('trailmix-trail-collapsed', sidebar.classList.contains('collapsed'));
+      updateSidebarOverlay();
+    }
+
+    function updateSidebarOverlay() {
+      const isNarrow = window.innerWidth < 960;
+      const editorActive = document.querySelector('.analysis-pane.mix-focused');
+      const shouldOverlay = isNarrow && editorActive && !sidebar.classList.contains('collapsed');
+
+      sidebar.classList.toggle('sidebar-overlay', shouldOverlay);
+      if (appLayout) {
+        appLayout.classList.toggle('sidebar-overlay-active', shouldOverlay);
+      }
+    }
+
+    toggle.addEventListener('click', toggleSidebar);
+    window.addEventListener('resize', updateSidebarOverlay);
+
+    document.addEventListener('click', (event) => {
+      if (!sidebar.classList.contains('sidebar-overlay')) return;
+      if (sidebar.contains(event.target)) return;
+      sidebar.classList.add('collapsed');
+      localStorage.setItem('trailmix-trail-collapsed', 'true');
+      updateSidebarOverlay();
     });
+
+    window.toggleTrailSidebar = toggleSidebar;
+    window.updateSidebarOverlay = updateSidebarOverlay;
+    updateSidebarOverlay();
   }
 
   initThemeToggle();
@@ -396,6 +424,10 @@ if (isMiniMode) {
           actionItems: ''
         };
       }
+
+      if (editorWaveformBars) {
+        editorWaveformBars.classList.remove('hidden');
+      }
     } else if (!isRecording && isPaused) {
       // Paused State
       btnRecordToggle.className = 'btn-record stop';
@@ -412,6 +444,10 @@ if (isMiniMode) {
       recTitle.textContent = 'Transcription Paused';
       
       clearInterval(recordingInterval);
+
+      if (typeof editorWaveformBars !== 'undefined' && editorWaveformBars) {
+        editorWaveformBars.classList.add('hidden');
+      }
     } else {
       // Idle UI State
       btnRecordToggle.className = 'btn-record start';
@@ -434,6 +470,10 @@ if (isMiniMode) {
       
       clearInterval(recordingInterval);
       recordingInterval = null;
+
+      if (typeof editorWaveformBars !== 'undefined' && editorWaveformBars) {
+        editorWaveformBars.classList.add('hidden');
+      }
     }
   });
 
@@ -519,7 +559,45 @@ if (isMiniMode) {
     return speakerColors[speakerName];
   }
 
-  function appendTranscriptLine(segment) {
+  function isMicSpeaker(speakerName) {
+    const normalized = String(speakerName || '').toLowerCase();
+    return normalized === 'you' || normalized === 'me';
+  }
+
+  function createTranscriptChunkActions(segment) {
+    const actions = document.createElement('div');
+    actions.className = 'transcript-chunk-actions';
+
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'transcript-chunk-btn';
+    copyBtn.title = 'Copy chunk';
+    copyBtn.textContent = '📋';
+    copyBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      navigator.clipboard.writeText(`[${segment.timestamp}] ${segment.speaker}: ${segment.text}`);
+    });
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'transcript-chunk-btn delete';
+    deleteBtn.title = 'Delete chunk';
+    deleteBtn.textContent = '🗑️';
+    deleteBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (!activeSession?.transcript) return;
+      activeSession.transcript = activeSession.transcript.filter((item) => item.id !== segment.id);
+      const line = document.getElementById(`line-${segment.id}`);
+      if (line) line.remove();
+      window.api.saveCallSilently(activeSession);
+    });
+
+    actions.appendChild(copyBtn);
+    actions.appendChild(deleteBtn);
+    return actions;
+  }
+
+  function appendTranscriptLine(segment, targetContainer = transcriptContainer) {
     if (segment.merged) {
       const existingLine = document.getElementById(`line-${segment.id}`);
       if (existingLine) {
@@ -533,7 +611,7 @@ if (isMiniMode) {
     const lastLineDiv = transcriptContainer.lastElementChild;
     let merged = false;
     
-    const isMe = segment.speaker.toLowerCase() === 'you' || segment.speaker.toLowerCase() === 'me';
+    const isMic = isMicSpeaker(segment.speaker);
     const displaySpeakerName = getDisplaySpeakerName(segment.speaker);
     
     if (lastLineDiv && lastLineDiv.classList.contains('transcript-line')) {
@@ -558,25 +636,36 @@ if (isMiniMode) {
       const lineDiv = document.createElement('div');
       lineDiv.id = `line-${segment.id}`;
       lineDiv.setAttribute('data-timestamp-ms', segment.timestampMs);
+      lineDiv.setAttribute('data-segment-id', segment.id || '');
       
-      lineDiv.className = `transcript-line ${isMe ? 'align-left' : 'align-right'}`;
+      lineDiv.className = `transcript-line transcript-bubble ${isMic ? 'bubble-mic' : 'bubble-system'}`;
       
-      const speakerClass = isMe ? 'you' : 'inbound';
-      const speakerColor = getSpeakerColor(displaySpeakerName);
-      
-      lineDiv.innerHTML = `
-        <div class="line-meta">
-          <span class="line-speaker ${speakerClass}" style="color: ${speakerColor}">${displaySpeakerName}</span>
-          <span class="line-time">${segment.timestamp}</span>
-        </div>
-        <div class="line-text">${segment.text}</div>
-      `;
-      
-      transcriptContainer.appendChild(lineDiv);
+      const metaDiv = document.createElement('div');
+      metaDiv.className = 'line-meta';
+
+      const speakerSpan = document.createElement('span');
+      speakerSpan.className = `line-speaker ${isMic ? 'mic' : 'system'}`;
+      speakerSpan.textContent = displaySpeakerName;
+
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'line-time';
+      timeSpan.textContent = segment.timestamp;
+
+      metaDiv.appendChild(speakerSpan);
+      metaDiv.appendChild(timeSpan);
+      metaDiv.appendChild(createTranscriptChunkActions(segment));
+
+      const textDiv = document.createElement('div');
+      textDiv.className = 'line-text';
+      textDiv.textContent = segment.text;
+
+      lineDiv.appendChild(metaDiv);
+      lineDiv.appendChild(textDiv);
+      targetContainer.appendChild(lineDiv);
     }
     
-    if (!isUserScrolledUp) {
-      transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
+    if (!isUserScrolledUp && targetContainer === transcriptContainer) {
+      targetContainer.scrollTop = targetContainer.scrollHeight;
     }
   }
 
@@ -622,6 +711,107 @@ if (isMiniMode) {
   const btnMixEnhance = document.getElementById('btn-mix-enhance');
   const editorLegend = document.getElementById('editor-legend');
   const analysisPane = document.querySelector('.analysis-pane');
+  const editorWaveformBars = document.getElementById('editor-waveform-bars');
+  const editorTranscriptPanel = document.getElementById('editor-transcript-panel');
+  const editorTranscriptContainer = document.getElementById('editor-transcript-container');
+  const btnToggleEditorTranscript = document.getElementById('btn-toggle-editor-transcript');
+  const btnCloseEditorTranscript = document.getElementById('btn-close-editor-transcript');
+
+  async function runMixEnhance(templateKey = null) {
+    if (!activeSession || !jotEditor) return;
+
+    const currentDocument = jotEditor.getDocument();
+    if (!currentDocument.plainText.trim()) {
+      alert('Please enter some jots first!');
+      return;
+    }
+
+    syncSessionFromEditorDocument(activeSession, currentDocument);
+
+    btnMixEnhance.disabled = true;
+    btnMixEnhance.innerHTML = '✨ Mixing…';
+    btnMixEnhance.classList.add('is-mixing');
+    jotEditor.setEnhancing(true);
+
+    try {
+      const result = await window.api.mixEnhance({
+        plainText: currentDocument.plainText,
+        editorDocument: currentDocument,
+        transcript: activeSession.transcript || [],
+        template: templateKey || jotEditor.getSelectedTemplate()
+      });
+
+      if (!result?.success) {
+        throw new Error(result?.error || 'Failed to enhance notes.');
+      }
+
+      activeSession.editorDocument = result.editorDocument;
+      activeSession.enhancedNotes = result.enhancedNotes;
+      activeSession.mixNotes = result.editorDocument.plainText || currentDocument.plainText;
+      jotEditor.applyEnhancedDocument(result.editorDocument);
+
+      if (editorLegend) {
+        editorLegend.classList.remove('hidden');
+      }
+
+      await window.api.saveCall(activeSession);
+    } catch (err) {
+      console.error(err);
+      alert(err.message || 'Failed to enhance notes.');
+      jotEditor.setEnhancing(false);
+    } finally {
+      btnMixEnhance.disabled = false;
+      btnMixEnhance.innerHTML = '✨ Start the Mix';
+      btnMixEnhance.classList.remove('is-mixing');
+    }
+  }
+
+  function highlightTranscriptSegment(transcriptRef) {
+    if (!transcriptRef) return;
+
+    const liveTrailDrawer = document.getElementById('live-trail-drawer');
+    if (liveTrailDrawer) liveTrailDrawer.classList.remove('hidden');
+
+    let targetLine = null;
+    if (transcriptRef.segmentId) {
+      targetLine = document.getElementById(`line-${transcriptRef.segmentId}`);
+    }
+
+    if (!targetLine && transcriptRef.timestampMs) {
+      const lines = transcriptContainer.querySelectorAll('.transcript-line');
+      lines.forEach((line) => {
+        const lineMs = parseInt(line.getAttribute('data-timestamp-ms') || '0', 10);
+        if (!targetLine && Math.abs(lineMs - transcriptRef.timestampMs) < 5000) {
+          targetLine = line;
+        }
+      });
+    }
+
+    if (targetLine) {
+      targetLine.classList.add('highlight-flash');
+      targetLine.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      window.setTimeout(() => targetLine.classList.remove('highlight-flash'), 1800);
+    }
+  }
+
+  function renderEditorTranscriptPanel() {
+    if (!editorTranscriptContainer || !activeSession?.transcript) return;
+    editorTranscriptContainer.innerHTML = '';
+    activeSession.transcript.forEach((segment) => {
+      appendTranscriptLine(segment, editorTranscriptContainer);
+    });
+  }
+
+  function updateWaveformBars(levels = { left: 0, right: 0, combined: 0 }) {
+    if (!editorWaveformBars) return;
+    const bars = editorWaveformBars.querySelectorAll('.waveform-bar');
+    bars.forEach((bar, index) => {
+      const channelLevel = index % 2 === 0 ? levels.left : levels.right;
+      const jitter = (Math.sin(Date.now() / 120 + index) + 1) * 0.08;
+      const height = Math.max(8, Math.min(100, (channelLevel + jitter) * 100));
+      bar.style.height = `${height}%`;
+    });
+  }
 
   let jotEditor = null;
   if (editorHost && window.EditorComponent) {
@@ -630,6 +820,19 @@ if (isMiniMode) {
         if (!activeSession) return;
         syncSessionFromEditorDocument(activeSession, document);
         window.api.saveCallSilently(activeSession);
+      },
+      onTraceTranscript: (transcriptRef) => {
+        highlightTranscriptSegment(transcriptRef);
+        if (editorTranscriptPanel) {
+          editorTranscriptPanel.classList.remove('closed');
+          renderEditorTranscriptPanel();
+        }
+      },
+      onEnhanceRequest: (templateKey) => {
+        runMixEnhance(templateKey);
+      },
+      onRegenerateRequest: (templateKey) => {
+        runMixEnhance(templateKey);
       }
     });
   }
@@ -667,56 +870,37 @@ if (isMiniMode) {
       if (analysisPane) analysisPane.classList.add('mix-focused');
       summaryContent.classList.add('hidden');
       actionContent.classList.add('hidden');
+      if (typeof window.updateSidebarOverlay === 'function') {
+        window.updateSidebarOverlay();
+      }
     });
   }
 
   if (btnMixEnhance) {
-    btnMixEnhance.addEventListener('click', async () => {
-      if (!activeSession || !jotEditor) return;
+    btnMixEnhance.addEventListener('click', () => runMixEnhance());
+  }
 
-      const currentDocument = jotEditor.getDocument();
-      if (!currentDocument.plainText.trim()) {
-        alert('Please enter some jots first!');
-        return;
+  if (btnToggleEditorTranscript && editorTranscriptPanel) {
+    btnToggleEditorTranscript.addEventListener('click', () => {
+      editorTranscriptPanel.classList.toggle('closed');
+      if (!editorTranscriptPanel.classList.contains('closed')) {
+        renderEditorTranscriptPanel();
       }
+    });
+  }
 
-      syncSessionFromEditorDocument(activeSession, currentDocument);
+  if (btnCloseEditorTranscript && editorTranscriptPanel) {
+    btnCloseEditorTranscript.addEventListener('click', () => {
+      editorTranscriptPanel.classList.add('closed');
+    });
+  }
 
-      btnMixEnhance.disabled = true;
-      btnMixEnhance.innerHTML = '✨ Mixing…';
-      btnMixEnhance.classList.add('is-mixing');
-      jotEditor.setEnhancing(true);
-
-      try {
-        const result = await window.api.mixEnhance({
-          plainText: currentDocument.plainText,
-          editorDocument: currentDocument,
-          transcript: activeSession.transcript || []
-        });
-
-        if (!result?.success) {
-          throw new Error(result?.error || 'Failed to enhance notes.');
-        }
-
-        activeSession.editorDocument = result.editorDocument;
-        activeSession.enhancedNotes = result.enhancedNotes;
-        activeSession.mixNotes = result.editorDocument.plainText || currentDocument.plainText;
-        jotEditor.applyEnhancedDocument(result.editorDocument);
-
-        if (editorLegend) {
-          editorLegend.classList.remove('hidden');
-        }
-
-        await window.api.saveCall(activeSession);
-      } catch (err) {
-        console.error(err);
-        alert(err.message || 'Failed to enhance notes.');
-        jotEditor.setEnhancing(false);
-      } finally {
-        btnMixEnhance.disabled = false;
-        btnMixEnhance.innerHTML = '✨ Start the Mix';
-        btnMixEnhance.classList.remove('is-mixing');
+  if (window.api.onAudioLevels) {
+    window.api.onAudioLevels((levels) => {
+      if (editorWaveformBars) {
+        editorWaveformBars.classList.remove('hidden');
       }
+      updateWaveformBars(levels);
     });
   }
 
@@ -1256,7 +1440,7 @@ if (isMiniMode) {
       allItem.innerHTML = `
         <div class="flex items-center gap-2">
           <span>📂</span>
-          <span>All Preserves</span>
+          <span>All notes</span>
         </div>
       `;
       allItem.addEventListener('click', () => {
@@ -1277,11 +1461,15 @@ if (isMiniMode) {
         }`;
         
         item.innerHTML = `
-          <div class="flex items-center gap-2 flex-grow truncate">
-            <span>📁</span>
-            <span class="truncate">${folder.name}</span>
+          <div class="folder-item-main flex items-center gap-2 flex-grow truncate" title="${folder.description || ''}">
+            <span class="folder-icon">${folder.icon || '📁'}</span>
+            <div class="folder-text truncate">
+              <span class="truncate">${folder.name}</span>
+              ${folder.description ? `<span class="folder-description">${folder.description}</span>` : ''}
+            </div>
           </div>
           <div class="flex items-center gap-1.5 folder-actions opacity-60 hover:opacity-100 transition">
+            <button class="btn-folder-edit p-0.5 text-slate-400 hover:text-trail-400 transition" title="Edit folder" data-folderid="${folder.id}">✏️</button>
             <button class="btn-folder-export p-0.5 text-slate-400 hover:text-trail-400 transition" title="Export Folder to Obsidian" data-folderid="${folder.id}">📤</button>
             <button class="btn-folder-delete p-0.5 text-slate-400 hover:text-red-400 transition" title="Delete Folder" data-folderid="${folder.id}">🗑️</button>
           </div>
@@ -1292,6 +1480,16 @@ if (isMiniMode) {
           activeFolderId = folder.id;
           renderFolders();
           loadHistoryList();
+        });
+
+        item.querySelector('.btn-folder-edit').addEventListener('click', (e) => {
+          e.stopPropagation();
+          const icon = prompt('Folder icon (emoji):', folder.icon || '📁') || folder.icon || '📁';
+          const description = prompt('Folder description (informs AI context):', folder.description || '') || '';
+          const name = prompt('Folder name:', folder.name) || folder.name;
+          window.api.updateFolder({ id: folder.id, name, icon, description }).then((res) => {
+            if (res.success) renderFolders();
+          });
         });
 
         // Delete Folder
@@ -1367,16 +1565,17 @@ if (isMiniMode) {
   const btnAddFolder = document.getElementById('btn-add-folder');
   if (btnAddFolder) {
     btnAddFolder.addEventListener('click', () => {
-      const name = prompt("Enter new folder name:");
-      if (name && name.trim()) {
-        window.api.createFolder(name.trim()).then(res => {
-          if (res.success) {
-            renderFolders();
-          } else {
-            alert("Error creating folder: " + res.error);
-          }
-        });
-      }
+      const name = prompt('Enter folder name:');
+      if (!name || !name.trim()) return;
+      const icon = prompt('Choose an icon (emoji):', '📁') || '📁';
+      const description = prompt('Folder description (helps AI understand context):', '') || '';
+      window.api.createFolder({ name: name.trim(), icon, description }).then(res => {
+        if (res.success) {
+          renderFolders();
+        } else {
+          alert('Error creating folder: ' + res.error);
+        }
+      });
     });
   }
 
@@ -1957,17 +2156,33 @@ if (isMiniMode) {
   const chatMessages = document.getElementById('chat-messages');
   const inputChatQuery = document.getElementById('input-chat-query');
   const btnChatSend = document.getElementById('btn-chat-send');
-  
-  const btnChatMiss = document.getElementById('btn-chat-miss');
-  const btnChatAction = document.getElementById('btn-chat-action');
+  const chatRecipesContainer = document.getElementById('chat-recipes');
+  const globalAskBar = document.getElementById('global-ask-bar');
+  const inputGlobalAsk = document.getElementById('input-global-ask');
+  const btnGlobalAskOpen = document.getElementById('btn-global-ask-open');
+
+  const CHAT_WELCOME_HTML = `
+    <div class="msg system">
+      Hi! I am your offline assistant. Ask me questions or use a Recipe above to run post-meeting logic on your notes.
+    </div>
+  `;
+
+  function clearChatHistory() {
+    if (!chatMessages) return;
+    chatMessages.innerHTML = CHAT_WELCOME_HTML;
+    messageCounter = 0;
+  }
 
   function toggleChatSidebar(isOpen) {
     if (isOpen) {
       chatAgentWidget.classList.remove('closed');
       btnChatSidebarToggle.classList.add('hidden');
+      if (globalAskBar) globalAskBar.classList.add('chat-open');
     } else {
       chatAgentWidget.classList.add('closed');
       btnChatSidebarToggle.classList.remove('hidden');
+      if (globalAskBar) globalAskBar.classList.remove('chat-open');
+      clearChatHistory();
     }
   }
 
@@ -1986,33 +2201,51 @@ if (isMiniMode) {
     if (e.key === 'Enter') submitChatQuery();
   });
 
-  btnChatMiss.addEventListener('click', () => {
-    toggleChatSidebar(true);
-    runPresetQuery('miss', '⏱️ What did I miss in the last few minutes?');
-  });
+  if (inputGlobalAsk) {
+    inputGlobalAsk.addEventListener('focus', () => toggleChatSidebar(true));
+    inputGlobalAsk.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const text = inputGlobalAsk.value.trim();
+        if (!text) return;
+        toggleChatSidebar(true);
+        inputChatQuery.value = text;
+        inputGlobalAsk.value = '';
+        submitChatQuery();
+      }
+    });
+  }
 
-  btnChatAction.addEventListener('click', () => {
-    toggleChatSidebar(true);
-    runPresetQuery('action', '📋 What are the action items?');
-  });
+  if (btnGlobalAskOpen) {
+    btnGlobalAskOpen.addEventListener('click', () => toggleChatSidebar(true));
+  }
 
-  // Initialize closed state
-  toggleChatSidebar(false);
+  function renderChatRecipes() {
+    if (!chatRecipesContainer || !window.api.getChatRecipes) return;
+    window.api.getChatRecipes().then((recipes) => {
+      chatRecipesContainer.innerHTML = '';
+      recipes.forEach((recipe) => {
+        const pill = document.createElement('button');
+        pill.type = 'button';
+        pill.className = 'chat-recipe-pill';
+        pill.textContent = `${recipe.icon || ''} ${recipe.label}`.trim();
+        pill.addEventListener('click', () => {
+          toggleChatSidebar(true);
+          runRecipeQuery(recipe);
+        });
+        chatRecipesContainer.appendChild(pill);
+      });
+    });
+  }
 
-  function submitChatQuery() {
-    const text = inputChatQuery.value.trim();
-    if (!text) return;
-    
-    appendChatMessage('user', text);
-    inputChatQuery.value = '';
-    
-    const loadingId = appendChatMessage('assistant', 'Generating local response...');
-    
-    const transcriptText = activeSession && activeSession.transcript 
-      ? activeSession.transcript.map(t => `[${t.timestamp}] ${t.speaker}: ${t.text}`).join('\n') 
+  function runRecipeQuery(recipe) {
+    appendChatMessage('user', `${recipe.icon || ''} ${recipe.label}`.trim());
+    const loadingId = appendChatMessage('assistant', 'Running recipe locally…');
+
+    const transcriptText = activeSession && activeSession.transcript
+      ? activeSession.transcript.map(t => `[${t.timestamp}] ${t.speaker}: ${t.text}`).join('\n')
       : 'No transcript active.';
-      
-    window.api.chatQuery(text, transcriptText).then((result) => {
+
+    window.api.chatQuery(recipe.id, transcriptText).then((result) => {
       if (!result || !result.requestId) {
         updateChatMessage(loadingId, result?.error || 'Could not query local AI model.');
         return;
@@ -2026,15 +2259,44 @@ if (isMiniMode) {
     });
   }
 
-  function runPresetQuery(presetType, label) {
-    appendChatMessage('user', label);
-    const loadingId = appendChatMessage('assistant', 'Analyzing session...');
+  renderChatRecipes();
+
+  document.addEventListener('keydown', (event) => {
+    const isMeta = event.ctrlKey || event.metaKey;
+    if (!isMeta) return;
+
+    if (event.key.toLowerCase() === 's') {
+      event.preventDefault();
+      if (typeof window.toggleTrailSidebar === 'function') {
+        window.toggleTrailSidebar();
+      }
+    }
+
+    if (event.key.toLowerCase() === 'j') {
+      event.preventDefault();
+      toggleChatSidebar(true);
+      if (inputChatQuery) inputChatQuery.focus();
+    }
+  });
+
+  // Initialize closed state
+  toggleChatSidebar(false);
+
+  function submitChatQuery() {
+    const text = inputChatQuery.value.trim();
+    if (!text) return;
+    
+    appendChatMessage('user', text);
+    inputChatQuery.value = '';
+    if (inputGlobalAsk) inputGlobalAsk.value = '';
+    
+    const loadingId = appendChatMessage('assistant', 'Generating local response...');
     
     const transcriptText = activeSession && activeSession.transcript 
       ? activeSession.transcript.map(t => `[${t.timestamp}] ${t.speaker}: ${t.text}`).join('\n') 
       : 'No transcript active.';
       
-    window.api.chatQuery(presetType, transcriptText).then((result) => {
+    window.api.chatQuery(text, transcriptText).then((result) => {
       if (!result || !result.requestId) {
         updateChatMessage(loadingId, result?.error || 'Could not query local AI model.');
         return;
