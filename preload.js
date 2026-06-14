@@ -89,6 +89,19 @@ contextBridge.exposeInMainWorld('api', {
   },
   cancelLlmStream: (requestId) => ipcRenderer.invoke('llm:cancel', requestId),
 
+  getProcessingJobs: () => ipcRenderer.invoke('processing:get-jobs'),
+  retryProcessing: (sessionId) => ipcRenderer.invoke('processing:retry', sessionId),
+  onProcessingJobsUpdated: (callback) => {
+    const subscription = (event, data) => callback(data);
+    ipcRenderer.on('processing:jobs-updated', subscription);
+    return () => ipcRenderer.removeListener('processing:jobs-updated', subscription);
+  },
+  onProcessingTranscriptUpdated: (callback) => {
+    const subscription = (event, data) => callback(data);
+    ipcRenderer.on('processing:transcript-updated', subscription);
+    return () => ipcRenderer.removeListener('processing:transcript-updated', subscription);
+  },
+
   // Folders & Obsidian Export (v0.3)
   getFolders: () => ipcRenderer.invoke('folders:get'),
   createFolder: (name) => ipcRenderer.invoke('folders:create', name),

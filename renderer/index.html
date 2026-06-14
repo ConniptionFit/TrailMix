@@ -11,7 +11,7 @@
   </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Roboto+Slab:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="themes.css">
   <link rel="stylesheet" href="index.css">
   <style>
@@ -231,10 +231,6 @@
             <h1>Live Transcription</h1>
             <p class="subtitle">100% Offline speech-to-text and intelligence engine</p>
           </div>
-          <div class="devices-picker">
-            <span class="device-badge">🎤 Mic: <span id="label-mic-device">Loading...</span></span>
-            <span class="device-badge">🔊 System: <span id="label-sys-device">Loading...</span></span>
-          </div>
         </div>
 
         <div class="dashboard-toolbar">
@@ -420,6 +416,10 @@
 
       <!-- Nuts and Bolts -->
       <section id="tab-settings" class="tab-pane">
+        <div class="settings-save-bar">
+          <span id="settings-dirty-hint" class="field-desc" style="margin: 0; flex: 1; opacity: 0;">Unsaved changes</span>
+          <button id="btn-save-settings" class="btn-primary" type="button" disabled>Save Settings</button>
+        </div>
         <div class="tab-header">
           <h1>Nuts and Bolts</h1>
           <p>Configure offline models, appearance, and privacy credentials</p>
@@ -609,7 +609,6 @@
               <input type="password" id="input-encrypt-password" class="input-text" placeholder="Enter security passphrase">
               <p class="field-desc">This password will derive an AES-256 key to secure calls. Share this key to let recipients decrypt the call file.</p>
             </div>
-            <button id="btn-save-settings" class="btn-primary" style="margin-top: 15px; width: 100%;">Save Settings</button>
           </div>
         </div>
       </section>

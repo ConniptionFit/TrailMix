@@ -19,7 +19,10 @@ const { AudioCaptureService } = require('./services/AudioCaptureService');
 const { TranscriptionService } = require('./services/TranscriptionService');
 const { LLMInferenceService } = require('./services/LLMInferenceService');
 const { EnhanceNotesService } = require('./services/EnhanceNotesService');
+const { SessionProcessingService, PROCESSING_STATUS } = require('./services/SessionProcessingService');
 const { documentFromSession } = require('./lib/editor-document');
+const { coalesceIncomingSegments } = require('./lib/transcript-coalesce');
+const { splitTranscriptIntoBlocks } = require('./lib/processing-blocks');
 const sqlite3 = require('sqlite3').verbose();
 
 // XDG Compliant Database Path
@@ -69,14 +72,75 @@ const audioCaptureService = new AudioCaptureService({ tempDir: TEMP_DIR });
 const transcriptionService = new TranscriptionService();
 const llmService = new LLMInferenceService();
 const enhanceNotesService = new EnhanceNotesService(llmService);
+const sessionProcessingService = new SessionProcessingService();
+
+async function loadSessionPayloadFromDb(sessionId) {
+  const row = await dbGet('SELECT * FROM sessions WHERE id = ?', [sessionId]);
+  if (!row) return null;
+
+  if (row.encrypted) {
+    const cachedKey = decryptionKeys.get(sessionId) || settings.encryptionPassword;
+    if (!cachedKey) return null;
+    const decrypted = encryption.decrypt(row.encrypted_payload, cachedKey);
+    const session = JSON.parse(decrypted);
+    session.folder_id = row.folder_id;
+    return session;
+  }
+
+  try {
+    const session = JSON.parse(row.encrypted_payload || '{}');
+    session.folder_id = row.folder_id;
+    return session;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function saveSessionPayloadToDb(sessionId, session) {
+  if (!session) return;
+  session.id = sessionId;
+  await saveSessionToDbPromise(session);
+}
+
+function broadcastProcessingProgress() {
+  sessionProcessingService.getJobMap().then((jobs) => {
+    if (mainWindow) {
+      mainWindow.webContents.send('processing:jobs-updated', jobs);
+    }
+  });
+}
+
+sessionProcessingService.configure({
+  dbRun,
+  dbGet,
+  dbAll,
+  llmService,
+  getSettings: () => settings,
+  loadSessionPayload: loadSessionPayloadFromDb,
+  saveSessionPayload: saveSessionPayloadToDb,
+  onProgress: () => broadcastProcessingProgress(),
+  onTranscriptUpdated: ({ sessionId, session }) => {
+    if (mainWindow) {
+      mainWindow.webContents.send('processing:transcript-updated', { sessionId, session });
+    }
+    broadcastProcessingProgress();
+  },
+  onComplete: (sessionId) => {
+    broadcastProcessingProgress();
+    if (mainWindow) {
+      mainWindow.webContents.send('calls:list-updated');
+    }
+  },
+  runEnrichment: (sessionId) => runSessionEnrichment(sessionId)
+});
 
 function handleTranscriptionSegments({ chunkIndex, segments }) {
   if (!activeSession) return;
   if (!activeSession.transcript) activeSession.transcript = [];
 
-  segments.forEach((segment) => {
+  const rawSegments = segments.map((segment) => {
     const sessionOffsetMs = (sessionChunkOffset + chunkIndex) * 2000 + segment.fromMs;
-    const transcriptSegment = {
+    return {
       id: `${activeSession.id}_${sessionChunkOffset + chunkIndex}_${segment.speaker.replace(/\s+/g, '_')}_${segment.fromMs}`,
       timestampMs: sessionOffsetMs,
       timestamp: formatTimestamp(sessionOffsetMs),
@@ -85,18 +149,21 @@ function handleTranscriptionSegments({ chunkIndex, segments }) {
       chunkIndex: sessionChunkOffset + chunkIndex,
       wallTimeMs: Date.now()
     };
+  });
 
-    activeSession.transcript.push(transcriptSegment);
+  const { transcript, emitted } = coalesceIncomingSegments(activeSession.transcript, rawSegments);
+  activeSession.transcript = transcript;
 
+  emitted.forEach((segment) => {
     if (mainWindow) {
-      mainWindow.webContents.send('audio:on-transcription-update', transcriptSegment);
+      mainWindow.webContents.send('audio:on-transcription-update', segment);
     }
     if (miniWindow) {
-      miniWindow.webContents.send('audio:on-transcription-update', transcriptSegment);
+      miniWindow.webContents.send('audio:on-transcription-update', segment);
     }
   });
 
-  if (segments.length > 0) {
+  if (emitted.length > 0) {
     saveSessionToFileSilently(activeSession);
   }
 }
@@ -807,6 +874,8 @@ function saveSessionToFileSilently(session) {
 async function startRecordingHandler() {
   if (isRecording) return;
 
+  const resumingFromPause = isPaused;
+
   const devices = queryAudioDevices();
   let sink = devices.sink;
   let source = devices.source;
@@ -850,15 +919,12 @@ async function startRecordingHandler() {
   isPaused = false;
   updateTray();
 
-  if (diarizationInterval) {
-    clearInterval(diarizationInterval);
-  }
-  diarizationInterval = setInterval(() => {
-    runSpeakerDiarizationLLM();
-  }, 25000);
-
   if (mainWindow) {
-    mainWindow.webContents.send('audio:on-recording-status', { isRecording: true, isPaused: false });
+    mainWindow.webContents.send('audio:on-recording-status', {
+      isRecording: true,
+      isPaused: false,
+      isNewSession: !resumingFromPause && (!activeSession?.transcript?.length)
+    });
   }
 
   try {
@@ -1038,83 +1104,86 @@ async function runEnhanceNotesForSession(session) {
   }
 }
 
-async function finalizeAndSaveSession() {
-  if (!activeSession) return;
-  
-  // Sort transcripts chronologically
-  activeSession.transcript.sort((a, b) => a.timestampMs - b.timestampMs);
-  
-  // Run final speaker diarization
-  await diarizeSpeakersPromise();
+async function runSessionEnrichment(sessionId) {
+  const session = await loadSessionPayloadFromDb(sessionId);
+  if (!session) return;
 
-  const enhancePromise = runEnhanceNotesForSession(activeSession);
-  
-  const textContent = activeSession.transcript.map(t => `[${t.timestamp}] ${t.speaker}: ${t.text}`).join('\n');
-  
-  if (textContent.trim()) {
+  session.transcript.sort((a, b) => a.timestampMs - b.timestampMs);
+
+  const enhanceResult = await runEnhanceNotesForSession(session);
+  if (enhanceResult) {
+    session.editorDocument = enhanceResult.editorDocument;
+    session.enhancedNotes = enhanceResult.enhancedNotes;
+  }
+
+  const textContent = session.transcript.map((t) => `[${t.timestamp}] ${t.speaker}: ${t.text}`).join('\n');
+  if (!textContent.trim()) {
+    await saveSessionPayloadToDb(sessionId, session);
+    if (mainWindow) {
+      mainWindow.webContents.send('calls:session-summary-ready', session);
+    }
+    return;
+  }
+
+  await new Promise((resolve) => {
     triggerOllamaSummary(textContent, (summary, actionItems) => {
-      activeSession.summary = summary;
-      activeSession.actionItems = actionItems;
-      
-      triggerOllamaContextRename(textContent, async (title, description, tags) => {
-        const enhanceResult = await enhancePromise;
-        if (enhanceResult) {
-          activeSession.editorDocument = enhanceResult.editorDocument;
-          activeSession.enhancedNotes = enhanceResult.enhancedNotes;
-        }
+      session.summary = summary;
+      session.actionItems = actionItems;
 
-        const oldId = activeSession.id;
-        const callsDir = getCallsDir();
-        const oldFilePath = path.join(callsDir, `${oldId}.trail`);
-        
-        activeSession.title = title;
-        activeSession.description = description;
-        activeSession.tags = [];
-        activeSession.suggestedTags = tags;
-        
-        // Auto-extract tasks for Timeline
-        extractTasksFromActionItems(activeSession);
-        
-        // Save session first
-        saveSessionToFile(activeSession);
-        
+      triggerOllamaContextRename(textContent, async (title, description, tags) => {
+        const oldId = session.id;
+        session.title = title;
+        session.description = description;
+        session.tags = [];
+        session.suggestedTags = tags;
+
+        extractTasksFromActionItems(session);
+        await saveSessionPayloadToDb(sessionId, session);
+
         try {
+          const callsDir = getCallsDir();
           const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
           const newId = `${slug}_${oldId}`;
-          const newFilePath = path.join(callsDir, `${newId}.trail`);
-          
-          if (fs.existsSync(oldFilePath)) {
-            activeSession.id = newId;
-            activeSession.filePath = newFilePath;
-            
-            // Re-save session with updated ID
-            saveSessionToFile(activeSession);
-            
-            // Delete old file
-            fs.unlinkSync(oldFilePath);
+          if (newId !== oldId) {
+            session.id = newId;
+            session.filePath = path.join(callsDir, `${newId}.trail`);
+            await saveSessionPayloadToDb(newId, session);
+            await dbRun('DELETE FROM sessions WHERE id = ?', [oldId]);
+            const oldPath = path.join(callsDir, `${oldId}.trail.bak`);
+            if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
           }
         } catch (renameErr) {
-          console.error("Failed to rename call file based on context", renameErr);
+          console.error('Failed to rename session after enrichment', renameErr);
         }
-        
-        // Broadcast that summary and rename are fully completed!
+
         if (mainWindow) {
-          mainWindow.webContents.send('calls:session-summary-ready', activeSession);
+          mainWindow.webContents.send('calls:session-summary-ready', session);
         }
+        resolve();
       });
     });
-  } else {
-    const enhanceResult = await enhancePromise;
-    if (enhanceResult) {
-      activeSession.editorDocument = enhanceResult.editorDocument;
-      activeSession.enhancedNotes = enhanceResult.enhancedNotes;
-    }
+  });
+}
 
-    saveSessionToFile(activeSession);
-    if (mainWindow) {
-      mainWindow.webContents.send('calls:session-summary-ready', activeSession);
-    }
+async function finalizeAndSaveSession() {
+  if (!activeSession) return;
+
+  activeSession.transcript.sort((a, b) => a.timestampMs - b.timestampMs);
+  const sessionId = activeSession.id;
+
+  saveSessionToFile(activeSession);
+
+  const blocks = splitTranscriptIntoBlocks(activeSession.transcript);
+  await sessionProcessingService.createJob(sessionId, blocks.length);
+
+  if (mainWindow) {
+    mainWindow.webContents.send('calls:list-updated');
+    broadcastProcessingProgress();
   }
+
+  const finishedSession = activeSession;
+  activeSession = null;
+  return finishedSession;
 }
 
 // ----------------------------------------------------
@@ -1408,14 +1477,18 @@ ipcMain.handle('audio:pause-recording', () => {
 });
 
 ipcMain.handle('audio:resume-recording', () => {
-  isRecording = true;
-  isPaused = false;
-  updateTray();
-  if (mainWindow) {
-    mainWindow.webContents.send('audio:on-recording-status', { isRecording: true, isPaused: false });
-  }
+  if (!isPaused) return false;
   startRecordingHandler();
   return true;
+});
+
+ipcMain.handle('processing:get-jobs', async () => {
+  return sessionProcessingService.getJobMap();
+});
+
+ipcMain.handle('processing:retry', async (event, sessionId) => {
+  await sessionProcessingService.createJob(sessionId, splitTranscriptIntoBlocks((await loadSessionPayloadFromDb(sessionId))?.transcript || []).length);
+  return { success: true };
 });
 
 ipcMain.handle('calls:resume-transcription', async (event, sessionId) => {
@@ -1542,6 +1615,7 @@ ipcMain.handle('calls:get-list', async () => {
   try {
     await migrateOldData();
     await syncDatabaseWithFiles();
+    const processingJobs = await sessionProcessingService.getJobMap();
     const rows = await dbAll("SELECT * FROM sessions ORDER BY mtimeMs DESC");
     return rows.map(row => {
       let tags = [];
@@ -1561,7 +1635,8 @@ ipcMain.handle('calls:get-list', async () => {
         tags: tags,
         suggestedTags: suggestedTags,
         folder_id: row.folder_id,
-        mtimeMs: row.mtimeMs
+        mtimeMs: row.mtimeMs,
+        processing: processingJobs[row.id] || null
       };
     });
   } catch (err) {
@@ -2070,9 +2145,12 @@ ipcMain.on('app:relaunch', () => {
 // App Lifecycles
 app.whenReady().then(async () => {
   await initDatabase();
+  await sessionProcessingService.initSchema();
+  await sessionProcessingService.recoverInterruptedJobs();
   createMainWindow();
   setupTray();
   watchCallsDirectory();
+  broadcastProcessingProgress();
   
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
