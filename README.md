@@ -61,7 +61,7 @@ TrailMix records system audio and your microphone, transcribes speech locally wi
 | **`pactl`** (PulseAudio utils) | Microphone and system-audio device discovery |
 | **Ollama** | Local LLM for summaries, chat, diarization, and The Mix |
 | **whisper.cpp** | Offline speech-to-text (installed via setup script) |
-| **Build tools** | `make`, `git`, and a C++ compiler to compile whisper.cpp |
+| **Build tools** | `git`, `cmake` (bundled in `bin/cmake`), and a C++ compiler (`g++`) to compile whisper.cpp |
 
 > **Platform note:** System-audio capture currently targets PulseAudio on Linux. macOS and Windows would need alternate capture backends.
 
@@ -141,15 +141,22 @@ chmod +x scripts/setup-whisper.sh
 
 This script will:
 
-1. Clone [whisper.cpp](https://github.com/ggerganov/whisper.cpp) into `bin/whisper.cpp`
-2. Compile the `main` binary
+1. Clone [whisper.cpp](https://github.com/ggerganov/whisper.cpp) into `bin/whisper.cpp` (or re-clone if the checkout is incomplete)
+2. Build with CMake (uses the bundled cmake in `bin/cmake` when present)
 3. Download **tiny** and **base** GGML models
 
 Confirm the binary exists:
 
 ```bash
-ls -la bin/whisper.cpp/main
+ls -la bin/whisper.cpp/build/bin/whisper-cli
 ls bin/whisper.cpp/models/
+```
+
+If you previously had a broken `bin/whisper.cpp` folder, the script removes and re-clones it automatically. You can also reset manually:
+
+```bash
+rm -rf bin/whisper.cpp
+./scripts/setup-whisper.sh
 ```
 
 ### Step 6 — Launch the app
@@ -379,10 +386,10 @@ npm run package
 |---------|-------------|
 | **Mic / System shows "None"** | Open Nuts and Bolts → pick devices manually; run `pactl list sources short` |
 | **No system audio in transcript** | Select a `.monitor` source, not the raw output sink |
-| **Empty transcription** | Verify `bin/whisper.cpp/main` exists and the model is in `bin/whisper.cpp/models/` |
+| **Empty transcription** | Verify `bin/whisper.cpp/build/bin/whisper-cli` exists and the model is in `bin/whisper.cpp/models/` |
 | **LLM / Mix errors** | Ensure `ollama serve` is running and the model is pulled (`ollama list`) |
 | **ffmpeg not found** | Install ffmpeg and confirm it is on your `PATH` |
-| **Whisper compile fails** | Install `build-essential` (or equivalent) and re-run `./scripts/setup-whisper.sh` |
+| **Whisper compile fails** | Install `build-essential` (Debian/Ubuntu) or `gcc-c++` (Fedora), then re-run `./scripts/setup-whisper.sh`. If you see `No makefile found`, remove `bin/whisper.cpp` and run the script again. |
 
 ---
 
