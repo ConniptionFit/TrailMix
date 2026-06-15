@@ -5,6 +5,27 @@ All notable changes to TrailMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-06-15
+
+### Added
+- **Modular main process architecture** — `main/` directory with `ModuleRegistry`, `AppContext`, and 13 domain modules (audio, sessions, meetings, calls, chat, tasks, folders, processing, updates, models, windows, workflow)
+- **Plugin-style module API** — `register`, `registerIpc`, `onReady`, `onBeforeQuit` hooks for expandable functionality (`docs/MODULES.md`)
+- **IPC channel registry** — complete `lib/ipc-channels.js` contract covering all main ↔ renderer channels
+- **Renderer IPC client** — `renderer/shared/ipc-client.js` typed wrapper over `window.api`
+- **Legacy recovery** — git tag `v0.4.0`, branch `legacy/v0.4.0`, and `legacy/main.v0.4.0.js` snapshot
+- **electron-builder AppImage** — Linux packaging config with whisper.cpp extraResources
+
+### Changed
+- **Main entry** — `main.js` is now a thin shim; bootstrap lives in `main/index.js`
+- **Runtime core** — business logic extracted to `main/core/runtime.js`; IPC wiring in `main/ipc/register-all.js`
+- **Task DB helpers** — `saveTaskToDb` / `getTasksListFromDb` moved to `lib/task-db.js` for shared use
+- Version bumped to **0.5.0** (minor increment from 0.4.0)
+
+### Recovery
+To restore the pre-rewrite codebase: `git checkout v0.4.0` or `git checkout legacy/v0.4.0`
+
+---
+
 ## [0.3.1] - 2026-06-14
 
 ### Added

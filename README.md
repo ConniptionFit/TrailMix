@@ -336,11 +336,10 @@ Session files and the SQLite task database:
 
 ```
 ┌─────────────┐     IPC      ┌──────────────────────────────────────┐
-│  Renderer   │◄────────────►│  Main process                        │
-│  (UI)       │              │  AudioCaptureService → chunk files   │
-└─────────────┘              │  TranscriptionService → worker thread│
-                             │  LLMInferenceService → Ollama (stream)│
-                             │  EnhanceNotesService → Mix document   │
+│  Renderer   │◄────────────►│  Main process (modular v0.5)         │
+│  Hub/Meeting│              │  ModuleRegistry → domain modules     │
+└─────────────┘              │  runtime core → services layer       │
+                             │  AudioCapture → Transcription → LLM  │
                              └──────────────────────────────────────┘
                                         │              │
                                    ffmpeg/pactl    whisper.cpp
@@ -352,16 +351,25 @@ Session files and the SQLite task database:
 ```
 TrailMix/
 ├── assets/logo.png         # App icon (window, tray, docs)
-├── main.js                 # Electron main process
+├── main.js                 # Electron entry shim
+├── main/                   # Modular main process (v0.5)
+│   ├── index.js            # Bootstrap
+│   ├── ModuleRegistry.js   # Plugin loader
+│   ├── core/runtime.js     # Business logic + services
+│   ├── ipc/                # IPC handler wiring
+│   └── modules/            # Domain modules (audio, sessions, …)
+├── legacy/                 # v0.4.0 snapshot for recovery
 ├── preload.js              # Secure IPC bridge
 ├── encryption.js           # AES-256-GCM
-├── lib/                    # Shared utilities
+├── lib/                    # Shared utilities + IPC channel constants
 ├── services/               # Audio, transcription, LLM, enhance
 ├── workers/                # Background transcription worker
-├── renderer/               # UI (vanilla JS)
+├── renderer/               # Hub + Meeting UI (vanilla JS)
 ├── scripts/                # Setup and screenshot utilities
-└── docs/screenshots/       # README screenshots
+└── docs/                   # MODULES.md, screenshots
 ```
+
+See [docs/MODULES.md](docs/MODULES.md) for the plugin development guide.
 
 ---
 

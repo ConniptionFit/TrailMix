@@ -1,6 +1,6 @@
 {
   "name": "trailmix",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Local-first, privacy-centric AI note-taking and transcription desktop application",
   "main": "main.js",
   "repository": {
@@ -16,18 +16,22 @@
     "CHANGELOG.md",
     "assets/",
     "docs/",
+    "legacy/",
     "main.js",
+    "main/",
     "preload.js",
     "encryption.js",
     "lib/",
     "services/",
     "workers/",
+    "windows/",
     "renderer/",
     "scripts/"
   ],
   "scripts": {
     "start": "electron .",
-    "package": "electron-builder",
+    "package": "electron-builder --linux AppImage",
+    "package:dir": "electron-builder --linux dir",
     "screenshots": "electron scripts/capture-screenshots.js"
   },
   "keywords": [
@@ -35,12 +39,14 @@
     "ai",
     "transcription",
     "notes",
-    "privacy"
+    "privacy",
+    "electron"
   ],
   "author": "TrailMix Team",
   "license": "MIT",
   "devDependencies": {
-    "electron": "^31.7.7"
+    "electron": "^31.7.7",
+    "electron-builder": "^25.1.8"
   },
   "dependencies": {
     "electron-updater": "^6.8.9",
@@ -48,6 +54,32 @@
   },
   "build": {
     "appId": "com.trailmix.app",
+    "productName": "TrailMix",
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "files": [
+      "**/*",
+      "!bin/cmake/**",
+      "!bin/cmake",
+      "!dist/**",
+      "!legacy/**",
+      "!.git/**"
+    ],
+    "extraResources": [
+      {
+        "from": "bin/whisper.cpp",
+        "to": "whisper.cpp",
+        "filter": ["**/*"]
+      }
+    ],
+    "linux": {
+      "target": ["AppImage"],
+      "category": "Office",
+      "icon": "assets/logo.png",
+      "artifactName": "TrailMix-${version}-${arch}.${ext}"
+    },
     "publish": [
       {
         "provider": "github",
