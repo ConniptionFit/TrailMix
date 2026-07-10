@@ -320,8 +320,15 @@ if (isMiniMode) {
   // ----------------------------------------------------
   const sidebarCallsList = document.getElementById('sidebar-calls-list');
   const historyGrid = document.getElementById('history-grid');
+  const passwordModal = document.getElementById('password-modal');
+  const modalPasswordInput = document.getElementById('modal-password-input');
+  const modalErrorMessage = document.getElementById('modal-error-message');
+  const btnModalCancel = document.getElementById('btn-modal-cancel');
+  const btnModalDecrypt = document.getElementById('btn-modal-decrypt');
+  let pendingCallToDecrypt = null;
   
   let isMultiSelectMode = false;
+  let selectedTrailIds = new Set();
   let relatedCallsList = null;
   let contextMenuTargetCall = null;
   const callsContextMenu = document.getElementById('calls-context-menu');
@@ -432,36 +439,39 @@ if (isMiniMode) {
       sidebarBulkActions.classList.remove('hidden');
     } else {
       sidebarBulkActions.classList.add('hidden');
+      selectedTrailIds.clear();
     }
     loadHistoryList();
     updateBulkSelectState();
   }
+
+  function getSelectedTrailCalls() {
+    return [...selectedTrailIds].map((id) => getTrailCallById(id)).filter(Boolean);
+  }
   
   function updateBulkSelectState() {
-    const checked = document.querySelectorAll('.call-item-checkbox:checked');
+    const count = selectedTrailIds.size;
     const countSpan = document.getElementById('bulk-select-count');
     if (countSpan) {
-      countSpan.textContent = `${checked.length} selected`;
+      countSpan.textContent = `${count} selected`;
     }
+    const selected = getSelectedTrailCalls();
     
     // Enable/disable actions
-    if (btnBulkMerge) btnBulkMerge.disabled = checked.length < 2;
-    if (btnBulkExport) btnBulkExport.disabled = checked.length < 1;
-    if (btnBulkDelete) btnBulkDelete.disabled = checked.length < 1;
+    if (btnBulkMerge) btnBulkMerge.disabled = count < 2;
+    if (btnBulkExport) btnBulkExport.disabled = count < 1;
+    if (btnBulkDelete) btnBulkDelete.disabled = count < 1;
     if (btnBulkDecrypt) {
-      const lockedSelected = Array.from(checked).filter((cb) => {
-        const item = cb.closest('.call-list-item');
-        return item?.querySelector('.call-lock-btn');
-      });
+      const lockedSelected = selected.filter((call) => call.encrypted && !call.unlocked);
       btnBulkDecrypt.disabled = lockedSelected.length < 1;
     }
   }
   
   if (btnBulkMerge) {
     btnBulkMerge.addEventListener('click', () => {
-      const checked = Array.from(document.querySelectorAll('.call-item-checkbox:checked'));
-      if (checked.length < 2) return;
-      const paths = checked.map(cb => cb.getAttribute('data-filepath'));
+      const selected = getSelectedTrailCalls();
+      if (selected.length < 2) return;
+      const paths = selected.map((c) => c.filePath || c.id);
       window.api.mergeCalls(paths).then(res => {
         if (res.success) {
           showToast(`Successfully merged selected calls into "${res.session.title}"`, 'info');
@@ -477,10 +487,9 @@ if (isMiniMode) {
   
   if (btnBulkDecrypt) {
     btnBulkDecrypt.addEventListener('click', () => {
-      const checked = Array.from(document.querySelectorAll('.call-item-checkbox:checked'));
-      const lockedIds = checked
-        .map((cb) => cb.closest('.call-list-item')?.getAttribute('data-callid'))
-        .filter((id, index) => id && checked[index].closest('.call-list-item')?.querySelector('.call-lock-btn'));
+      const lockedIds = getSelectedTrailCalls()
+        .filter((call) => call.encrypted && !call.unlocked)
+        .map((call) => call.id);
       if (!lockedIds.length) return;
       bulkDecryptCount.textContent = `Unlock ${lockedIds.length} encrypted session(s) with one key.`;
       bulkDecryptPassword.value = '';
@@ -517,9 +526,9 @@ if (isMiniMode) {
 
   if (btnBulkExport) {
     btnBulkExport.addEventListener('click', () => {
-      const checked = Array.from(document.querySelectorAll('.call-item-checkbox:checked'));
-      if (checked.length < 1) return;
-      const paths = checked.map(cb => cb.getAttribute('data-filepath'));
+      const selected = getSelectedTrailCalls();
+      if (selected.length < 1) return;
+      const paths = selected.map((c) => c.filePath || c.id);
       window.api.exportCalls(paths).then(res => {
         if (res.success) {
           showToast(`Successfully exported transcripts to: ${res.filePath}`, 'info');
@@ -534,14 +543,14 @@ if (isMiniMode) {
   
   if (btnBulkDelete) {
     btnBulkDelete.addEventListener('click', () => {
-      const checked = Array.from(document.querySelectorAll('.call-item-checkbox:checked'));
-      if (checked.length < 1) return;
+      const selected = getSelectedTrailCalls();
+      if (selected.length < 1) return;
       const ask = window.TrailMixConfirm?.ask
-        ? window.TrailMixConfirm.ask(`Are you sure you want to delete the ${checked.length} selected transcripts?`)
-        : Promise.resolve(window.confirm(`Are you sure you want to delete the ${checked.length} selected transcripts?`));
+        ? window.TrailMixConfirm.ask(`Are you sure you want to delete the ${selected.length} selected transcripts?`)
+        : Promise.resolve(window.confirm(`Are you sure you want to delete the ${selected.length} selected transcripts?`));
       ask.then((ok) => {
         if (!ok) return;
-        const paths = checked.map(cb => cb.getAttribute('data-filepath'));
+        const paths = selected.map((c) => c.filePath || c.id);
         window.api.deleteMultipleCalls(paths).then(res => {
           isMultiSelectMode = false;
           toggleMultiSelectModeUI();
@@ -579,18 +588,8 @@ if (isMiniMode) {
   if (ctxSelectMode) {
     ctxSelectMode.addEventListener('click', () => {
       isMultiSelectMode = true;
+      if (contextMenuTargetCall?.id) selectedTrailIds.add(contextMenuTargetCall.id);
       toggleMultiSelectModeUI();
-      if (contextMenuTargetCall) {
-        setTimeout(() => {
-          const checkboxes = document.querySelectorAll('.call-item-checkbox');
-          checkboxes.forEach(cb => {
-            if (cb.getAttribute('data-filepath') === contextMenuTargetCall.filePath) {
-              cb.checked = true;
-            }
-          });
-          updateBulkSelectState();
-        }, 50);
-      }
       callsContextMenu.classList.add('hidden');
     });
   }
@@ -658,9 +657,314 @@ if (isMiniMode) {
     });
   }
 
+  const TRAIL_ROW_ESTIMATE = 92;
+  const TRAIL_OVERSCAN = 6;
+  const HISTORY_CARD_CAP = 48;
+  const trailVirtual = {
+    calls: [],
+    byId: new Map(),
+    snippetById: new Map(),
+    start: 0,
+    end: 0,
+    scrollBound: false
+  };
+
+  function getTrailScrollParent() {
+    return sidebarCallsList?.closest('.sidebar-history-section') || null;
+  }
+
+  function getTrailCallById(id) {
+    return trailVirtual.byId.get(id) || null;
+  }
+
+  function buildTrailItemElement(call) {
+    const item = document.createElement('div');
+    const isSelected = activeSession && activeSession.id === call.id;
+    item.className = `call-list-item ${isSelected ? 'selected' : ''}`;
+    item.setAttribute('data-callid', call.id);
+
+    let checkboxHtml = '';
+    if (isMultiSelectMode) {
+      const checked = selectedTrailIds.has(call.id) ? 'checked' : '';
+      checkboxHtml = `<input type="checkbox" class="call-item-checkbox" data-filepath="${escapeHtml(call.filePath || '')}" ${checked}>`;
+    }
+
+    const tagline = escapeHtml(call.title || 'Meeting Session');
+    const ftsSnippet = trailVirtual.snippetById.get(call.id);
+    const descriptionRaw = call.encrypted && !call.unlocked
+      ? '🔒 Encrypted — click to unlock'
+      : (ftsSnippet
+        ? ftsSnippet.replace(/\[\[/g, '').replace(/\]\]/g, '')
+        : (call.encrypted ? 'Encrypted session' : (call.description || 'No description available.')));
+    const description = escapeHtml(descriptionRaw);
+
+    let tagsHtml = '';
+    const tags = call.tags || [];
+    const suggestedTags = call.suggestedTags || [];
+    if (tags.length > 0 || suggestedTags.length > 0) {
+      tagsHtml = '<div class="call-tags-container">';
+      tags.forEach((tag) => {
+        tagsHtml += `<span class="tag-pill">#${escapeHtml(tag)}</span>`;
+      });
+      if (!isMultiSelectMode) {
+        suggestedTags.forEach((tag) => {
+          tagsHtml += `<span class="suggested-tag-pill" data-tag="${escapeHtml(tag)}">+ ${escapeHtml(tag)}</span>`;
+        });
+      }
+      tagsHtml += '</div>';
+    }
+
+    let processingHtml = '';
+    if (call.processing && call.processing.status && call.processing.status !== 'complete') {
+      const label = escapeHtml(call.processing.label || 'Processing…');
+      const progress = call.processing.progress || 0;
+      const failed = call.processing.status === 'failed';
+      processingHtml = `
+        <div class="processing-badge ${failed ? 'failed' : ''}"><span class="processing-badge-dot"></span>${label}</div>
+        <div class="processing-progress-track"><div class="processing-progress-fill" style="width: ${progress}%"></div></div>
+        ${failed ? `<button type="button" class="processing-retry-btn" data-retry-id="${escapeHtml(call.id)}">Retry</button>` : ''}
+      `;
+    }
+
+    item.innerHTML = `
+      ${checkboxHtml}
+      <div class="call-item-details">
+        <div class="call-item-title">${call.encrypted && !call.unlocked ? '<button type="button" class="call-lock-btn" title="Unlock">🔒</button> ' : (call.encrypted ? '🔒 ' : '')}${tagline}</div>
+        <div class="call-item-date">${escapeHtml(call.date || '')}</div>
+        <div class="call-item-desc">${description}</div>
+        ${tagsHtml}
+        ${processingHtml}
+      </div>
+    `;
+    return item;
+  }
+
+  function renderVirtualTrailWindow() {
+    if (!sidebarCallsList) return;
+    const calls = trailVirtual.calls;
+    if (!calls.length) return;
+
+    const scrollParent = getTrailScrollParent();
+    const totalHeight = calls.length * TRAIL_ROW_ESTIMATE;
+    const listOffset = sidebarCallsList.offsetTop || 0;
+    const scrollTop = scrollParent ? scrollParent.scrollTop : 0;
+    const viewportHeight = scrollParent ? scrollParent.clientHeight : 600;
+    const relativeTop = Math.max(0, scrollTop - listOffset);
+    const start = Math.max(0, Math.floor(relativeTop / TRAIL_ROW_ESTIMATE) - TRAIL_OVERSCAN);
+    const end = Math.min(
+      calls.length,
+      Math.ceil((relativeTop + viewportHeight) / TRAIL_ROW_ESTIMATE) + TRAIL_OVERSCAN
+    );
+
+    if (
+      start === trailVirtual.start
+      && end === trailVirtual.end
+      && sidebarCallsList.querySelector('.calls-list-spacer')
+    ) {
+      return;
+    }
+
+    trailVirtual.start = start;
+    trailVirtual.end = end;
+
+    const spacer = document.createElement('div');
+    spacer.className = 'calls-list-spacer';
+    spacer.style.height = `${totalHeight}px`;
+    spacer.style.position = 'relative';
+
+    const windowEl = document.createElement('div');
+    windowEl.className = 'calls-list-window';
+    windowEl.style.position = 'absolute';
+    windowEl.style.top = `${start * TRAIL_ROW_ESTIMATE}px`;
+    windowEl.style.left = '0';
+    windowEl.style.right = '0';
+    windowEl.style.display = 'flex';
+    windowEl.style.flexDirection = 'column';
+    windowEl.style.gap = '6px';
+
+    for (let i = start; i < end; i++) {
+      windowEl.appendChild(buildTrailItemElement(calls[i]));
+    }
+    spacer.appendChild(windowEl);
+    sidebarCallsList.replaceChildren(spacer);
+  }
+
+  function promptUnlockCall(call) {
+    pendingCallToDecrypt = call;
+    if (modalPasswordInput) modalPasswordInput.value = '';
+    modalErrorMessage?.classList.add('hidden');
+    passwordModal?.classList.remove('hidden');
+  }
+
+  function showTrailTooltip(item, call) {
+    if (!globalTooltip || !call) return;
+    const tagline = call.title || 'Meeting Session';
+    const ftsSnippet = trailVirtual.snippetById.get(call.id);
+    const description = call.encrypted && !call.unlocked
+      ? '🔒 Encrypted — click to unlock'
+      : (ftsSnippet
+        ? ftsSnippet.replace(/\[\[/g, '').replace(/\]\]/g, '')
+        : (call.encrypted ? 'Encrypted session' : (call.description || 'No description available.')));
+    const rect = item.getBoundingClientRect();
+    let left = rect.right + 10;
+    if (left + 240 > window.innerWidth) left = rect.left - 230;
+    const top = rect.top + rect.height / 2;
+    globalTooltip.innerHTML = `<strong>${escapeHtml(tagline)}</strong><br><span>${escapeHtml(description)}</span>`;
+    globalTooltip.style.left = `${left}px`;
+    globalTooltip.style.top = `${top}px`;
+    globalTooltip.style.transform = 'translateY(-50%)';
+    globalTooltip.classList.remove('hidden');
+    globalTooltip.offsetHeight;
+    globalTooltip.classList.add('visible');
+  }
+
+  function hideTrailTooltip() {
+    if (tooltipTimeout) clearTimeout(tooltipTimeout);
+    if (globalTooltip) {
+      globalTooltip.classList.remove('visible');
+      globalTooltip.classList.add('hidden');
+    }
+  }
+
+  function ensureTrailListDelegation() {
+    if (!sidebarCallsList || sidebarCallsList.dataset.delegated === '1') return;
+    sidebarCallsList.dataset.delegated = '1';
+
+    sidebarCallsList.addEventListener('click', (e) => {
+      hideTrailTooltip();
+
+      const retryBtn = e.target.closest('.processing-retry-btn');
+      if (retryBtn && sidebarCallsList.contains(retryBtn)) {
+        e.stopPropagation();
+        const sid = retryBtn.getAttribute('data-retry-id');
+        if (!sid || !window.api.retryProcessing) return;
+        retryBtn.disabled = true;
+        retryBtn.textContent = 'Retrying…';
+        window.api.retryProcessing(sid).then(() => scheduleHistoryRefresh()).catch(() => {
+          retryBtn.disabled = false;
+          retryBtn.textContent = 'Retry';
+        });
+        return;
+      }
+
+      const sugPill = e.target.closest('.suggested-tag-pill');
+      if (sugPill && sidebarCallsList.contains(sugPill) && !isMultiSelectMode) {
+        e.stopPropagation();
+        const item = sugPill.closest('.call-list-item');
+        const call = getTrailCallById(item?.getAttribute('data-callid'));
+        const tagToAdd = sugPill.getAttribute('data-tag');
+        if (!call || !tagToAdd) return;
+        window.api.loadCall(call.filePath).then((res) => {
+          if (res.success) {
+            const callData = res.session;
+            if (!callData.tags) callData.tags = [];
+            if (!callData.tags.includes(tagToAdd)) callData.tags.push(tagToAdd);
+            if (callData.suggestedTags) {
+              callData.suggestedTags = callData.suggestedTags.filter((t) => t !== tagToAdd);
+            }
+            window.api.saveCall(callData).then(() => {
+              loadHistoryList();
+              if (activeSession && activeSession.id === callData.id) {
+                activeSession.tags = callData.tags;
+                activeSession.suggestedTags = callData.suggestedTags;
+              }
+            });
+          } else if (res.requirePassword) {
+            promptUnlockCall(call);
+          }
+        });
+        return;
+      }
+
+      const lockBtn = e.target.closest('.call-lock-btn');
+      if (lockBtn && sidebarCallsList.contains(lockBtn)) {
+        e.stopPropagation();
+        const item = lockBtn.closest('.call-list-item');
+        const call = getTrailCallById(item?.getAttribute('data-callid'));
+        if (call) promptUnlockCall(call);
+        return;
+      }
+
+      const item = e.target.closest('.call-list-item');
+      if (!item || !sidebarCallsList.contains(item)) return;
+      const call = getTrailCallById(item.getAttribute('data-callid'));
+      if (!call) return;
+
+      if (isMultiSelectMode) {
+        const cb = item.querySelector('.call-item-checkbox');
+        const id = call.id;
+        if (cb && e.target !== cb) {
+          cb.checked = !cb.checked;
+        }
+        if (cb?.checked) selectedTrailIds.add(id);
+        else selectedTrailIds.delete(id);
+        updateBulkSelectState();
+        return;
+      }
+
+      if (call.encrypted && !call.unlocked) promptUnlockCall(call);
+      else handleCallSelect(call);
+    });
+
+    sidebarCallsList.addEventListener('change', (e) => {
+      if (!e.target.classList?.contains('call-item-checkbox')) return;
+      const item = e.target.closest('.call-list-item');
+      const id = item?.getAttribute('data-callid');
+      if (!id) return;
+      if (e.target.checked) selectedTrailIds.add(id);
+      else selectedTrailIds.delete(id);
+      updateBulkSelectState();
+    });
+
+    sidebarCallsList.addEventListener('contextmenu', (e) => {
+      const item = e.target.closest('.call-list-item');
+      if (!item || !sidebarCallsList.contains(item)) return;
+      e.preventDefault();
+      const call = getTrailCallById(item.getAttribute('data-callid'));
+      if (!call) return;
+      contextMenuTargetCall = call;
+      if (callsContextMenu) {
+        callsContextMenu.style.left = `${e.clientX}px`;
+        callsContextMenu.style.top = `${e.clientY}px`;
+        callsContextMenu.classList.remove('hidden');
+      }
+    });
+
+    sidebarCallsList.addEventListener('mouseover', (e) => {
+      const item = e.target.closest('.call-list-item');
+      if (!item || !sidebarCallsList.contains(item)) return;
+      if (item === trailVirtual._hoverItem) return;
+      trailVirtual._hoverItem = item;
+      hideTrailTooltip();
+      const call = getTrailCallById(item.getAttribute('data-callid'));
+      tooltipTimeout = setTimeout(() => showTrailTooltip(item, call), 1000);
+    });
+
+    sidebarCallsList.addEventListener('mouseout', (e) => {
+      const item = e.target.closest('.call-list-item');
+      if (!item) return;
+      const related = e.relatedTarget?.closest?.('.call-list-item');
+      if (related === item) return;
+      if (trailVirtual._hoverItem === item) trailVirtual._hoverItem = null;
+      hideTrailTooltip();
+    });
+
+    const scrollParent = getTrailScrollParent();
+    if (scrollParent && !trailVirtual.scrollBound) {
+      trailVirtual.scrollBound = true;
+      scrollParent.addEventListener('scroll', () => {
+        if (!trailVirtual.calls.length) return;
+        renderVirtualTrailWindow();
+      }, { passive: true });
+    }
+  }
+
   function loadHistoryList() {
+    ensureTrailListDelegation();
+
     // Update header first
-    const headerTitle = document.querySelector('.sidebar-history-header h3');
+    const headerTitle = document.querySelector('.sidebar-history-header h3')
+      || document.querySelector('.sidebar-history-header .sidebar-subsection-label');
     if (headerTitle) {
       if (relatedCallsList) {
         headerTitle.innerHTML = `Related Calls <span id="btn-clear-related" style="cursor:pointer;font-size:10px;color:var(--primary);margin-left:6px;text-decoration:underline;">(Reset)</span>`;
@@ -677,8 +981,8 @@ if (isMiniMode) {
       }
     }
 
-    const fetchPromise = relatedCallsList 
-      ? Promise.resolve(relatedCallsList) 
+    const fetchPromise = relatedCallsList
+      ? Promise.resolve(relatedCallsList)
       : window.api.getCallList();
 
     const searchInput = document.getElementById('input-sidebar-search');
@@ -689,9 +993,8 @@ if (isMiniMode) {
       : Promise.resolve(null);
 
     Promise.all([fetchPromise, ftsPromise]).then(([calls, ftsHits]) => {
-      sidebarCallsList.innerHTML = '';
       historyGrid.innerHTML = '';
-      
+
       let filteredCalls = calls;
       const snippetById = new Map();
       if (Array.isArray(ftsHits)) {
@@ -699,7 +1002,7 @@ if (isMiniMode) {
           if (hit?.id) snippetById.set(hit.id, hit.snippet || '');
         });
       }
-      
+
       // Filter by active folder (filesystem-backed)
       if (activeFolderId && activeFolderId !== 'all') {
         filteredCalls = filteredCalls.filter((c) => {
@@ -724,7 +1027,7 @@ if (isMiniMode) {
           return [...selectedHistoryTags].every((tag) => callTags.includes(tag));
         });
       }
-      
+
       // Sort calls
       if (historySortOrder === 'date-newest') {
         filteredCalls.sort((a, b) => (b.mtimeMs || 0) - (a.mtimeMs || 0));
@@ -735,252 +1038,50 @@ if (isMiniMode) {
       } else if (historySortOrder === 'title-desc') {
         filteredCalls.sort((a, b) => (b.title || '').localeCompare(a.title || ''));
       }
-      
+
       if (searchTerm) {
         if (searchTerm.startsWith('#')) {
           const targetTag = searchTerm.substring(1);
-          filteredCalls = filteredCalls.filter(c => c.tags && c.tags.some(t => t.toLowerCase() === targetTag));
+          filteredCalls = filteredCalls.filter((c) => c.tags && c.tags.some((t) => t.toLowerCase() === targetTag));
         } else if (ftsHits) {
           const hitIds = new Set(ftsHits.map((h) => h.id));
           filteredCalls = filteredCalls.filter((c) => hitIds.has(c.id));
-          // Prefer FTS ranking when available.
           const rank = new Map(ftsHits.map((h, idx) => [h.id, idx]));
           filteredCalls.sort((a, b) => (rank.get(a.id) ?? 9999) - (rank.get(b.id) ?? 9999));
         } else {
-          filteredCalls = filteredCalls.filter(c => 
-            (c.title && c.title.toLowerCase().includes(searchTerm)) ||
-            (c.summary && c.summary.toLowerCase().includes(searchTerm)) ||
-            (c.description && c.description.toLowerCase().includes(searchTerm)) ||
-            (c.tags && c.tags.some(t => t.toLowerCase().includes(searchTerm)))
+          filteredCalls = filteredCalls.filter((c) =>
+            (c.title && c.title.toLowerCase().includes(searchTerm))
+            || (c.summary && c.summary.toLowerCase().includes(searchTerm))
+            || (c.description && c.description.toLowerCase().includes(searchTerm))
+            || (c.tags && c.tags.some((t) => t.toLowerCase().includes(searchTerm)))
           );
         }
       }
-      
+
+      trailVirtual.calls = filteredCalls;
+      trailVirtual.byId = new Map(filteredCalls.map((c) => [c.id, c]));
+      trailVirtual.snippetById = snippetById;
+      trailVirtual.start = -1;
+      trailVirtual.end = -1;
+      if (selectedTrailIds.size) {
+        const visibleIds = new Set(filteredCalls.map((c) => c.id));
+        selectedTrailIds = new Set([...selectedTrailIds].filter((id) => visibleIds.has(id)));
+      }
+
       if (filteredCalls.length === 0) {
         sidebarCallsList.innerHTML = '<div class="empty-state">No matching calls.</div>';
         historyGrid.innerHTML = '<div class="empty-state">No matching calls.</div>';
         renderHubHome(calls);
+        updateBulkSelectState();
         return;
       }
 
-      const SIDEBAR_RENDER_CAP = 200;
-      const totalMatches = filteredCalls.length;
-      const renderCalls = filteredCalls.slice(0, SIDEBAR_RENDER_CAP);
-      const sidebarFragment = document.createDocumentFragment();
-      const historyFragment = document.createDocumentFragment();
-      
-      renderCalls.forEach((call) => {
-        const item = document.createElement('div');
-        const isSelected = activeSession && activeSession.id === call.id;
-        item.className = `call-list-item ${isSelected ? 'selected' : ''}`;
-        item.setAttribute('data-callid', call.id);
-        
-        let checkboxHtml = '';
-        if (isMultiSelectMode) {
-          checkboxHtml = `<input type="checkbox" class="call-item-checkbox" data-filepath="${call.filePath}">`;
-        }
-        
-        const tagline = call.title || 'Meeting Session';
-        const ftsSnippet = snippetById.get(call.id);
-        const description = call.encrypted && !call.unlocked
-          ? '🔒 Encrypted — click to unlock'
-          : (ftsSnippet
-            ? ftsSnippet.replace(/\[\[/g, '').replace(/\]\]/g, '')
-            : (call.encrypted ? 'Encrypted session' : (call.description || 'No description available.')));
-        
-        let tagsHtml = '';
-        const tags = call.tags || [];
-        const suggestedTags = call.suggestedTags || [];
-        
-        if (tags.length > 0 || suggestedTags.length > 0) {
-          tagsHtml = '<div class="call-tags-container">';
-          tags.forEach(tag => {
-            tagsHtml += `<span class="tag-pill">#${tag}</span>`;
-          });
-          if (!isMultiSelectMode) {
-            suggestedTags.forEach(tag => {
-              tagsHtml += `<span class="suggested-tag-pill" data-tag="${tag}">+ ${tag}</span>`;
-            });
-          }
-          tagsHtml += '</div>';
-        }
+      renderVirtualTrailWindow();
+      updateBulkSelectState();
 
-        let processingHtml = '';
-        if (call.processing && call.processing.status && call.processing.status !== 'complete') {
-          const label = call.processing.label || 'Processing…';
-          const progress = call.processing.progress || 0;
-          const failed = call.processing.status === 'failed';
-          processingHtml = `
-            <div class="processing-badge ${failed ? 'failed' : ''}"><span class="processing-badge-dot"></span>${label}</div>
-            <div class="processing-progress-track"><div class="processing-progress-fill" style="width: ${progress}%"></div></div>
-            ${failed ? `<button type="button" class="processing-retry-btn" data-retry-id="${call.id}">Retry</button>` : ''}
-          `;
-        }
-        
-        item.innerHTML = `
-          ${checkboxHtml}
-          <div class="call-item-details">
-            <div class="call-item-title">${call.encrypted && !call.unlocked ? '<button type="button" class="call-lock-btn" title="Unlock">🔒</button> ' : (call.encrypted ? '🔒 ' : '')}${tagline}</div>
-            <div class="call-item-date">${call.date || ''}</div>
-            <div class="call-item-desc">${description}</div>
-            ${tagsHtml}
-            ${processingHtml}
-          </div>
-        `;
-        
-        // Handle select or check
-        item.addEventListener('click', (e) => {
-          if (tooltipTimeout) clearTimeout(tooltipTimeout);
-          if (globalTooltip) {
-            globalTooltip.classList.remove('visible');
-            globalTooltip.classList.add('hidden');
-          }
-
-          if (isMultiSelectMode) {
-            const cb = item.querySelector('.call-item-checkbox');
-            if (cb && e.target !== cb) {
-              cb.checked = !cb.checked;
-            }
-            updateBulkSelectState();
-          } else {
-            if (call.encrypted && !call.unlocked) {
-              pendingCallToDecrypt = call;
-              modalPasswordInput.value = '';
-              modalErrorMessage.classList.add('hidden');
-              passwordModal.classList.remove('hidden');
-            } else {
-              handleCallSelect(call);
-            }
-          }
-        });
-
-        const lockBtn = item.querySelector('.call-lock-btn');
-        if (lockBtn) {
-          lockBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            pendingCallToDecrypt = call;
-            modalPasswordInput.value = '';
-            modalErrorMessage.classList.add('hidden');
-            passwordModal.classList.remove('hidden');
-          });
-        }
-
-        // Hover tooltip logic with 1-second delay
-        item.addEventListener('mouseenter', () => {
-          if (tooltipTimeout) clearTimeout(tooltipTimeout);
-          
-          tooltipTimeout = setTimeout(() => {
-            if (!globalTooltip) return;
-            const rect = item.getBoundingClientRect();
-            
-            // Position tooltip to the right of the item
-            let left = rect.right + 10;
-            if (left + 240 > window.innerWidth) {
-              left = rect.left - 230;
-            }
-            
-            const top = rect.top + rect.height / 2;
-            
-            globalTooltip.innerHTML = `
-              <strong>${tagline}</strong><br>
-              <span>${description}</span>
-            `;
-            
-            globalTooltip.style.left = `${left}px`;
-            globalTooltip.style.top = `${top}px`;
-            globalTooltip.style.transform = 'translateY(-50%)';
-            globalTooltip.classList.remove('hidden');
-            globalTooltip.offsetHeight;
-            globalTooltip.classList.add('visible');
-          }, 1000);
-        });
-        
-        item.addEventListener('mouseleave', () => {
-          if (tooltipTimeout) clearTimeout(tooltipTimeout);
-          if (globalTooltip) {
-            globalTooltip.classList.remove('visible');
-            globalTooltip.classList.add('hidden');
-          }
-        });
-        
-        // Bind click on suggested tags
-        if (!isMultiSelectMode) {
-          const sugPills = item.querySelectorAll('.suggested-tag-pill');
-          sugPills.forEach(pill => {
-            pill.addEventListener('click', (e) => {
-              e.stopPropagation();
-              const tagToAdd = pill.getAttribute('data-tag');
-              
-              window.api.loadCall(call.filePath).then(res => {
-                if (res.success) {
-                  const callData = res.session;
-                  if (!callData.tags) callData.tags = [];
-                  if (!callData.tags.includes(tagToAdd)) {
-                    callData.tags.push(tagToAdd);
-                  }
-                  if (callData.suggestedTags) {
-                    callData.suggestedTags = callData.suggestedTags.filter(t => t !== tagToAdd);
-                  }
-                  
-                  window.api.saveCall(callData).then(() => {
-                    loadHistoryList();
-                    if (activeSession && activeSession.id === callData.id) {
-                      activeSession.tags = callData.tags;
-                      activeSession.suggestedTags = callData.suggestedTags;
-                    }
-                  });
-                } else if (res.requirePassword) {
-                  pendingCallToDecrypt = call;
-                  modalPasswordInput.value = '';
-                  modalErrorMessage.classList.add('hidden');
-                  passwordModal.classList.remove('hidden');
-                }
-              });
-            });
-          });
-        }
-        
-        if (isMultiSelectMode) {
-          const cb = item.querySelector('.call-item-checkbox');
-          if (cb) {
-            cb.addEventListener('change', () => {
-              updateBulkSelectState();
-            });
-          }
-        }
-        
-        // Context menu listener
-        item.addEventListener('contextmenu', (e) => {
-          e.preventDefault();
-          contextMenuTargetCall = call;
-          if (callsContextMenu) {
-            callsContextMenu.style.left = `${e.clientX}px`;
-            callsContextMenu.style.top = `${e.clientY}px`;
-            callsContextMenu.classList.remove('hidden');
-          }
-        });
-        
-        sidebarFragment.appendChild(item);
-
-        const retryBtn = item.querySelector('.processing-retry-btn');
-        if (retryBtn) {
-          retryBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const sid = retryBtn.getAttribute('data-retry-id');
-            if (!sid || !window.api.retryProcessing) return;
-            retryBtn.disabled = true;
-            retryBtn.textContent = 'Retrying…';
-            window.api.retryProcessing(sid).then(() => {
-              scheduleHistoryRefresh();
-            }).catch(() => {
-              retryBtn.disabled = false;
-              retryBtn.textContent = 'Retry';
-            });
-          });
-        }
-
-        // History tab grid
-        if (!relatedCallsList) {
+      if (!relatedCallsList) {
+        const historyFragment = document.createDocumentFragment();
+        filteredCalls.slice(0, HISTORY_CARD_CAP).forEach((call) => {
           const card = document.createElement('div');
           card.className = 'history-card glassmorphic';
           card.innerHTML = `
@@ -996,20 +1097,18 @@ if (isMiniMode) {
             openMeetingForCall(call);
           });
           historyFragment.appendChild(card);
+        });
+        historyGrid.appendChild(historyFragment);
+        if (filteredCalls.length > HISTORY_CARD_CAP) {
+          const more = document.createElement('div');
+          more.className = 'empty-state';
+          more.textContent = `Showing ${HISTORY_CARD_CAP} of ${filteredCalls.length} in History. Use The Trail sidebar to browse all.`;
+          historyGrid.appendChild(more);
         }
-      });
-
-      sidebarCallsList.appendChild(sidebarFragment);
-      if (totalMatches > SIDEBAR_RENDER_CAP) {
-        const more = document.createElement('div');
-        more.className = 'empty-state';
-        more.textContent = `Showing ${SIDEBAR_RENDER_CAP} of ${totalMatches}. Refine search to narrow results.`;
-        sidebarCallsList.appendChild(more);
       }
-      if (!relatedCallsList) historyGrid.appendChild(historyFragment);
 
       renderHubHome(filteredCalls);
-      
+
       if (relatedCallsList && historyGrid) {
         historyGrid.innerHTML = '<div class="empty-state">Filtered for related calls. View the sidebar list.</div>';
       }
@@ -1309,12 +1408,14 @@ if (isMiniMode) {
       const progress = job.progress || 0;
       const failed = job.status === 'failed';
       if (!existingBadge) {
-        // New processing state on an existing row — full refresh keeps markup consistent.
+        // New processing state on an existing row — refresh virtual window markup.
+        const call = getTrailCallById(id);
+        if (call) call.processing = job;
         missing = true;
         return;
       }
       existingBadge.className = `processing-badge ${failed ? 'failed' : ''}`;
-      existingBadge.innerHTML = `<span class="processing-badge-dot"></span>${label}`;
+      existingBadge.innerHTML = `<span class="processing-badge-dot"></span>${escapeHtml(label)}`;
       if (existingTrack) {
         const fill = existingTrack.querySelector('.processing-progress-fill');
         if (fill) fill.style.width = `${progress}%`;
@@ -1325,21 +1426,15 @@ if (isMiniMode) {
         retry.className = 'processing-retry-btn';
         retry.setAttribute('data-retry-id', id);
         retry.textContent = 'Retry';
-        retry.addEventListener('click', (e) => {
-          e.stopPropagation();
-          retry.disabled = true;
-          retry.textContent = 'Retrying…';
-          window.api.retryProcessing?.(id).then(() => scheduleHistoryRefresh()).catch(() => {
-            retry.disabled = false;
-            retry.textContent = 'Retry';
-          });
-        });
         details.appendChild(retry);
       } else if (!failed && existingRetry) {
         existingRetry.remove();
       }
     });
-    if (missing) scheduleHistoryRefresh(200);
+    if (missing) {
+      trailVirtual.start = -1;
+      renderVirtualTrailWindow();
+    }
   }
 
   // Listen to call list updates from main process (including directory watcher)
@@ -1381,14 +1476,6 @@ if (isMiniMode) {
   // ----------------------------------------------------
   // Encryption & Password Modal
   // ----------------------------------------------------
-  const passwordModal = document.getElementById('password-modal');
-  const modalPasswordInput = document.getElementById('modal-password-input');
-  const modalErrorMessage = document.getElementById('modal-error-message');
-  const btnModalCancel = document.getElementById('btn-modal-cancel');
-  const btnModalDecrypt = document.getElementById('btn-modal-decrypt');
-  
-  let pendingCallToDecrypt = null;
-
   function handleCallSelect(call) {
     if (call.encrypted) {
       window.api.loadCall(call.filePath).then(res => {

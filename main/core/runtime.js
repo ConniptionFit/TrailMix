@@ -1,3 +1,4 @@
+const { IPC } = require('../../lib/ipc-channels');
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, screen, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
@@ -203,7 +204,7 @@ async function resolveSessionRecord(sessionId) {
 
 function broadcastTranscriptCorrection(sessionId, removedSegmentIds) {
   if (!sessionId || !removedSegmentIds?.length) return;
-  broadcastToSession(sessionId, 'audio:on-transcription-correction', {
+  broadcastToSession(sessionId, IPC.AUDIO_ON_TRANSCRIPTION_CORRECTION, {
     sessionId,
     removedSegmentIds
   });
@@ -218,7 +219,7 @@ async function saveSessionPayloadToDb(sessionId, session) {
 function broadcastProcessingProgress() {
   sessionProcessingService.getJobMap().then((jobs) => {
     const hub = getHubWindow();
-    if (hub) hub.webContents.send('processing:jobs-updated', jobs);
+    if (hub) hub.webContents.send(IPC.PROCESSING_JOBS_UPDATED, jobs);
   });
 }
 
@@ -233,13 +234,13 @@ sessionProcessingService.configure({
   onProgress: () => broadcastProcessingProgress(),
   onTranscriptUpdated: ({ sessionId, session }) => {
     setSession(session);
-    broadcastToSession(sessionId, 'session:updated', session);
+    broadcastToSession(sessionId, IPC.SESSION_UPDATED, session);
     broadcastProcessingProgress();
   },
   onComplete: (sessionId) => {
     broadcastProcessingProgress();
     const hub = getHubWindow();
-    if (hub) hub.webContents.send('calls:list-updated');
+    if (hub) hub.webContents.send(IPC.CALLS_LIST_UPDATED);
   },
   runEnrichment: (sessionId) => runSessionEnrichment(sessionId)
 });
@@ -277,7 +278,7 @@ function handleTranscriptionSegments({ chunkIndex, segments }) {
 
   visibleEmissions.forEach((segment) => {
     if (activeRecordingSessionId) {
-      broadcastToSession(activeRecordingSessionId, 'audio:on-transcription-update', segment);
+      broadcastToSession(activeRecordingSessionId, IPC.AUDIO_ON_TRANSCRIPTION_UPDATE, segment);
     }
   });
 
@@ -294,11 +295,11 @@ transcriptionService.configure({
   onSegments: handleTranscriptionSegments,
   onQueuePressure: (pressure) => {
     if (!activeRecordingSessionId) return;
-    broadcastToSession(activeRecordingSessionId, 'audio:on-queue-pressure', pressure);
+    broadcastToSession(activeRecordingSessionId, IPC.AUDIO_ON_QUEUE_PRESSURE, pressure);
   },
   onChunkError: ({ chunkIndex, error }) => {
     if (!activeRecordingSessionId) return;
-    broadcastToSession(activeRecordingSessionId, 'audio:on-transcription-error', {
+    broadcastToSession(activeRecordingSessionId, IPC.AUDIO_ON_TRANSCRIPTION_ERROR, {
       chunkIndex,
       error: String(error || 'Transcription failed')
     });
@@ -325,7 +326,7 @@ audioCaptureService.configure({
   },
   onLevels: (levels) => {
     if (activeRecordingSessionId) {
-      broadcastToSession(activeRecordingSessionId, 'audio:on-levels', levels);
+      broadcastToSession(activeRecordingSessionId, IPC.AUDIO_ON_LEVELS, levels);
     }
   }
 });
@@ -370,7 +371,7 @@ function watchCallsDirectory() {
       clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         if (getHubWindow()) {
-          getHubWindow().webContents.send('calls:list-updated');
+          getHubWindow().webContents.send(IPC.CALLS_LIST_UPDATED);
         }
       }, 350);
     });
@@ -412,7 +413,7 @@ function broadcastRecordingStatus(extra = {}) {
     ...extra
   };
   if (sessionId) {
-    broadcastToSession(sessionId, 'audio:on-recording-status', payload);
+    broadcastToSession(sessionId, IPC.AUDIO_ON_RECORDING_STATUS, payload);
   }
 }
 
@@ -1249,7 +1250,7 @@ function scheduleSilentSessionSave(session, delayMs = SILENT_SAVE_DEBOUNCE_MS) {
   if (!session?.id) return;
   if (session.encrypted && !decryptionKeys.get(session.id)) {
     if (activeRecordingSessionId === session.id) {
-      broadcastToSession(session.id, 'session:needs-encryption-password', { sessionId: session.id });
+      broadcastToSession(session.id, IPC.SESSION_NEEDS_ENCRYPTION_PASSWORD, { sessionId: session.id });
     }
     return;
   }
@@ -1425,7 +1426,7 @@ async function stopRecordingHandler() {
     await finalizeAndSaveSession();
     if (stoppingSessionId) {
       const session = getSession(stoppingSessionId) || await loadSessionPayloadFromDb(stoppingSessionId);
-      if (session) broadcastToSession(stoppingSessionId, 'session:updated', session);
+      if (session) broadcastToSession(stoppingSessionId, IPC.SESSION_UPDATED, session);
     }
   } catch (err) {
     console.error('Error finalizing recording session:', err);
@@ -1514,7 +1515,7 @@ async function runSpeakerDiarizationLLM() {
     console.log('Diarization LLM: Successfully mapped speakers:', mapping);
     applySpeakerLabelMapping(activeSession.transcript, mapping);
     if (activeRecordingSessionId) {
-      broadcastToSession(activeRecordingSessionId, 'audio:on-speaker-labels-updated', mapping);
+      broadcastToSession(activeRecordingSessionId, IPC.AUDIO_ON_SPEAKER_LABELS, mapping);
     }
   } catch (error) {
     console.error('Diarization LLM failed:', error);
@@ -1599,8 +1600,8 @@ async function runSessionEnrichment(sessionId) {
   if (!textContent.trim()) {
     await saveSessionPayloadToDb(sessionId, session);
     const hub = getHubWindow();
-    if (hub) hub.webContents.send('calls:session-summary-ready', session);
-    broadcastToSession(sessionId, 'session:updated', session);
+    if (hub) hub.webContents.send(IPC.CALLS_SESSION_SUMMARY_READY, session);
+    broadcastToSession(sessionId, IPC.SESSION_UPDATED, session);
     return;
   }
 
@@ -1638,10 +1639,10 @@ async function runSessionEnrichment(sessionId) {
         }
 
         const hub = getHubWindow();
-        if (hub) hub.webContents.send('calls:session-summary-ready', session);
-        broadcastToSession(session.id, 'session:updated', session);
+        if (hub) hub.webContents.send(IPC.CALLS_SESSION_SUMMARY_READY, session);
+        broadcastToSession(session.id, IPC.SESSION_UPDATED, session);
         if (session.previousId && session.previousId !== session.id) {
-          broadcastToSession(session.previousId, 'session:updated', session);
+          broadcastToSession(session.previousId, IPC.SESSION_UPDATED, session);
         }
         resolve();
       });
@@ -1661,7 +1662,7 @@ async function finalizeAndSaveSession() {
   await sessionProcessingService.createJob(sessionId, blocks.length);
 
   const hub = getHubWindow();
-  if (hub) hub.webContents.send('calls:list-updated');
+  if (hub) hub.webContents.send(IPC.CALLS_LIST_UPDATED);
   broadcastProcessingProgress();
 
   const finishedSession = activeSession;
@@ -1817,7 +1818,7 @@ async function saveSessionToFile(session) {
   
   // Reload call list on frontend
   if (getHubWindow()) {
-    getHubWindow().webContents.send('calls:list-updated');
+    getHubWindow().webContents.send(IPC.CALLS_LIST_UPDATED);
   }
   
   // Compliance: Secure file shredding of temporary recordings

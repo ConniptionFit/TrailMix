@@ -1,20 +1,30 @@
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { Worker } = require('worker_threads');
 
 const DEFAULT_MAX_QUEUE_DEPTH = 24;
 
+function defaultMaxWorkers() {
+  const cores = os.cpus()?.length || 2;
+  // Second worker only helps when there are spare cores beyond in-chunk L/R Whisper.
+  return cores >= 8 ? 2 : 1;
+}
+
 class TranscriptionService {
-  constructor({ maxQueueDepth = DEFAULT_MAX_QUEUE_DEPTH } = {}) {
+  constructor({
+    maxQueueDepth = DEFAULT_MAX_QUEUE_DEPTH,
+    maxWorkers = defaultMaxWorkers()
+  } = {}) {
     this.queue = [];
-    this.isProcessing = false;
-    this.worker = null;
+    this.workerSlots = [];
     this.pendingJobs = new Map();
     this.onSegments = null;
     this.onIdle = null;
     this.onQueuePressure = null;
     this.onChunkError = null;
     this.maxQueueDepth = maxQueueDepth;
+    this.maxWorkers = Math.max(1, Math.min(2, maxWorkers));
     this.droppedChunks = 0;
   }
 
@@ -25,57 +35,90 @@ class TranscriptionService {
     this.onChunkError = onChunkError;
   }
 
-  ensureWorker() {
-    if (this.worker) return;
-
-    this.worker = new Worker(path.join(__dirname, '../workers/transcription-worker.js'));
-
-    this.worker.on('message', (message) => {
-      if (message.type === 'chunk-complete') {
-        this.handleChunkComplete(message);
-      } else if (message.type === 'chunk-error') {
-        this.handleChunkError(message);
-      }
-    });
-
-    this.worker.on('error', (err) => {
-      console.error('Transcription worker error:', err);
-      this.resetWorker();
-      this.finishCurrentJob();
-    });
-
-    this.worker.on('exit', (code) => {
-      if (code !== 0) {
-        console.error(`Transcription worker exited with code ${code}`);
-      }
-      // Fail any in-flight job so the queue cannot stall forever.
-      if (this.pendingJobs.size > 0) {
-        for (const [jobId, job] of this.pendingJobs.entries()) {
-          this.pendingJobs.delete(jobId);
-          if (this.onChunkError) {
-            this.onChunkError({
-              chunkIndex: job.chunkIndex,
-              error: `Transcription worker exited with code ${code}`
-            });
-          }
-        }
-      }
-      this.worker = null;
-      this.isProcessing = false;
-      this.processQueue();
-      this.notifyIfIdle();
-    });
+  get activeCount() {
+    return this.workerSlots.filter((slot) => slot.busy).length;
   }
 
-  resetWorker() {
-    if (this.worker) {
-      this.worker.terminate().catch(() => {});
-      this.worker = null;
+  get isProcessing() {
+    return this.activeCount > 0;
+  }
+
+  whisperThreadBudget() {
+    const cores = os.cpus()?.length || 2;
+    // Split cores across concurrent workers and stereo Whisper processes.
+    const denom = this.maxWorkers * 2;
+    return Math.min(4, Math.max(1, Math.floor((cores - 1) / denom) || 1));
+  }
+
+  ensureWorkers() {
+    while (this.workerSlots.length < this.maxWorkers) {
+      const slot = { worker: null, busy: false };
+      const worker = new Worker(path.join(__dirname, '../workers/transcription-worker.js'));
+
+      worker.on('message', (message) => {
+        if (message.type === 'chunk-complete') {
+          this.handleChunkComplete(slot, message);
+        } else if (message.type === 'chunk-error') {
+          this.handleChunkError(slot, message);
+        }
+      });
+
+      worker.on('error', (err) => {
+        console.error('Transcription worker error:', err);
+        this.failSlotJobs(slot, err.message || 'Transcription worker error');
+        this.resetSlot(slot);
+        this.processQueue();
+      });
+
+      worker.on('exit', (code) => {
+        if (code !== 0) {
+          console.error(`Transcription worker exited with code ${code}`);
+        }
+        this.failSlotJobs(slot, `Transcription worker exited with code ${code}`);
+        slot.worker = null;
+        slot.busy = false;
+        this.workerSlots = this.workerSlots.filter((s) => s !== slot);
+        this.processQueue();
+        this.notifyIfIdle();
+      });
+
+      slot.worker = worker;
+      this.workerSlots.push(slot);
     }
   }
 
+  failSlotJobs(slot, error) {
+    for (const [jobId, job] of this.pendingJobs.entries()) {
+      if (job.slot !== slot) continue;
+      this.pendingJobs.delete(jobId);
+      slot.busy = false;
+      if (this.onChunkError) {
+        this.onChunkError({
+          chunkIndex: job.chunkIndex,
+          error
+        });
+      }
+    }
+  }
+
+  resetSlot(slot) {
+    if (slot.worker) {
+      slot.worker.terminate().catch(() => {});
+      slot.worker = null;
+    }
+    slot.busy = false;
+    this.workerSlots = this.workerSlots.filter((s) => s !== slot);
+  }
+
+  resetWorker() {
+    for (const slot of [...this.workerSlots]) {
+      this.resetSlot(slot);
+    }
+    this.workerSlots = [];
+  }
+
   getQueueDepth() {
-    return this.queue.length + (this.isProcessing ? 1 : 0);
+    return this.queue.length + this.activeCount;
   }
 
   emitQueuePressure(extra = {}) {
@@ -84,6 +127,7 @@ class TranscriptionService {
       depth: this.getQueueDepth(),
       maxDepth: this.maxQueueDepth,
       droppedChunks: this.droppedChunks,
+      workers: this.maxWorkers,
       ...extra
     });
   }
@@ -117,26 +161,29 @@ class TranscriptionService {
   }
 
   processQueue() {
-    if (this.isProcessing || this.queue.length === 0) return;
+    this.ensureWorkers();
 
-    this.ensureWorker();
-    if (!this.worker) return;
+    for (const slot of this.workerSlots) {
+      if (slot.busy || !slot.worker || this.queue.length === 0) continue;
 
-    this.isProcessing = true;
+      const job = this.queue.shift();
+      slot.busy = true;
+      this.pendingJobs.set(job.jobId, { ...job, slot });
 
-    const job = this.queue.shift();
-    this.pendingJobs.set(job.jobId, job);
+      slot.worker.postMessage({
+        type: 'process-chunk',
+        threadBudget: this.whisperThreadBudget(),
+        ...job
+      });
+    }
 
-    this.worker.postMessage({
-      type: 'process-chunk',
-      ...job
-    });
+    this.emitQueuePressure();
   }
 
-  handleChunkComplete(message) {
+  handleChunkComplete(slot, message) {
     const job = this.pendingJobs.get(message.jobId);
     this.pendingJobs.delete(message.jobId);
-    this.isProcessing = false;
+    slot.busy = false;
 
     if (job && this.onSegments) {
       this.onSegments({
@@ -150,10 +197,10 @@ class TranscriptionService {
     this.notifyIfIdle();
   }
 
-  handleChunkError(message) {
+  handleChunkError(slot, message) {
     console.error(`Transcription failed for chunk ${message.chunkIndex}:`, message.error);
     this.pendingJobs.delete(message.jobId);
-    this.isProcessing = false;
+    slot.busy = false;
     if (this.onChunkError) {
       this.onChunkError({
         chunkIndex: message.chunkIndex,
@@ -166,7 +213,6 @@ class TranscriptionService {
   }
 
   finishCurrentJob() {
-    this.isProcessing = false;
     this.processQueue();
     this.notifyIfIdle();
   }
@@ -180,7 +226,9 @@ class TranscriptionService {
   clearQueue() {
     this.queue = [];
     this.pendingJobs.clear();
-    this.isProcessing = false;
+    for (const slot of this.workerSlots) {
+      slot.busy = false;
+    }
     this.emitQueuePressure();
   }
 

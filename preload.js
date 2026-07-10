@@ -3,82 +3,82 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
   // App controls
-  minimize: () => ipcRenderer.send('app:minimize'),
-  relaunch: () => ipcRenderer.send('app:relaunch'),
-  getAppVersion: () => ipcRenderer.invoke('app:get-version'),
+  minimize: () => ipcRenderer.send(IPC.APP_MINIMIZE),
+  relaunch: () => ipcRenderer.send(IPC.APP_RELAUNCH),
+  getAppVersion: () => ipcRenderer.invoke(IPC.APP_GET_VERSION),
 
   // Audio devices & Recording
-  getAudioDevices: () => ipcRenderer.invoke('audio:get-devices'),
-  startRecording: (sessionId) => ipcRenderer.invoke('audio:start-recording', sessionId),
-  stopRecording: () => ipcRenderer.invoke('audio:stop-recording'),
-  getRecordingStatus: () => ipcRenderer.invoke('audio:get-recording-status'),
+  getAudioDevices: () => ipcRenderer.invoke(IPC.AUDIO_GET_DEVICES),
+  startRecording: (sessionId) => ipcRenderer.invoke(IPC.AUDIO_START_RECORDING, sessionId),
+  stopRecording: () => ipcRenderer.invoke(IPC.AUDIO_STOP_RECORDING),
+  getRecordingStatus: () => ipcRenderer.invoke(IPC.AUDIO_GET_RECORDING_STATUS),
   onTranscriptionUpdate: (callback) => {
     const subscription = (event, data) => callback(data);
-    ipcRenderer.on('audio:on-transcription-update', subscription);
-    return () => ipcRenderer.removeListener('audio:on-transcription-update', subscription);
+    ipcRenderer.on(IPC.AUDIO_ON_TRANSCRIPTION_UPDATE, subscription);
+    return () => ipcRenderer.removeListener(IPC.AUDIO_ON_TRANSCRIPTION_UPDATE, subscription);
   },
   onTranscriptionCorrection: (callback) => {
     const subscription = (event, data) => callback(data);
-    ipcRenderer.on('audio:on-transcription-correction', subscription);
-    return () => ipcRenderer.removeListener('audio:on-transcription-correction', subscription);
+    ipcRenderer.on(IPC.AUDIO_ON_TRANSCRIPTION_CORRECTION, subscription);
+    return () => ipcRenderer.removeListener(IPC.AUDIO_ON_TRANSCRIPTION_CORRECTION, subscription);
   },
   onRecordingStatus: (callback) => {
     const subscription = (event, data) => callback(data);
-    ipcRenderer.on('audio:on-recording-status', subscription);
-    return () => ipcRenderer.removeListener('audio:on-recording-status', subscription);
+    ipcRenderer.on(IPC.AUDIO_ON_RECORDING_STATUS, subscription);
+    return () => ipcRenderer.removeListener(IPC.AUDIO_ON_RECORDING_STATUS, subscription);
   },
   onSpeakerLabelsUpdated: (callback) => {
     const subscription = (event, data) => callback(data);
-    ipcRenderer.on('audio:on-speaker-labels-updated', subscription);
-    return () => ipcRenderer.removeListener('audio:on-speaker-labels-updated', subscription);
+    ipcRenderer.on(IPC.AUDIO_ON_SPEAKER_LABELS, subscription);
+    return () => ipcRenderer.removeListener(IPC.AUDIO_ON_SPEAKER_LABELS, subscription);
   },
   onAudioLevels: (callback) => {
     const subscription = (event, data) => callback(data);
-    ipcRenderer.on('audio:on-levels', subscription);
-    return () => ipcRenderer.removeListener('audio:on-levels', subscription);
+    ipcRenderer.on(IPC.AUDIO_ON_LEVELS, subscription);
+    return () => ipcRenderer.removeListener(IPC.AUDIO_ON_LEVELS, subscription);
   },
   onQueuePressure: (callback) => {
     const subscription = (event, data) => callback(data);
-    ipcRenderer.on('audio:on-queue-pressure', subscription);
-    return () => ipcRenderer.removeListener('audio:on-queue-pressure', subscription);
+    ipcRenderer.on(IPC.AUDIO_ON_QUEUE_PRESSURE, subscription);
+    return () => ipcRenderer.removeListener(IPC.AUDIO_ON_QUEUE_PRESSURE, subscription);
   },
   onTranscriptionError: (callback) => {
     const subscription = (event, data) => callback(data);
-    ipcRenderer.on('audio:on-transcription-error', subscription);
-    return () => ipcRenderer.removeListener('audio:on-transcription-error', subscription);
+    ipcRenderer.on(IPC.AUDIO_ON_TRANSCRIPTION_ERROR, subscription);
+    return () => ipcRenderer.removeListener(IPC.AUDIO_ON_TRANSCRIPTION_ERROR, subscription);
   },
   onCallListUpdated: (callback) => {
     const subscription = (event) => callback();
-    ipcRenderer.on('calls:list-updated', subscription);
-    return () => ipcRenderer.removeListener('calls:list-updated', subscription);
+    ipcRenderer.on(IPC.CALLS_LIST_UPDATED, subscription);
+    return () => ipcRenderer.removeListener(IPC.CALLS_LIST_UPDATED, subscription);
   },
 
   // Hub / meeting windows
   createMeeting: () => ipcRenderer.invoke(IPC.MEETINGS_NEW),
   openMeeting: (sessionId, options) => ipcRenderer.invoke(IPC.MEETINGS_OPEN, sessionId, options || {}),
-  focusMeeting: (sessionId) => ipcRenderer.invoke('meetings:focus', sessionId),
-  loadMeetingSession: (sessionId) => ipcRenderer.invoke('session:load-meeting', sessionId),
+  focusMeeting: (sessionId) => ipcRenderer.invoke(IPC.MEETINGS_FOCUS, sessionId),
+  loadMeetingSession: (sessionId) => ipcRenderer.invoke(IPC.SESSION_LOAD_MEETING, sessionId),
   setSessionTitle: (sessionId, title, userEdited = true) =>
-    ipcRenderer.invoke('session:set-title', sessionId, title, userEdited),
+    ipcRenderer.invoke(IPC.SESSION_SET_TITLE, sessionId, title, userEdited),
   onSessionUpdated: (callback) => {
     const subscription = (event, data) => callback(data);
-    ipcRenderer.on('session:updated', subscription);
-    return () => ipcRenderer.removeListener('session:updated', subscription);
+    ipcRenderer.on(IPC.SESSION_UPDATED, subscription);
+    return () => ipcRenderer.removeListener(IPC.SESSION_UPDATED, subscription);
   },
   onFocusSegment: (callback) => {
     const subscription = (event, data) => callback(data);
-    ipcRenderer.on('session:focus-segment', subscription);
-    return () => ipcRenderer.removeListener('session:focus-segment', subscription);
+    ipcRenderer.on(IPC.SESSION_FOCUS_SEGMENT, subscription);
+    return () => ipcRenderer.removeListener(IPC.SESSION_FOCUS_SEGMENT, subscription);
   },
 
   // Models & Hardware
-  getSpecs: () => ipcRenderer.invoke('models:get-specs'),
-  getOllamaModels: () => ipcRenderer.invoke('models:get-ollama-models'),
-  downloadWhisper: (modelName) => ipcRenderer.invoke('models:download-whisper', modelName),
+  getSpecs: () => ipcRenderer.invoke(IPC.MODELS_GET_SPECS),
+  getOllamaModels: () => ipcRenderer.invoke(IPC.MODELS_GET_OLLAMA),
+  downloadWhisper: (modelName) => ipcRenderer.invoke(IPC.MODELS_DOWNLOAD_WHISPER, modelName),
   onDownloadProgress: (callback) => {
     const subscription = (event, data) => callback(data);
-    ipcRenderer.on('models:on-download-progress', subscription);
-    return () => ipcRenderer.removeListener('models:on-download-progress', subscription);
+    ipcRenderer.on(IPC.MODELS_ON_DOWNLOAD_PROGRESS, subscription);
+    return () => ipcRenderer.removeListener(IPC.MODELS_ON_DOWNLOAD_PROGRESS, subscription);
   },
 
   // File operations & Encryption
@@ -86,49 +86,49 @@ contextBridge.exposeInMainWorld('api', {
   searchSessions: (term, options) => ipcRenderer.invoke(IPC.SEARCH_SESSIONS, term, options),
   saveCall: (callData, password) => ipcRenderer.invoke(IPC.CALLS_SAVE, callData, password),
   loadCall: (filePath, password) => ipcRenderer.invoke(IPC.CALLS_LOAD, filePath, password),
-  decryptCall: (filePath, password) => ipcRenderer.invoke('calls:decrypt', filePath, password),
-  decryptMultipleCalls: (sessionIds, password) => ipcRenderer.invoke('calls:decrypt-multiple', sessionIds, password),
+  decryptCall: (filePath, password) => ipcRenderer.invoke(IPC.CALLS_DECRYPT, filePath, password),
+  decryptMultipleCalls: (sessionIds, password) => ipcRenderer.invoke(IPC.CALLS_DECRYPT_MULTIPLE, sessionIds, password),
 
   // Settings
   getSettings: () => ipcRenderer.invoke(IPC.SETTINGS_GET),
   saveSettings: (newSettings) => ipcRenderer.invoke(IPC.SETTINGS_SAVE, newSettings),
-  selectDirectory: () => ipcRenderer.invoke('settings:select-directory'),
-  getDefaultPrompts: () => ipcRenderer.invoke('settings:get-default-prompts'),
+  selectDirectory: () => ipcRenderer.invoke(IPC.SETTINGS_SELECT_DIRECTORY),
+  getDefaultPrompts: () => ipcRenderer.invoke(IPC.SETTINGS_GET_DEFAULT_PROMPTS),
 
   // Software updates
-  checkForUpdates: (options) => ipcRenderer.invoke('updates:check', options),
-  installUpdate: () => ipcRenderer.invoke('updates:install'),
-  getUpdateStatus: () => ipcRenderer.invoke('updates:get-status'),
+  checkForUpdates: (options) => ipcRenderer.invoke(IPC.UPDATES_CHECK, options),
+  installUpdate: () => ipcRenderer.invoke(IPC.UPDATES_INSTALL),
+  getUpdateStatus: () => ipcRenderer.invoke(IPC.UPDATES_GET_STATUS),
   onUpdateStatus: (callback) => {
     const subscription = (event, data) => callback(data);
-    ipcRenderer.on('updates:on-status', subscription);
-    return () => ipcRenderer.removeListener('updates:on-status', subscription);
+    ipcRenderer.on(IPC.UPDATES_ON_STATUS, subscription);
+    return () => ipcRenderer.removeListener(IPC.UPDATES_ON_STATUS, subscription);
   },
 
   // Live Pause & Resume / Resume Past Sessions
-  pauseRecording: () => ipcRenderer.invoke('audio:pause-recording'),
-  resumeRecording: () => ipcRenderer.invoke('audio:resume-recording'),
-  resumeCallTranscription: (sessionId) => ipcRenderer.invoke('calls:resume-transcription', sessionId),
+  pauseRecording: () => ipcRenderer.invoke(IPC.AUDIO_PAUSE_RECORDING),
+  resumeRecording: () => ipcRenderer.invoke(IPC.AUDIO_RESUME_RECORDING),
+  resumeCallTranscription: (sessionId) => ipcRenderer.invoke(IPC.CALLS_RESUME_TRANSCRIPTION, sessionId),
 
   // Timeline Tasks
-  getTasks: () => ipcRenderer.invoke('tasks:get'),
-  toggleTask: (taskId) => ipcRenderer.invoke('tasks:toggle', taskId),
-  deleteTask: (taskId) => ipcRenderer.invoke('tasks:delete', taskId),
-  setTaskOmitted: (taskId, omitted) => ipcRenderer.invoke('tasks:set-omitted', taskId, omitted),
-  deleteMultipleTasks: (taskIds) => ipcRenderer.invoke('tasks:delete-multiple', taskIds),
+  getTasks: () => ipcRenderer.invoke(IPC.TASKS_GET),
+  toggleTask: (taskId) => ipcRenderer.invoke(IPC.TASKS_TOGGLE, taskId),
+  deleteTask: (taskId) => ipcRenderer.invoke(IPC.TASKS_DELETE, taskId),
+  setTaskOmitted: (taskId, omitted) => ipcRenderer.invoke(IPC.TASKS_SET_OMITTED, taskId, omitted),
+  deleteMultipleTasks: (taskIds) => ipcRenderer.invoke(IPC.TASKS_DELETE_MULTIPLE, taskIds),
 
   // Call management operations
-  openFileLocation: (filePath) => ipcRenderer.invoke('calls:open-file-location', filePath),
-  deleteCall: (filePath) => ipcRenderer.invoke('calls:delete', filePath),
-  deleteMultipleCalls: (filePaths) => ipcRenderer.invoke('calls:delete-multiple', filePaths),
-  mergeCalls: (filePaths) => ipcRenderer.invoke('calls:merge', filePaths),
-  exportCalls: (filePaths) => ipcRenderer.invoke('calls:export', filePaths),
-  findRelatedCalls: (filePath) => ipcRenderer.invoke('calls:find-related', filePath),
+  openFileLocation: (filePath) => ipcRenderer.invoke(IPC.CALLS_OPEN_FILE_LOCATION, filePath),
+  deleteCall: (filePath) => ipcRenderer.invoke(IPC.CALLS_DELETE, filePath),
+  deleteMultipleCalls: (filePaths) => ipcRenderer.invoke(IPC.CALLS_DELETE_MULTIPLE, filePaths),
+  mergeCalls: (filePaths) => ipcRenderer.invoke(IPC.CALLS_MERGE, filePaths),
+  exportCalls: (filePaths) => ipcRenderer.invoke(IPC.CALLS_EXPORT, filePaths),
+  findRelatedCalls: (filePath) => ipcRenderer.invoke(IPC.CALLS_FIND_RELATED, filePath),
 
   onSessionSummaryReady: (callback) => {
     const subscription = (event, session) => callback(session);
-    ipcRenderer.on('calls:session-summary-ready', subscription);
-    return () => ipcRenderer.removeListener('calls:session-summary-ready', subscription);
+    ipcRenderer.on(IPC.CALLS_SESSION_SUMMARY_READY, subscription);
+    return () => ipcRenderer.removeListener(IPC.CALLS_SESSION_SUMMARY_READY, subscription);
   },
 
   // Chat Agent
@@ -138,13 +138,13 @@ contextBridge.exposeInMainWorld('api', {
     }
     return ipcRenderer.invoke(IPC.CHAT_QUERY, queryOrPayload, transcriptText);
   },
-  getChatRecipes: () => ipcRenderer.invoke('chat:get-recipes'),
+  getChatRecipes: () => ipcRenderer.invoke(IPC.CHAT_GET_RECIPES),
   saveCallSilently: (callData, password) => ipcRenderer.invoke(IPC.CALLS_SAVE_SILENTLY, callData, password),
-  mixEnhance: (payload) => ipcRenderer.invoke('chat:mix-enhance', payload),
+  mixEnhance: (payload) => ipcRenderer.invoke(IPC.CHAT_MIX_ENHANCE, payload),
   onLlmStreamChunk: (callback) => {
     const subscription = (event, data) => callback(data);
-    ipcRenderer.on('llm:stream-chunk', subscription);
-    return () => ipcRenderer.removeListener('llm:stream-chunk', subscription);
+    ipcRenderer.on(IPC.LLM_STREAM_CHUNK, subscription);
+    return () => ipcRenderer.removeListener(IPC.LLM_STREAM_CHUNK, subscription);
   },
   cancelLlmStream: (requestId) => ipcRenderer.invoke(IPC.LLM_CANCEL, requestId),
 
@@ -152,27 +152,27 @@ contextBridge.exposeInMainWorld('api', {
   retryProcessing: (sessionId) => ipcRenderer.invoke(IPC.PROCESSING_RETRY, sessionId),
   onProcessingJobsUpdated: (callback) => {
     const subscription = (event, data) => callback(data);
-    ipcRenderer.on('processing:jobs-updated', subscription);
-    return () => ipcRenderer.removeListener('processing:jobs-updated', subscription);
+    ipcRenderer.on(IPC.PROCESSING_JOBS_UPDATED, subscription);
+    return () => ipcRenderer.removeListener(IPC.PROCESSING_JOBS_UPDATED, subscription);
   },
   onProcessingTranscriptUpdated: (callback) => {
     const subscription = (event, data) => callback(data);
-    ipcRenderer.on('processing:transcript-updated', subscription);
-    return () => ipcRenderer.removeListener('processing:transcript-updated', subscription);
+    ipcRenderer.on(IPC.PROCESSING_TRANSCRIPT_UPDATED, subscription);
+    return () => ipcRenderer.removeListener(IPC.PROCESSING_TRANSCRIPT_UPDATED, subscription);
   },
   onNeedsEncryptionPassword: (callback) => {
     const subscription = (event, data) => callback(data);
-    ipcRenderer.on('session:needs-encryption-password', subscription);
-    return () => ipcRenderer.removeListener('session:needs-encryption-password', subscription);
+    ipcRenderer.on(IPC.SESSION_NEEDS_ENCRYPTION_PASSWORD, subscription);
+    return () => ipcRenderer.removeListener(IPC.SESSION_NEEDS_ENCRYPTION_PASSWORD, subscription);
   },
 
   // Folders & Obsidian Export (v0.3)
-  getFolders: () => ipcRenderer.invoke('folders:get'),
-  createFolder: (payload) => ipcRenderer.invoke('folders:create', payload),
-  updateFolder: (folder) => ipcRenderer.invoke('folders:update', folder),
-  deleteFolder: (id) => ipcRenderer.invoke('folders:delete', id),
-  moveToFolder: (sessionId, folderId) => ipcRenderer.invoke('calls:move-to-folder', sessionId, folderId),
-  exportObsidian: (folderId, exportDir) => ipcRenderer.invoke('calls:export-obsidian', folderId, exportDir),
+  getFolders: () => ipcRenderer.invoke(IPC.FOLDERS_GET),
+  createFolder: (payload) => ipcRenderer.invoke(IPC.FOLDERS_CREATE, payload),
+  updateFolder: (folder) => ipcRenderer.invoke(IPC.FOLDERS_UPDATE, folder),
+  deleteFolder: (id) => ipcRenderer.invoke(IPC.FOLDERS_DELETE, id),
+  moveToFolder: (sessionId, folderId) => ipcRenderer.invoke(IPC.CALLS_MOVE_TO_FOLDER, sessionId, folderId),
+  exportObsidian: (folderId, exportDir) => ipcRenderer.invoke(IPC.CALLS_EXPORT_OBSIDIAN, folderId, exportDir),
 
-  registerWorkflowTrigger: (eventName, trigger) => ipcRenderer.invoke('workflow:register-trigger', eventName, trigger)
+  registerWorkflowTrigger: (eventName, trigger) => ipcRenderer.invoke(IPC.WORKFLOW_REGISTER, eventName, trigger)
 });

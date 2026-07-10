@@ -22,6 +22,14 @@
   const llmStreamRenderTimers = new Map();
   const llmStreamWaiters = new Map();
 
+  function notify(message, type = 'info') {
+    if (window.TrailMixToast) {
+      window.TrailMixToast.show(message, { type });
+      return;
+    }
+    console.log(`[toast:${type}]`, message);
+  }
+
   function formatTimerSeconds(totalSeconds) {
     const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
     const seconds = (totalSeconds % 60).toString().padStart(2, '0');
@@ -370,7 +378,7 @@
     if (!activeSession || !jotEditor) return;
     const currentDocument = jotEditor.getDocument();
     if (!currentDocument.plainText.trim()) {
-      (window.TrailMixToast ? window.TrailMixToast.show('Add some Mix-Ins before running Mix notes.', { type: 'info' }) : alert('Add some Mix-Ins before running Mix notes.'));
+      notify('Add some Mix-Ins before running Mix notes.', 'info');
       return;
     }
     syncSessionFromEditorDocument(activeSession, currentDocument);
@@ -390,8 +398,7 @@
       editorLegend.classList.remove('hidden');
       await persistSession();
     } catch (err) {
-      if (window.TrailMixToast) window.TrailMixToast.show(err.message, { type: 'error' });
-      else alert(err.message);
+      notify(err.message, 'error');
     } finally {
       jotEditor.setEnhancing(false);
       btnMixEnhance.disabled = false;
@@ -466,11 +473,11 @@
       return;
     }
     if (result?.requirePassword) {
-      (window.TrailMixToast ? window.TrailMixToast.show('Unlock this Trail with your password before resuming.', { type: 'info' }) : alert('Unlock this Trail with your password before resuming.'));
+      notify('Unlock this Trail with your password before resuming.', 'info');
       return;
     }
     if (!result?.success) {
-      alert(result?.error || 'Could not resume this Trail.');
+      notify(result?.error || 'Could not resume this Trail.', 'error');
       return;
     }
     if (activeSession && result?.sessionId) {
@@ -935,8 +942,7 @@
   // Init session
   window.api.loadMeetingSession(sessionId).then((session) => {
     if (!session) {
-      if (window.TrailMixToast) window.TrailMixToast.show('Could not load this meeting session.', { type: 'error' });
-      else (window.TrailMixToast ? window.TrailMixToast.show('Could not load this meeting session.', { type: 'error' }) : alert('Could not load this meeting session.'));
+      notify('Could not load this meeting session.', 'error');
       return;
     }
     activeSession = session;
@@ -962,7 +968,6 @@
     });
   }).catch((err) => {
     console.error('Failed to load meeting session', err);
-    if (window.TrailMixToast) window.TrailMixToast.show(err?.message || 'Could not load this meeting session.', { type: 'error' });
-    else alert(err?.message || 'Could not load this meeting session.');
+    notify(err?.message || 'Could not load this meeting session.', 'error');
   });
 })();

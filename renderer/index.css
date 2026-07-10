@@ -204,6 +204,15 @@ body {
   gap: 6px;
 }
 
+.calls-list-spacer {
+  width: 100%;
+}
+
+.calls-list-window .call-list-item {
+  /* Virtual window already uses flex gap; keep rows compact. */
+  flex-shrink: 0;
+}
+
 .call-list-item {
   padding: 10px 12px;
   border-radius: 8px;

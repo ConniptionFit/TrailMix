@@ -21,10 +21,11 @@ async function splitStereoChannels(chunkWavPath, leftWavPath, rightWavPath) {
   ]);
 }
 
-async function transcribeMonoFile(monoWavPath, speakerName, whisperCli, whisperModel) {
+async function transcribeMonoFile(monoWavPath, speakerName, whisperCli, whisperModel, threadBudget) {
   const outputBase = monoWavPath.replace('.wav', '_trans');
   const jsonPath = `${outputBase}.json`;
-  const threads = Math.min(4, Math.max(2, Math.floor((os.cpus().length - 1) / 2) || 2));
+  const defaultThreads = Math.min(4, Math.max(2, Math.floor((os.cpus().length - 1) / 2) || 2));
+  const threads = Math.max(1, Math.min(4, Number(threadBudget) || defaultThreads));
 
   await execFileAsync(whisperCli, [
     '-m', whisperModel,
@@ -126,7 +127,8 @@ async function processChunk(job) {
     chunkIndex,
     whisperDir,
     selectedModel,
-    aecMode = 'off'
+    aecMode = 'off',
+    threadBudget
   } = job;
 
   const whisperCli = resolveWhisperCli(whisperDir);
@@ -171,8 +173,10 @@ async function processChunk(job) {
     }
   }
 
-  const hasLeftVoice = await checkVoiceActivity(leftWavPath);
-  let hasRightVoice = await checkVoiceActivity(rightWavPath);
+  let [hasLeftVoice, hasRightVoice] = await Promise.all([
+    checkVoiceActivity(leftWavPath),
+    checkVoiceActivity(rightWavPath)
+  ]);
 
   if (!hasLeftVoice && !hasRightVoice) {
     console.log(`VAD noise gate: Chunk ${chunkIndex} Left & Right are silent. Dropping chunk.`);
@@ -192,7 +196,7 @@ async function processChunk(job) {
   const whisperTasks = [];
   if (hasLeftVoice) {
     whisperTasks.push(
-      transcribeMonoFile(leftWavPath, 'Speaker 1', whisperCli, whisperModel)
+      transcribeMonoFile(leftWavPath, 'Speaker 1', whisperCli, whisperModel, threadBudget)
         .catch((err) => {
           console.error('Whisper execution failed for Speaker 1', err);
           return [];
@@ -204,7 +208,7 @@ async function processChunk(job) {
 
   if (hasRightVoice) {
     whisperTasks.push(
-      transcribeMonoFile(rightWavPath, 'You', whisperCli, whisperModel)
+      transcribeMonoFile(rightWavPath, 'You', whisperCli, whisperModel, threadBudget)
         .catch((err) => {
           console.error('Whisper execution failed for You', err);
           return [];

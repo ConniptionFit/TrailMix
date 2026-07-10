@@ -25,6 +25,10 @@ This document captures the review findings from the v0.5 modular architecture pa
 - Quieter VAD logging (opt-in via `TRAILMIX_DEBUG_VAD=1`).
 - Encrypted save salt/key reuse; parallel summary/actions; LLM timeouts; metadata-only find-related.
 - Chunked secure shred; removed dead hub meeting UI (~600 lines).
+- **Virtualized The Trail list** (visible rows + overscan) with delegated click/context/tooltip handlers.
+- **Dual transcription workers** on 8+ core machines; parallel L/R VAD; adaptive Whisper thread budget.
+- **Parallel precision diarization** (2 LLM blocks at a time) with ordered checkpoints.
+- `lib/ipc-channels.js` wired through preload, register-all, and runtime sends.
 
 ### UX
 - Meeting chat stream batched with `requestAnimationFrame`.
@@ -43,14 +47,14 @@ This document captures the review findings from the v0.5 modular architecture pa
 ## Recommended next optimizations (ranked)
 
 ### Tier 1 — high impact
-1. **Virtualize The Trail list** — render only visible session rows; avoid full DOM rebuild on every filter.
-2. **Whisper pipeline fusion** — one ffmpeg split per chunk (or stereo whisper) and optional 2-worker pool when CPU allows.
+1. ~~Virtualize The Trail list~~ — shipped (visible-window + event delegation).
+2. ~~Whisper pipeline fusion / worker pool~~ — shipped (stereo ffmpeg split, parallel Whisper, dual workers on 8+ cores).
 3. **Shared transcript view module** — extract remaining helpers into `renderer/shared/transcript-view.js`.
-4. **Prompt for encryption password** when `encryptByDefault` is on (session-scoped), instead of silently falling back to plaintext.
+4. ~~Prompt for encryption password~~ — shipped (session-scoped modal; no plaintext fallback).
 
 ### Tier 2 — reliability & polish
-5. Wire `lib/ipc-channels.js` into `preload.js` and `register-all.js` (single source of truth).
-6. Replace remaining `alert()` / `confirm()` with toasts/modals.
+5. ~~Wire `lib/ipc-channels.js`~~ — shipped for preload / register-all / runtime.
+6. ~~Replace remaining `alert()` / `confirm()`~~ — hub confirms + meeting toasts shipped; keep watching for regressions.
 7. Keep temp audio optional for playback/seek (or export WAV before shred).
 
 ### Tier 3 — architecture

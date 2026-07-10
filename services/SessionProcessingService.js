@@ -201,47 +201,59 @@ class SessionProcessingService {
     const settings = this.getSettings();
     const model = settings.selectedLlm;
     const systemPrompt = getPrecisionDiarizationSystemPrompt();
-    let globalTurnOffset = 0;
-
-    for (let i = 0; i < startBlock; i++) {
-      globalTurnOffset += blocks[i].length;
+    const turnOffsets = [];
+    let runningOffset = 0;
+    for (let i = 0; i < blocks.length; i++) {
+      turnOffsets[i] = runningOffset;
+      runningOffset += blocks[i].length;
     }
 
     await this.updateJobStatus(sessionId, PROCESSING_STATUS.PRECISION_RUNNING, 2, startBlock, blocks.length);
 
-    for (let blockIndex = startBlock; blockIndex < blocks.length; blockIndex++) {
-      const block = blocks[blockIndex].map((s) => ({ ...s }));
-      const turns = buildDiarizationTurns(block).map((turn, idx) => ({
-        ...turn,
-        turnIndex: globalTurnOffset + idx + 1
-      }));
-
-      try {
-        const response = await this.llmService.queryComplete(
-          buildPrecisionPrompt(turns),
-          model,
-          systemPrompt
+    // Run up to 2 block LLM calls in parallel; apply/save results in order for checkpoints.
+    const concurrency = 2;
+    for (let blockIndex = startBlock; blockIndex < blocks.length; blockIndex += concurrency) {
+      const slice = [];
+      for (let j = 0; j < concurrency && blockIndex + j < blocks.length; j++) {
+        const idx = blockIndex + j;
+        const block = blocks[idx].map((s) => ({ ...s }));
+        const globalTurnOffset = turnOffsets[idx];
+        const turns = buildDiarizationTurns(block).map((turn, tIdx) => ({
+          ...turn,
+          turnIndex: globalTurnOffset + tIdx + 1
+        }));
+        slice.push(
+          this.llmService.queryComplete(buildPrecisionPrompt(turns), model, systemPrompt)
+            .then((response) => {
+              const mapping = parseLlmJsonResponse(response);
+              applyClusterMappingToBlock(block, mapping, globalTurnOffset);
+              return { idx, block, ok: true };
+            })
+            .catch((err) => {
+              console.error(`Precision pass block ${idx} failed`, err);
+              return { idx, block, ok: false };
+            })
         );
-        const mapping = parseLlmJsonResponse(response);
-        applyClusterMappingToBlock(block, mapping, globalTurnOffset);
-      } catch (err) {
-        console.error(`Precision pass block ${blockIndex} failed`, err);
       }
 
-      this.applyBlockToSession(session, blockIndex, block, blocks);
-      await this.saveSessionPayload(sessionId, session);
-      await this.writeBreadcrumb(sessionId, 2, blockIndex, {
-        processedSegmentIds: block.map((s) => s.id),
-        speakers: block.map((s) => s.speaker)
-      });
-      await this.dbRun(
-        `UPDATE session_processing_jobs SET block_index = ?, updated_at = ? WHERE session_id = ?`,
-        [blockIndex + 1, new Date().toISOString(), sessionId]
-      );
-      this.emitProgress(sessionId, blockIndex + 1, blocks.length);
-      this.emitTranscriptUpdated(sessionId, session);
+      const results = await Promise.all(slice);
+      results.sort((a, b) => a.idx - b.idx);
 
-      globalTurnOffset += block.length;
+      for (const result of results) {
+        this.applyBlockToSession(session, result.idx, result.block, blocks);
+        await this.saveSessionPayload(sessionId, session);
+        await this.writeBreadcrumb(sessionId, 2, result.idx, {
+          processedSegmentIds: result.block.map((s) => s.id),
+          speakers: result.block.map((s) => s.speaker)
+        });
+        await this.dbRun(
+          `UPDATE session_processing_jobs SET block_index = ?, updated_at = ? WHERE session_id = ?`,
+          [result.idx + 1, new Date().toISOString(), sessionId]
+        );
+        this.emitProgress(sessionId, result.idx + 1, blocks.length);
+        this.emitTranscriptUpdated(sessionId, session);
+      }
+
       await this.yieldCpu();
     }
 
