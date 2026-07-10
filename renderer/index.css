@@ -1019,6 +1019,82 @@ body {
   overflow: hidden;
 }
 
+.history-card-date {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.hub-home-actions {
+  display: flex;
+  gap: 10px;
+  margin: 8px 0 18px;
+  flex-wrap: wrap;
+}
+
+.hub-recent-sessions {
+  margin-top: 4px;
+}
+
+.hub-recent-header h2 {
+  margin: 0 0 12px;
+  font-size: 16px;
+  font-family: var(--font-family-display, inherit);
+}
+
+.hub-recent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+.hub-recent-card {
+  cursor: pointer;
+}
+
+.hub-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.hub-card-actions .btn-primary,
+.hub-card-actions .btn-secondary {
+  font-size: 12px;
+  padding: 6px 10px;
+}
+
+.hub-empty-state {
+  padding: 28px 20px;
+  border: 1px dashed var(--border-color, rgba(255,255,255,0.12));
+  border-radius: 12px;
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.processing-badge.failed {
+  color: #ff8f8f;
+}
+
+.processing-retry-btn {
+  margin-top: 6px;
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 143, 143, 0.35);
+  background: rgba(255, 77, 77, 0.08);
+  color: #ff8f8f;
+  cursor: pointer;
+}
+
+.processing-retry-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 /* Collapsible AI Chat Widget */
 .chat-widget {
   display: flex;

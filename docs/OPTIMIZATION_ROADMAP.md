@@ -9,12 +9,13 @@ This document captures the review findings from the v0.5 modular architecture pa
 - Fixed numerical deadline parsing (`d` was undefined).
 - Fixed resume chunk offset to use last segment timestamp (not `transcript.length / 2`).
 - Meeting window now handles coalesced `merged` segments, applies speaker maps by turn index, and uses `textContent` for transcript lines.
+- Mix enhance clears enhancing state on success; `.trail.bak` watcher fixed; history cards use real CSS.
 
 ### Performance
 - Debounced silent session saves during live transcription (~2.5s) with flush on pause/stop.
 - Skipped full filesystem folder sync on every autosave; cache ensured folder IDs.
 - Async session file writes (`fs.promises.writeFile`).
-- SQLite WAL + busy timeout on the main DB.
+- SQLite WAL + busy timeout on the main DB; task/session indexes.
 - `calls:get-list` no longer runs migrate/full sync on every sidebar refresh.
 - Chat context limited to recent/top sessions instead of the entire history table.
 - Transcription queue backpressure (drop oldest when depth exceeds cap).
@@ -22,14 +23,17 @@ This document captures the review findings from the v0.5 modular architecture pa
 - Async, sampled audio level metering at 250ms (was sync full-file reads at 120ms).
 - Incremental bleed correction (new mic segments vs nearby system window).
 - Quieter VAD logging (opt-in via `TRAILMIX_DEBUG_VAD=1`).
+- Encrypted save salt/key reuse; parallel summary/actions; LLM timeouts; metadata-only find-related.
+- Chunked secure shred; removed dead hub meeting UI (~600 lines).
 
 ### UX
 - Meeting chat stream batched with `requestAnimationFrame`.
 - Sidebar search debounced; settings browse marks dirty; save feedback without blocking `alert`.
 - Mix-Master drawer no longer clears history on close.
 - Sidebar toggle shortcut moved to **Ctrl/Cmd+B** (Ctrl+S reserved for save muscle memory).
-- **Ctrl/Cmd+N** starts a new meeting from the hub.
+- **Ctrl/Cmd+N** starts a new meeting from the hub; **/** focuses search; **Esc** closes modals.
 - Mini widget shows latest transcript text.
+- Hub home recent meetings + Resume; in-meeting Ctrl+F search; save status; queue pressure banner; chat Stop; processing Retry.
 - Basic a11y: transcript `aria-live`, meeting title label, bulk action labels, `prefers-reduced-motion`.
 
 ---
@@ -37,23 +41,22 @@ This document captures the review findings from the v0.5 modular architecture pa
 ## Recommended next optimizations (ranked)
 
 ### Tier 1 — high impact
-1. **Shared transcript view module** — extract `appendTranscriptLine` / speaker mapping into `renderer/shared/transcript-view.js` and delete the dead hub meeting block (~600 lines in `index.js`).
+1. **Shared transcript view module** — extract remaining helpers into `renderer/shared/transcript-view.js`.
 2. **Virtualize The Trail list** — render only visible session rows; avoid full DOM rebuild on every filter.
 3. **SQLite FTS5 full-text search** — index transcript plain text; power sidebar search beyond title/summary.
 4. **Whisper pipeline fusion** — one ffmpeg split per chunk (or stereo whisper) and optional 2-worker pool when CPU allows.
-5. **Encrypt-once session keys** — reuse salt/key for incremental encrypted saves (today every autosave re-derives PBKDF2).
+5. **Never persist encryption password in settings.json** — OS keychain / session-only unlock.
 
 ### Tier 2 — reliability & polish
 6. Wire `lib/ipc-channels.js` into `preload.js` and `register-all.js` (single source of truth).
-7. Surface transcription lag / dropped chunks in the meeting UI.
-8. Toast/inline error system instead of `alert()` / `confirm()`.
-9. Validate `workflow:register-trigger` URLs; keep webhook registration main-only.
-10. Keep temp audio optional for playback/seek (or export WAV before shred).
+7. Toast/inline error system instead of remaining `alert()` / `confirm()` calls.
+8. Keep temp audio optional for playback/seek (or export WAV before shred).
+9. Navigate action-item → scroll to source segment in meeting window.
 
 ### Tier 3 — architecture
-11. Move remaining IPC handlers from `register-all.js` into `main/modules/*`.
-12. Shrink `runtime.js` into orchestration + thin service facades.
-13. Complete `renderer/shared/ipc-client.js` coverage so hub/meeting stop using raw `window.api` ad hoc.
+10. Move remaining IPC handlers from `register-all.js` into `main/modules/*`.
+11. Shrink `runtime.js` into orchestration + thin service facades.
+12. Complete `renderer/shared/ipc-client.js` coverage so hub/meeting stop using raw `window.api` ad hoc.
 
 ---
 

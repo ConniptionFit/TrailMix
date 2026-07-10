@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Meeting live transcript now applies coalesced `merged` segment updates instead of duplicating bubbles
 - Speaker label mapping in the meeting window uses turn-index keys correctly
 - Resume chunk offset uses last segment timestamp; numerical deadline parsing no longer references an undefined date
+- Mix notes no longer leave the editor stuck in “enhancing” state after success
+- Directory watcher now reacts to `.trail.bak` session files (canonical on-disk format)
+- History cards use real CSS classes instead of missing Tailwind utilities
 
 ### Changed
 - Debounced silent session saves during live capture; flush on pause/stop
@@ -19,8 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bounded Mix-Master history context and transcription queue backpressure
 - Async/sampled audio level metering; incremental bleed correction
 - Hub UX: debounced search, non-destructive chat close, Ctrl/Cmd+B sidebar toggle, Ctrl/Cmd+N new meeting
+- Parallel summary + action-item LLM enrichment; LLM `queryComplete` timeouts/retries
+- Encrypted autosaves reuse salt/key (cached PBKDF2) instead of re-deriving every write
+- `calls:find-related` scores metadata only (no full-table decrypt)
+- Chunked secure shred to avoid OOM on large temp WAVs
+- Removed ~600 lines of dead hub-embedded meeting UI
 
 ### Added
+- Hub home recent meetings with Open / Resume Trail
+- In-meeting Ctrl+F transcript search, save status, Whisper queue-pressure banner, Stop on Mix-Master streams
+- Processing Retry chip for failed sidebar jobs; `/` focuses search; Esc closes modals
+- Task/session SQLite indexes; workflow webhook localhost validation
 - `docs/OPTIMIZATION_ROADMAP.md` — ranked performance work and feature suggestions
 
 ## [0.5.0] - 2026-06-15

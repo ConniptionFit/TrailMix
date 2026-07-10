@@ -35,14 +35,15 @@
         </div>
       </div>
       <div class="rec-actions">
-        <button id="btn-record-toggle" class="btn-record start" type="button">
+        <button id="btn-record-toggle" class="btn-record start" type="button" aria-label="Start or stop transcription">
           <span class="btn-icon">⏺</span> Start Trail
         </button>
-        <button id="btn-pause-toggle" class="btn-record pause hidden" type="button">
+        <button id="btn-pause-toggle" class="btn-record pause hidden" type="button" aria-label="Pause or resume transcription">
           <span class="btn-icon">⏸</span> Pause
         </button>
       </div>
     </div>
+    <div id="queue-pressure-banner" class="queue-pressure-banner hidden" role="status" aria-live="polite"></div>
 
     <div class="meeting-body-row">
       <section class="meeting-editor-pane card glassmorphic">
@@ -59,6 +60,7 @@
         </div>
         <footer class="mix-stage-footer">
           <div class="mix-stage-footer-left">
+            <p id="editor-save-status" class="editor-save-status" aria-live="polite"></p>
             <p id="editor-legend" class="editor-legend hidden">
               <span class="legend-user">Dark</span> = your Mix-Ins ·
               <span class="legend-ai">Gray</span> = AI trail context
@@ -71,6 +73,14 @@
       <aside id="meeting-transcript-drawer" class="transcript-pane card glassmorphic meeting-transcript-pane">
         <div class="pane-header">
           <h2>Transcript</h2>
+          <button id="btn-transcript-search" class="btn-icon-ghost" type="button" title="Search transcript (Ctrl+F)" aria-label="Search transcript">⌕</button>
+        </div>
+        <div id="transcript-search-bar" class="transcript-search-bar hidden" role="search">
+          <input id="input-transcript-search" type="search" class="input-text transcript-search-input" placeholder="Find in transcript…" aria-label="Find in transcript">
+          <span id="transcript-search-count" class="transcript-search-count" aria-live="polite"></span>
+          <button id="btn-transcript-search-prev" type="button" class="btn-icon-ghost" aria-label="Previous match">↑</button>
+          <button id="btn-transcript-search-next" type="button" class="btn-icon-ghost" aria-label="Next match">↓</button>
+          <button id="btn-transcript-search-close" type="button" class="btn-icon-ghost" aria-label="Close search">✕</button>
         </div>
         <div id="transcript-container" class="transcript-container" role="log" aria-live="polite" aria-relevant="additions text">
           <div class="transcript-empty-state">
@@ -78,7 +88,7 @@
             <p>Start the Trail to begin live transcription.</p>
           </div>
         </div>
-        <button id="btn-jump-latest" class="btn-jump-latest hidden"><span>↓ Jump to latest</span></button>
+        <button id="btn-jump-latest" class="btn-jump-latest hidden" aria-label="Jump to latest transcript"><span>↓ Jump to latest</span></button>
       </aside>
 
       <div id="meeting-chat-widget" class="chat-widget meeting-chat-widget">
@@ -98,8 +108,9 @@
           </div>
         </div>
         <div class="chat-footer">
-          <input type="text" id="input-chat-query" class="input-chat" placeholder="Ask Mix-Master anything about this meeting…">
-          <button id="btn-chat-send" class="btn-chat-send" type="button">Send</button>
+          <input type="text" id="input-chat-query" class="input-chat" placeholder="Ask Mix-Master anything about this meeting…" aria-label="Ask Mix-Master">
+          <button id="btn-chat-cancel" class="btn-chat-cancel hidden" type="button" aria-label="Stop generating">Stop</button>
+          <button id="btn-chat-send" class="btn-chat-send" type="button" aria-label="Send message">Send</button>
         </div>
       </div>
     </div>

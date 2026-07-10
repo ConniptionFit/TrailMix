@@ -44,7 +44,8 @@ const {
   moveSessionFile,
   moveStorageContents,
   resolveSessionFilePath,
-  relativePathFromFolderId
+  relativePathFromFolderId,
+  isTrailFile
 } = require('../../lib/storage-layout');
 const { resolveWhisperCli } = require('../../lib/resolve-whisper-cli');
 const { correctBleedInTranscript } = require('../../lib/transcript-bleed-correction');
@@ -281,7 +282,18 @@ function handleTranscriptionSegments({ chunkIndex, segments }) {
 }
 
 transcriptionService.configure({
-  onSegments: handleTranscriptionSegments
+  onSegments: handleTranscriptionSegments,
+  onQueuePressure: (pressure) => {
+    if (!activeRecordingSessionId) return;
+    broadcastToSession(activeRecordingSessionId, 'audio:on-queue-pressure', pressure);
+  },
+  onChunkError: ({ chunkIndex, error }) => {
+    if (!activeRecordingSessionId) return;
+    broadcastToSession(activeRecordingSessionId, 'audio:on-transcription-error', {
+      chunkIndex,
+      error: String(error || 'Transcription failed')
+    });
+  }
 });
 
 audioCaptureService.configure({
@@ -341,14 +353,17 @@ function watchCallsDirectory() {
   }
   
   const targetDir = getCallsDir();
+  let debounceTimer = null;
   try {
-    callsDirWatcher = fs.watch(targetDir, (eventType, filename) => {
-      if (filename && filename.endsWith('.trail')) {
-        console.log(`Directory change detected: ${eventType} on ${filename}`);
+    callsDirWatcher = fs.watch(targetDir, { recursive: true }, (eventType, filename) => {
+      if (!filename || !isTrailFile(filename)) return;
+      console.log(`Directory change detected: ${eventType} on ${filename}`);
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
         if (getHubWindow()) {
           getHubWindow().webContents.send('calls:list-updated');
         }
-      }
+      }, 350);
     });
   } catch (err) {
     console.error(`Error watching directory ${targetDir}:`, err);
@@ -368,6 +383,8 @@ let activeSession = null;
 let activeRecordingSessionId = null;
 let captureMicSourceOverride = null;
 let decryptionKeys = new Map();
+// Reuse salt across incremental encrypted saves for the same session (avoids PBKDF2 every tick).
+const encryptionEnvelopes = new Map();
 
 function getHubWindow() {
   return windowManager?.getHubWindow() || null;
@@ -598,6 +615,9 @@ function initDatabase() {
       )`, (err) => { 
         if (err) console.error("Error creating tasks table", err);
         else {
+          db.run('CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(dueDate)');
+          db.run('CREATE INDEX IF NOT EXISTS idx_tasks_source ON tasks(sourceCallId)');
+          db.run('CREATE INDEX IF NOT EXISTS idx_sessions_mtime ON sessions(mtimeMs DESC)');
           migrateOldData().then(resolve).catch(reject);
         }
       });
@@ -1106,7 +1126,23 @@ async function saveSessionToDbPromise(session, options = {}) {
     
     let payload = '';
     if (isEncrypted && password) {
-      payload = encryption.encrypt(JSON.stringify(session), password);
+      let reuseEnvelope = encryptionEnvelopes.get(session.id) || null;
+      if (!reuseEnvelope) {
+        try {
+          const existing = await dbGet('SELECT encrypted_payload FROM sessions WHERE id = ? AND encrypted = 1', [session.id]);
+          if (existing?.encrypted_payload) {
+            reuseEnvelope = JSON.parse(existing.encrypted_payload);
+          }
+        } catch (err) {
+          reuseEnvelope = null;
+        }
+      }
+      payload = encryption.encrypt(JSON.stringify(session), password, reuseEnvelope);
+      try {
+        encryptionEnvelopes.set(session.id, JSON.parse(payload));
+      } catch (err) {
+        // Ignore envelope cache failures.
+      }
       await dbRun(`INSERT OR REPLACE INTO sessions (
         id, date, title, description, summary, actionItems, mixNotes, enhancedNotes, 
         encrypted, encrypted_payload, folder_id, mtimeMs, tags, suggestedTags
@@ -1753,21 +1789,15 @@ function triggerOllamaSummary(transcriptText, callback) {
     settings.actionPromptTemplate || DEFAULT_PROMPTS.actionItems,
     transcriptText
   );
-  
-  // Request summary
-  llmService.queryComplete(summaryPrompt, model)
-    .then(summary => {
-      llmService.queryComplete(actionItemsPrompt, model)
-        .then(actionItems => {
-          callback(summary, actionItems);
-        })
-        .catch(() => {
-          callback(summary, 'Could not load action items. (Ollama error)');
-        });
-    })
-    .catch(() => {
-      callback('Could not load summary. (Ollama error)', 'Could not load action items.');
-    });
+
+  Promise.all([
+    llmService.queryComplete(summaryPrompt, model).catch(() => 'Could not load summary. (Ollama error)'),
+    llmService.queryComplete(actionItemsPrompt, model).catch(() => 'Could not load action items. (Ollama error)')
+  ]).then(([summary, actionItems]) => {
+    callback(summary, actionItems);
+  }).catch(() => {
+    callback('Could not load summary. (Ollama error)', 'Could not load action items.');
+  });
 }
 
 function cleanupStaleLoopbackModules() {

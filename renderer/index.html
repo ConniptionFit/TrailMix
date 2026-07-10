@@ -238,8 +238,13 @@
       <section id="tab-hub-home" class="tab-pane active">
         <div class="tab-header">
           <h1>The Trail</h1>
-          <p>Your meeting history lives here. Start a new meeting from the sidebar or browse past sessions below.</p>
+          <p>Your meeting history lives here. Start a new meeting from the sidebar or continue a recent session below.</p>
         </div>
+        <div class="hub-home-actions">
+          <button id="btn-hub-new-meeting" class="btn-primary" type="button">➕ New Meeting</button>
+          <button id="btn-hub-browse-trail" class="btn-secondary" type="button">📜 Full Trail</button>
+        </div>
+        <div id="hub-recent-sessions" class="hub-recent-sessions" aria-live="polite"></div>
       </section>
 
       <!-- Calendar Tab -->

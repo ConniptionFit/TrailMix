@@ -706,68 +706,52 @@ ipcMain.handle('calls:find-related', async (event, sessionId) => {
   try {
     const targetRow = await dbGet("SELECT * FROM sessions WHERE id = ?", [sessionId]);
     if (!targetRow) return [];
-    
-    let targetSession = null;
-    if (targetRow.encrypted) {
-      const cachedKey = decryptionKeys.get(sessionId);
-      if (cachedKey) {
-        targetSession = JSON.parse(encryption.decrypt(targetRow.encrypted_payload, cachedKey));
-      }
-    } else {
-      targetSession = JSON.parse(targetRow.encrypted_payload || '{}');
-    }
-    
-    if (!targetSession || !targetSession.transcript) return [];
 
-    const targetSpeakers = new Set(targetSession.transcript.map(t => t.speaker.toLowerCase()).filter(s => s !== 'you' && !s.startsWith('speaker')));
-    const targetWords = new Set(targetSession.title.toLowerCase().split(/\s+/).filter(w => w.length > 4));
+    const targetTitle = String(targetRow.title || '').toLowerCase();
+    const targetWords = new Set(targetTitle.split(/\s+/).filter((w) => w.length > 4));
+    let targetTags = [];
+    try { targetTags = JSON.parse(targetRow.tags || '[]'); } catch (e) { targetTags = []; }
+    const targetTagSet = new Set(targetTags.map((t) => String(t).toLowerCase()));
 
-    const rows = await dbAll("SELECT * FROM sessions WHERE id != ?", [sessionId]);
+    // Prefer metadata scoring to avoid decrypting/parsing every session payload.
+    const rows = await dbAll(
+      "SELECT id, title, date, summary, tags, mtimeMs, encrypted FROM sessions WHERE id != ? ORDER BY mtimeMs DESC LIMIT 200",
+      [sessionId]
+    );
     const related = [];
 
     for (const r of rows) {
-      try {
-        let session = null;
-        if (r.encrypted) {
-          const cachedKey = decryptionKeys.get(r.id);
-          if (cachedKey) {
-            session = JSON.parse(encryption.decrypt(r.encrypted_payload, cachedKey));
-          }
-        } else {
-          session = JSON.parse(r.encrypted_payload || '{}');
-        }
+      let score = 0;
+      const titleWords = String(r.title || '').toLowerCase().split(/\s+/).filter((w) => w.length > 4);
+      titleWords.forEach((w) => {
+        if (targetWords.has(w)) score += 3;
+      });
 
-        if (session && session.transcript) {
-          let score = 0;
-          session.transcript.forEach(t => {
-            const spk = t.speaker.toLowerCase();
-            if (targetSpeakers.has(spk)) {
-              score += 5;
-            }
-          });
+      let tags = [];
+      try { tags = JSON.parse(r.tags || '[]'); } catch (e) { tags = []; }
+      tags.forEach((tag) => {
+        if (targetTagSet.has(String(tag).toLowerCase())) score += 4;
+      });
 
-          const titleWords = session.title.toLowerCase().split(/\s+/).filter(w => w.length > 4);
-          titleWords.forEach(w => {
-            if (targetWords.has(w)) {
-              score += 2;
-            }
-          });
+      const summary = String(r.summary || '').toLowerCase();
+      targetWords.forEach((w) => {
+        if (summary.includes(w)) score += 1;
+      });
 
-          if (score > 0) {
-            related.push({
-              id: session.id,
-              title: session.title,
-              date: session.date,
-              score: score,
-              filePath: session.id
-            });
-          }
-        }
-      } catch (err) {}
+      if (score > 0) {
+        related.push({
+          id: r.id,
+          title: r.title,
+          date: r.date,
+          score,
+          filePath: r.id,
+          encrypted: r.encrypted === 1
+        });
+      }
     }
 
     related.sort((a, b) => b.score - a.score);
-    return related;
+    return related.slice(0, 40);
   } catch (e) {
     console.error(e);
     return [];
@@ -935,6 +919,32 @@ ipcMain.handle('calls:move-to-folder', async (event, sessionId, folderId) => {
 });
 
 ipcMain.handle('workflow:register-trigger', async (event, eventName, trigger) => {
+  if (!eventName || typeof eventName !== 'string') {
+    return { success: false, error: 'Invalid event name' };
+  }
+  if (!trigger || typeof trigger !== 'object') {
+    return { success: false, error: 'Invalid trigger payload' };
+  }
+
+  const url = String(trigger.url || trigger.webhookUrl || '');
+  if (url) {
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch (err) {
+      return { success: false, error: 'Invalid webhook URL' };
+    }
+    const allowedHost = parsed.hostname === '127.0.0.1'
+      || parsed.hostname === 'localhost'
+      || parsed.hostname === '::1';
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return { success: false, error: 'Webhook URL must be http(s)' };
+    }
+    if (!allowedHost) {
+      return { success: false, error: 'Webhook URL must target localhost' };
+    }
+  }
+
   appEventBus.registerWorkflowTrigger(eventName, trigger);
   return { success: true };
 });

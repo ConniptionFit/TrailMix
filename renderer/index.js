@@ -55,60 +55,6 @@ if (isMiniMode) {
   miniWidget.classList.add('hidden');
   globalTooltip = document.getElementById('global-tooltip');
 
-  function formatTimerSeconds(totalSeconds) {
-    const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
-    const seconds = (totalSeconds % 60).toString().padStart(2, '0');
-    return `${minutes}:${seconds}`;
-  }
-
-  function formatGapDuration(timeDiffMs) {
-    const minutes = Math.floor(timeDiffMs / 60000);
-    const seconds = Math.floor((timeDiffMs % 60000) / 1000);
-    let text = '';
-    if (minutes > 0) text += `${minutes}m `;
-    text += `${seconds}s`;
-    return text;
-  }
-
-  function getSegmentTimestampMs(segment) {
-    return segment.wallTimeMs || segment.timestampMs;
-  }
-
-  function applySpeakerLabelMapping(transcript, mapping) {
-    let updatedAny = false;
-
-    transcript.forEach((segment, index) => {
-      let label = mapping[segment.id];
-      if (!label) {
-        label = mapping[(index + 1).toString()] || mapping[index + 1];
-      }
-
-      if (!label) return;
-
-      if (label !== 'You' && segment.speaker.toLowerCase() === 'you') {
-        return;
-      }
-
-      if (segment.speaker !== label) {
-        segment.speaker = label;
-        updatedAny = true;
-      }
-    });
-
-    return updatedAny;
-  }
-
-  function getDisplaySpeakerName(speakerName) {
-    const normalizedSpeaker = speakerName.toLowerCase();
-    if (normalizedSpeaker === 'you' || normalizedSpeaker === 'me') {
-      return 'Me';
-    }
-    if (normalizedSpeaker === 'speaker 1') {
-      return 'Them';
-    }
-    return speakerName;
-  }
-
   const llmStreamBuffers = new Map();
   const llmStreamRenderTimers = new Map();
   const llmStreamWaiters = new Map();
@@ -143,52 +89,6 @@ if (isMiniMode) {
       }
     }
   });
-
-  function normalizeEditorDocument(session) {
-    if (!session) {
-      return { version: 1, mode: 'plain', plainText: '', spans: [], enhancedAt: null };
-    }
-
-    if (session.editorDocument) {
-      let rawDocument = session.editorDocument;
-      if (typeof rawDocument === 'string') {
-        try {
-          rawDocument = JSON.parse(rawDocument);
-        } catch (err) {
-          rawDocument = null;
-        }
-      }
-
-      if (rawDocument?.mode === 'mixed' && Array.isArray(rawDocument.spans) && rawDocument.spans.length > 0) {
-        return rawDocument;
-      }
-
-      return {
-        version: 1,
-        mode: 'plain',
-        plainText: rawDocument?.plainText || session.mixNotes || '',
-        spans: [],
-        enhancedAt: null
-      };
-    }
-
-    return {
-      version: 1,
-      mode: 'plain',
-      plainText: session.mixNotes || '',
-      spans: [],
-      enhancedAt: null
-    };
-  }
-
-  function syncSessionFromEditorDocument(session, document) {
-    session.mixNotes = document.plainText || '';
-    session.editorDocument = document;
-    if (document.mode !== 'mixed') {
-      session.enhancedNotes = '';
-    }
-    return session;
-  }
 
   function waitForLlmStream(requestId, onUpdate) {
     return new Promise((resolve, reject) => {
@@ -316,637 +216,96 @@ if (isMiniMode) {
     if (sessionId) window.api.openMeeting(sessionId);
   }
 
+  function escapeHtml(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function renderHubHome(calls = []) {
+    const host = document.getElementById('hub-recent-sessions');
+    if (!host) return;
+    const recent = [...calls]
+      .sort((a, b) => (b.mtimeMs || 0) - (a.mtimeMs || 0))
+      .slice(0, 8);
+
+    if (!recent.length) {
+      host.innerHTML = `
+        <div class="hub-empty-state">
+          <p>No meetings yet. Start your first Trail and TrailMix will keep everything local.</p>
+          <button type="button" class="btn-primary" id="btn-hub-empty-new">Start a meeting</button>
+        </div>`;
+      document.getElementById('btn-hub-empty-new')?.addEventListener('click', startNewMeeting);
+      return;
+    }
+
+    host.innerHTML = `
+      <div class="hub-recent-header">
+        <h2>Recent meetings</h2>
+      </div>
+      <div class="hub-recent-grid"></div>`;
+    const grid = host.querySelector('.hub-recent-grid');
+    recent.forEach((call) => {
+      const card = document.createElement('article');
+      card.className = 'history-card glassmorphic hub-recent-card';
+      const summary = call.encrypted && !call.unlocked
+        ? 'Encrypted session'
+        : (call.summary || call.description || 'No summary yet.');
+      card.innerHTML = `
+        <div class="history-card-header">
+          <h3>${escapeHtml(call.title || 'Meeting Session')}</h3>
+          ${call.encrypted ? '<span class="lock-badge">🔒</span>' : ''}
+        </div>
+        <div class="history-card-date">${escapeHtml(call.date || '')}</div>
+        <p class="history-card-desc">${escapeHtml(summary)}</p>
+        <div class="hub-card-actions">
+          <button type="button" class="btn-secondary btn-hub-open">Open</button>
+          <button type="button" class="btn-primary btn-hub-resume">Resume Trail</button>
+        </div>`;
+      card.querySelector('.btn-hub-open')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openMeetingForCall(call);
+      });
+      card.querySelector('.btn-hub-resume')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        window.api.resumeCallTranscription(call.id).then((res) => {
+          if (res?.requirePassword) {
+            handleCallSelect(call);
+            return;
+          }
+          if (res?.conflict) {
+            alert(`Another Trail is already recording (${res.activeSessionId}).`);
+            return;
+          }
+          if (res?.success === false) {
+            alert(res.error || 'Could not resume this Trail.');
+            return;
+          }
+          openMeetingForCall(call);
+        }).catch((err) => alert(err?.message || 'Could not resume this Trail.'));
+      });
+      card.addEventListener('click', () => openMeetingForCall(call));
+      grid.appendChild(card);
+    });
+  }
+
   const btnNewMeeting = document.getElementById('btn-new-meeting');
   const startNewMeeting = () => window.api.createMeeting();
   if (btnNewMeeting) btnNewMeeting.addEventListener('click', startNewMeeting);
+  document.getElementById('btn-hub-new-meeting')?.addEventListener('click', startNewMeeting);
+  document.getElementById('btn-hub-browse-trail')?.addEventListener('click', () => {
+    activateTab({ nav: navHistory, pane: tabHistory });
+  });
   
   tabs.forEach(tab => {
     if (!tab.nav) return;
     tab.nav.addEventListener('click', () => activateTab(tab));
   });
 
-  // Recording Controls
-  const btnRecordToggle = document.getElementById('btn-record-toggle');
-  const btnPauseToggle = document.getElementById('btn-pause-toggle');
-  const btnResumePast = document.getElementById('btn-resume-past');
-  const recIndicator = document.getElementById('rec-indicator');
-  const recTitle = document.getElementById('rec-title');
-  const recTimer = document.getElementById('rec-timer');
-  const transcriptContainer = document.getElementById('transcript-container');
-  const btnJumpLatest = document.getElementById('btn-jump-latest');
-  
-  let lastSegmentTimeMs = null;
-  let isUserScrolledUp = false;
+  // Meeting capture UI lives in renderer/meeting.js (hub no longer embeds record controls).
 
-  if (btnRecordToggle) {
-  if (transcriptContainer) {
-    transcriptContainer.addEventListener('scroll', () => {
-      const distanceFromBottom = transcriptContainer.scrollHeight - transcriptContainer.scrollTop - transcriptContainer.clientHeight;
-      if (distanceFromBottom > 50) {
-        isUserScrolledUp = true;
-        if (btnJumpLatest) {
-          btnJumpLatest.classList.remove('hidden');
-        }
-      } else {
-        isUserScrolledUp = false;
-        if (btnJumpLatest) {
-          btnJumpLatest.classList.add('hidden');
-        }
-      }
-    });
-  }
-
-  if (btnJumpLatest) {
-    btnJumpLatest.addEventListener('click', () => {
-      if (transcriptContainer) {
-        transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
-      }
-      isUserScrolledUp = false;
-      btnJumpLatest.classList.add('hidden');
-    });
-  }
-
-  if (btnRecordToggle) {
-  btnRecordToggle.addEventListener('click', () => {
-    if (btnRecordToggle.classList.contains('start')) {
-      // Clear active session to start a brand new one
-      activeSession = {
-        id: 'live',
-        transcript: [],
-        summary: '',
-        actionItems: '',
-        tags: [],
-        suggestedTags: []
-      };
-      // Clear sidebar selected class
-      document.querySelectorAll('.call-list-item').forEach(item => item.classList.remove('selected'));
-      isUserScrolledUp = false;
-      if (btnJumpLatest) btnJumpLatest.classList.add('hidden');
-      transcriptContainer.innerHTML = '';
-      document.getElementById('summary-content').innerHTML = '<p class="placeholder-text">AI Highlights will be generated automatically at the end of the transcription session.</p>';
-      document.getElementById('action-content').innerHTML = '<p class="placeholder-text">Action items will be extracted at the end of the transcription session.</p>';
-      
-      if (jotEditor) jotEditor.resetPlain();
-      if (editorLegend) editorLegend.classList.add('hidden');
-      
-      lastSegmentTimeMs = null;
-      window.api.startRecording().then((result) => {
-        if (activeSession && activeSession.id === 'live' && result?.sessionId) {
-          activeSession.id = result.sessionId;
-        }
-      });
-    } else {
-      window.api.stopRecording();
-    }
-  });
-  }
-
-  if (btnPauseToggle) {
-  btnPauseToggle.addEventListener('click', () => {
-    if (btnPauseToggle.innerHTML.includes('Pause')) {
-      window.api.pauseRecording();
-    } else {
-      window.api.resumeRecording();
-    }
-  });
-  }
-
-  if (btnResumePast) {
-  btnResumePast.addEventListener('click', () => {
-    if (activeSession && activeSession.id && activeSession.id !== 'live') {
-      window.api.resumeCallTranscription(activeSession.id).then(res => {
-        if (res.success) {
-          console.log("Resumed session successfully");
-        } else if (res.requirePassword) {
-          alert("This call is encrypted. Please enter the password to decrypt it first.");
-        } else {
-          alert("Error resuming: " + res.error);
-        }
-      });
-    }
-  });
-  }
-
-  // Recording Status listener
-  window.api.onRecordingStatus((status) => {
-    if (!btnRecordToggle || !btnPauseToggle || !recTimer) return;
-    const { isRecording, isPaused, isNewSession } = status;
-
-    if (isRecording && !isPaused) {
-      // Active Transcribing State
-      btnRecordToggle.className = 'btn-record stop';
-      btnRecordToggle.innerHTML = '<span class="btn-icon">⏹</span> Stop Transcribing';
-      btnRecordToggle.classList.remove('hidden');
-      
-      btnPauseToggle.className = 'btn-record pause';
-      btnPauseToggle.innerHTML = '<span class="btn-icon">⏸</span> Pause';
-      btnPauseToggle.classList.remove('hidden');
-      
-      btnResumePast.classList.add('hidden');
-      
-      recIndicator.className = 'rec-indicator-active';
-      recTitle.textContent = 'Transcribing Call...';
-      
-      if (isNewSession) {
-        recordingSeconds = 0;
-        recTimer.textContent = '00:00';
-      }
-      clearInterval(recordingInterval);
-      recordingInterval = setInterval(() => {
-        recordingSeconds++;
-        recTimer.textContent = formatTimerSeconds(recordingSeconds);
-      }, 1000);
-      
-      if (!activeSession || activeSession.id === 'live') {
-        activeSession = {
-          id: 'live',
-          transcript: [],
-          summary: '',
-          actionItems: ''
-        };
-      }
-
-      if (editorWaveformBars) {
-        editorWaveformBars.classList.remove('hidden');
-      }
-    } else if (!isRecording && isPaused) {
-      // Paused State
-      btnRecordToggle.className = 'btn-record stop';
-      btnRecordToggle.innerHTML = '<span class="btn-icon">⏹</span> Stop Transcribing';
-      btnRecordToggle.classList.remove('hidden');
-      
-      btnPauseToggle.className = 'btn-record start'; // Green accent for resume
-      btnPauseToggle.innerHTML = '<span class="btn-icon">▶</span> Resume';
-      btnPauseToggle.classList.remove('hidden');
-      
-      btnResumePast.classList.add('hidden');
-      
-      recIndicator.className = 'rec-indicator-static';
-      recTitle.textContent = 'Transcription Paused';
-      
-      clearInterval(recordingInterval);
-
-      if (typeof editorWaveformBars !== 'undefined' && editorWaveformBars) {
-        editorWaveformBars.classList.add('hidden');
-      }
-    } else {
-      // Idle UI State
-      btnRecordToggle.className = 'btn-record start';
-      btnRecordToggle.innerHTML = '<span class="btn-icon">⏺</span> New Transcript';
-      btnRecordToggle.classList.remove('hidden');
-      
-      btnPauseToggle.classList.add('hidden');
-      
-      if (activeSession && activeSession.id !== 'live' && activeSession.id !== 'call_placeholder') {
-        btnResumePast.classList.remove('hidden');
-      } else {
-        btnResumePast.classList.add('hidden');
-      }
-      
-      recIndicator.className = 'rec-indicator-static';
-      if (!activeSession || activeSession.id === 'live') {
-        recTitle.textContent = 'Engine Idle';
-        recTimer.textContent = '00:00';
-      }
-      
-      clearInterval(recordingInterval);
-      recordingInterval = null;
-
-      if (typeof editorWaveformBars !== 'undefined' && editorWaveformBars) {
-        editorWaveformBars.classList.add('hidden');
-      }
-    }
-  });
-
-  // Transcription Update Listener
-  window.api.onTranscriptionUpdate((segment) => {
-    if (!activeSession) return;
-    
-    // Extract real session ID from segment ID during live call
-    if (activeSession.id === 'live' && segment.id && segment.id.startsWith('call_')) {
-      const match = segment.id.match(/^(call_\d+)/);
-      if (match) {
-        activeSession.id = match[1];
-      }
-    }
-    
-    // Remove empty placeholder if present
-    const emptyState = transcriptContainer.querySelector('.transcript-empty-state');
-    if (emptyState) emptyState.remove();
-    
-    // Render visual gap divider if a large silence/break occurred (> 30 seconds)
-    const currentSegmentTime = getSegmentTimestampMs(segment);
-    if (lastSegmentTimeMs !== null) {
-      const timeDiff = currentSegmentTime - lastSegmentTimeMs;
-      if (timeDiff > 30000) {
-        appendBreakDivider(formatGapDuration(timeDiff));
-      }
-    }
-    
-    if (segment.merged && activeSession.transcript.length > 0) {
-      activeSession.transcript[activeSession.transcript.length - 1] = segment;
-    } else {
-      activeSession.transcript.push(segment);
-    }
-    appendTranscriptLine(segment);
-    lastSegmentTimeMs = currentSegmentTime;
-  });
-
-  function appendBreakDivider(durationText) {
-    const div = document.createElement('div');
-    div.className = 'transcript-break-divider';
-    div.innerHTML = `<span>⏳ [Break: ${durationText}]</span>`;
-    transcriptContainer.appendChild(div);
-  }
-
-  // Speaker Label Updates Listener
-  window.api.onSpeakerLabelsUpdated((mapping) => {
-    console.log('Received speaker labels mapping update:', mapping);
-    if (!activeSession?.transcript) return;
-
-    const updatedAny = applySpeakerLabelMapping(activeSession.transcript, mapping);
-    if (!updatedAny) return;
-
-    console.log('Speakers updated. Re-rendering transcript pane to split/merge bubbles...');
-    lastSegmentTimeMs = renderTranscriptWithBreaks(activeSession.transcript, { preserveScroll: true });
-  });
-
-  const speakerColors = {};
-  const colorPalette = [
-    'var(--primary)', // Moss/Lime Green (for You)
-    '#39c6b7', // Teal/Cyan
-    '#3d8bff', // Neon Blue
-    '#ff7675', // Soft Coral/Red
-    '#fdcb6e', // Peach/Orange
-    '#a29bfe', // Lavender/Purple
-    '#00cec9', // Mint/Turquoise
-    '#e84393', // Deep Pink
-    '#ffeaa7', // Pale Yellow
-    '#0984e3'  // Sky Blue
-  ];
-
-  function getSpeakerColor(speakerName) {
-    const nameLower = speakerName.toLowerCase();
-    if (nameLower === 'you' || nameLower === 'me') {
-      return 'var(--primary)';
-    }
-    if (nameLower === 'speaker 1' || nameLower === 'them') {
-      return '#3d8bff';
-    }
-    if (!speakerColors[speakerName]) {
-      const index = (Object.keys(speakerColors).length % (colorPalette.length - 1)) + 1;
-      speakerColors[speakerName] = colorPalette[index];
-    }
-    return speakerColors[speakerName];
-  }
-
-  function isMicSpeaker(speakerName) {
-    const normalized = String(speakerName || '').toLowerCase();
-    return normalized === 'you' || normalized === 'me';
-  }
-
-  function createTranscriptChunkActions(segment) {
-    const actions = document.createElement('div');
-    actions.className = 'transcript-chunk-actions';
-
-    const copyBtn = document.createElement('button');
-    copyBtn.type = 'button';
-    copyBtn.className = 'transcript-chunk-btn';
-    copyBtn.title = 'Copy chunk';
-    copyBtn.textContent = '📋';
-    copyBtn.addEventListener('click', (event) => {
-      event.stopPropagation();
-      navigator.clipboard.writeText(`[${segment.timestamp}] ${segment.speaker}: ${segment.text}`);
-    });
-
-    const deleteBtn = document.createElement('button');
-    deleteBtn.type = 'button';
-    deleteBtn.className = 'transcript-chunk-btn delete';
-    deleteBtn.title = 'Delete chunk';
-    deleteBtn.textContent = '🗑️';
-    deleteBtn.addEventListener('click', (event) => {
-      event.stopPropagation();
-      if (!activeSession?.transcript) return;
-      activeSession.transcript = activeSession.transcript.filter((item) => item.id !== segment.id);
-      const line = document.getElementById(`line-${segment.id}`);
-      if (line) line.remove();
-      window.api.saveCallSilently(activeSession);
-    });
-
-    actions.appendChild(copyBtn);
-    actions.appendChild(deleteBtn);
-    return actions;
-  }
-
-  function appendTranscriptLine(segment, targetContainer = transcriptContainer) {
-    if (segment.merged) {
-      const existingLine = document.getElementById(`line-${segment.id}`);
-      if (existingLine) {
-        const textDiv = existingLine.querySelector('.line-text');
-        if (textDiv) textDiv.textContent = segment.text;
-        existingLine.setAttribute('data-timestamp-ms', segment.timestampMs);
-        return;
-      }
-    }
-
-    const lastLineDiv = transcriptContainer.lastElementChild;
-    let merged = false;
-    
-    const isMic = isMicSpeaker(segment.speaker);
-    const displaySpeakerName = getDisplaySpeakerName(segment.speaker);
-    
-    if (lastLineDiv && lastLineDiv.classList.contains('transcript-line')) {
-      const speakerSpan = lastLineDiv.querySelector('.line-speaker');
-      const textDiv = lastLineDiv.querySelector('.line-text');
-      
-      if (speakerSpan && textDiv) {
-        const lastSpeaker = speakerSpan.textContent.trim();
-        const lastTimestampMs = parseInt(lastLineDiv.getAttribute('data-timestamp-ms') || '0', 10);
-        const timeDiffMs = segment.timestampMs - lastTimestampMs;
-        
-        if (lastSpeaker.toLowerCase() === displaySpeakerName.toLowerCase() && timeDiffMs < 12000) {
-          textDiv.textContent += ' ' + segment.text;
-          lastLineDiv.setAttribute('data-timestamp-ms', segment.timestampMs);
-          lastLineDiv.classList.add(`subline-${segment.id}`);
-          merged = true;
-        }
-      }
-    }
-    
-    if (!merged) {
-      const lineDiv = document.createElement('div');
-      lineDiv.id = `line-${segment.id}`;
-      lineDiv.setAttribute('data-timestamp-ms', segment.timestampMs);
-      lineDiv.setAttribute('data-segment-id', segment.id || '');
-      
-      lineDiv.className = `transcript-line transcript-bubble ${isMic ? 'bubble-mic' : 'bubble-system'}`;
-      
-      const metaDiv = document.createElement('div');
-      metaDiv.className = 'line-meta';
-
-      const speakerSpan = document.createElement('span');
-      speakerSpan.className = `line-speaker ${isMic ? 'mic' : 'system'}`;
-      speakerSpan.textContent = displaySpeakerName;
-
-      const timeSpan = document.createElement('span');
-      timeSpan.className = 'line-time';
-      timeSpan.textContent = segment.timestamp;
-
-      metaDiv.appendChild(speakerSpan);
-      metaDiv.appendChild(timeSpan);
-      metaDiv.appendChild(createTranscriptChunkActions(segment));
-
-      const textDiv = document.createElement('div');
-      textDiv.className = 'line-text';
-      textDiv.textContent = segment.text;
-
-      lineDiv.appendChild(metaDiv);
-      lineDiv.appendChild(textDiv);
-      targetContainer.appendChild(lineDiv);
-    }
-    
-    if (!isUserScrolledUp && targetContainer === transcriptContainer) {
-      targetContainer.scrollTop = targetContainer.scrollHeight;
-    }
-  }
-
-  function renderTranscriptWithBreaks(transcript, options = {}) {
-    const { preserveScroll = false } = options;
-    const currentScrollTop = transcriptContainer.scrollTop;
-    const wasAtBottom = (transcriptContainer.scrollHeight - transcriptContainer.scrollTop - transcriptContainer.clientHeight) < 50;
-
-    transcriptContainer.innerHTML = '';
-    let lastTime = null;
-
-    transcript.forEach((segment) => {
-      const segmentTime = getSegmentTimestampMs(segment);
-      if (lastTime !== null) {
-        const timeDiff = segmentTime - lastTime;
-        if (timeDiff > 30000) {
-          appendBreakDivider(formatGapDuration(timeDiff));
-        }
-      }
-      appendTranscriptLine(segment);
-      lastTime = segmentTime;
-    });
-
-    if (preserveScroll) {
-      transcriptContainer.scrollTop = wasAtBottom
-        ? transcriptContainer.scrollHeight
-        : currentScrollTop;
-    } else if (!isUserScrolledUp) {
-      transcriptContainer.scrollTop = transcriptContainer.scrollHeight;
-    }
-
-    return lastTime;
-  }
-
-  // Summary Tab Toggle
-  const btnShowSummary = document.getElementById('btn-show-summary');
-  const btnShowActions = document.getElementById('btn-show-actions');
-  const btnShowMix = document.getElementById('btn-show-mix');
-  const summaryContent = document.getElementById('summary-content');
-  const actionContent = document.getElementById('action-content');
-  const mixContent = document.getElementById('mix-content');
-  const editorHost = document.getElementById('editor-component-root');
-  const btnMixEnhance = document.getElementById('btn-mix-enhance');
-  const editorLegend = document.getElementById('editor-legend');
-  const analysisPane = document.querySelector('.analysis-pane');
-  const editorWaveformBars = document.getElementById('editor-waveform-bars');
-  const editorTranscriptPanel = document.getElementById('editor-transcript-panel');
-  const editorTranscriptContainer = document.getElementById('editor-transcript-container');
-  const btnToggleEditorTranscript = document.getElementById('btn-toggle-editor-transcript');
-  const btnCloseEditorTranscript = document.getElementById('btn-close-editor-transcript');
-
-  async function runMixEnhance(templateKey = null) {
-    if (!activeSession || !jotEditor) return;
-
-    const currentDocument = jotEditor.getDocument();
-    if (!currentDocument.plainText.trim()) {
-      alert('Please enter some jots first!');
-      return;
-    }
-
-    syncSessionFromEditorDocument(activeSession, currentDocument);
-
-    btnMixEnhance.disabled = true;
-    btnMixEnhance.innerHTML = '✨ Mixing…';
-    btnMixEnhance.classList.add('is-mixing');
-    jotEditor.setEnhancing(true);
-
-    try {
-      const result = await window.api.mixEnhance({
-        plainText: currentDocument.plainText,
-        editorDocument: currentDocument,
-        transcript: activeSession.transcript || [],
-        template: templateKey || jotEditor.getSelectedTemplate()
-      });
-
-      if (!result?.success) {
-        throw new Error(result?.error || 'Failed to enhance notes.');
-      }
-
-      activeSession.editorDocument = result.editorDocument;
-      activeSession.enhancedNotes = result.enhancedNotes;
-      activeSession.mixNotes = result.editorDocument.plainText || currentDocument.plainText;
-      jotEditor.applyEnhancedDocument(result.editorDocument);
-
-      if (editorLegend) {
-        editorLegend.classList.remove('hidden');
-      }
-
-      await window.api.saveCall(activeSession);
-    } catch (err) {
-      console.error(err);
-      alert(err.message || 'Failed to enhance notes.');
-      jotEditor.setEnhancing(false);
-    } finally {
-      btnMixEnhance.disabled = false;
-      btnMixEnhance.innerHTML = '✨ Start the Mix';
-      btnMixEnhance.classList.remove('is-mixing');
-    }
-  }
-
-  function highlightTranscriptSegment(transcriptRef) {
-    if (!transcriptRef) return;
-
-    const liveTrailDrawer = document.getElementById('live-trail-drawer');
-    if (liveTrailDrawer) liveTrailDrawer.classList.remove('hidden');
-
-    let targetLine = null;
-    if (transcriptRef.segmentId) {
-      targetLine = document.getElementById(`line-${transcriptRef.segmentId}`);
-    }
-
-    if (!targetLine && transcriptRef.timestampMs) {
-      const lines = transcriptContainer.querySelectorAll('.transcript-line');
-      lines.forEach((line) => {
-        const lineMs = parseInt(line.getAttribute('data-timestamp-ms') || '0', 10);
-        if (!targetLine && Math.abs(lineMs - transcriptRef.timestampMs) < 5000) {
-          targetLine = line;
-        }
-      });
-    }
-
-    if (targetLine) {
-      targetLine.classList.add('highlight-flash');
-      targetLine.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      window.setTimeout(() => targetLine.classList.remove('highlight-flash'), 1800);
-    }
-  }
-
-  function renderEditorTranscriptPanel() {
-    if (!editorTranscriptContainer || !activeSession?.transcript) return;
-    editorTranscriptContainer.innerHTML = '';
-    activeSession.transcript.forEach((segment) => {
-      appendTranscriptLine(segment, editorTranscriptContainer);
-    });
-  }
-
-  function updateWaveformBars(levels = { left: 0, right: 0, combined: 0 }) {
-    if (!editorWaveformBars) return;
-    const bars = editorWaveformBars.querySelectorAll('.waveform-bar');
-    bars.forEach((bar, index) => {
-      const channelLevel = index % 2 === 0 ? levels.left : levels.right;
-      const jitter = (Math.sin(Date.now() / 120 + index) + 1) * 0.08;
-      const height = Math.max(8, Math.min(100, (channelLevel + jitter) * 100));
-      bar.style.height = `${height}%`;
-    });
-  }
-
-  let jotEditor = null;
-  if (editorHost && window.EditorComponent) {
-    jotEditor = new window.EditorComponent(editorHost, {
-      onChange: (document) => {
-        if (!activeSession) return;
-        syncSessionFromEditorDocument(activeSession, document);
-        window.api.saveCallSilently(activeSession);
-      },
-      onTraceTranscript: (transcriptRef) => {
-        highlightTranscriptSegment(transcriptRef);
-        if (editorTranscriptPanel) {
-          editorTranscriptPanel.classList.remove('closed');
-          renderEditorTranscriptPanel();
-        }
-      },
-      onEnhanceRequest: (templateKey) => {
-        runMixEnhance(templateKey);
-      },
-      onRegenerateRequest: (templateKey) => {
-        runMixEnhance(templateKey);
-      }
-    });
-  }
-
-  if (editorLegend) {
-    editorLegend.classList.add('hidden');
-  }
-
-  if (btnShowSummary && btnShowActions && summaryContent && actionContent) {
-    btnShowSummary.addEventListener('click', () => {
-      btnShowSummary.classList.add('active');
-      btnShowActions.classList.remove('active');
-      if (btnShowMix) btnShowMix.classList.remove('active');
-      summaryContent.classList.remove('hidden');
-      actionContent.classList.add('hidden');
-      if (mixContent) mixContent.classList.add('hidden');
-      if (analysisPane) analysisPane.classList.remove('mix-focused');
-    });
-
-    btnShowActions.addEventListener('click', () => {
-      btnShowActions.classList.add('active');
-      btnShowSummary.classList.remove('active');
-      if (btnShowMix) btnShowMix.classList.remove('active');
-      actionContent.classList.remove('hidden');
-      summaryContent.classList.add('hidden');
-      if (mixContent) mixContent.classList.add('hidden');
-      if (analysisPane) analysisPane.classList.remove('mix-focused');
-    });
-  }
-
-  if (btnShowMix) {
-    btnShowMix.addEventListener('click', () => {
-      btnShowMix.classList.add('active');
-      btnShowSummary.classList.remove('active');
-      btnShowActions.classList.remove('active');
-      if (mixContent) mixContent.classList.remove('hidden');
-      if (analysisPane) analysisPane.classList.add('mix-focused');
-      summaryContent.classList.add('hidden');
-      actionContent.classList.add('hidden');
-      if (typeof window.updateSidebarOverlay === 'function') {
-        window.updateSidebarOverlay();
-      }
-    });
-  }
-
-  if (btnMixEnhance) {
-    btnMixEnhance.addEventListener('click', () => runMixEnhance());
-  }
-
-  if (btnToggleEditorTranscript && editorTranscriptPanel) {
-    btnToggleEditorTranscript.addEventListener('click', () => {
-      editorTranscriptPanel.classList.toggle('closed');
-      if (!editorTranscriptPanel.classList.contains('closed')) {
-        renderEditorTranscriptPanel();
-      }
-    });
-  }
-
-  if (btnCloseEditorTranscript && editorTranscriptPanel) {
-    btnCloseEditorTranscript.addEventListener('click', () => {
-      editorTranscriptPanel.classList.add('closed');
-    });
-  }
-
-  if (window.api.onAudioLevels) {
-    window.api.onAudioLevels((levels) => {
-      if (editorWaveformBars) {
-        editorWaveformBars.classList.remove('hidden');
-      }
-      updateWaveformBars(levels);
-    });
-  }
-  } // end meeting UI (hub has no record controls)
 
   // ----------------------------------------------------
   // Sidebar and History Loading
@@ -1366,6 +725,7 @@ if (isMiniMode) {
       if (filteredCalls.length === 0) {
         sidebarCallsList.innerHTML = '<div class="empty-state">No matching calls.</div>';
         historyGrid.innerHTML = '<div class="empty-state">No matching calls.</div>';
+        renderHubHome(calls);
         return;
       }
       
@@ -1406,9 +766,11 @@ if (isMiniMode) {
         if (call.processing && call.processing.status && call.processing.status !== 'complete') {
           const label = call.processing.label || 'Processing…';
           const progress = call.processing.progress || 0;
+          const failed = call.processing.status === 'failed';
           processingHtml = `
-            <div class="processing-badge"><span class="processing-badge-dot"></span>${label}</div>
+            <div class="processing-badge ${failed ? 'failed' : ''}"><span class="processing-badge-dot"></span>${label}</div>
             <div class="processing-progress-track"><div class="processing-progress-fill" style="width: ${progress}%"></div></div>
+            ${failed ? `<button type="button" class="processing-retry-btn" data-retry-id="${call.id}">Retry</button>` : ''}
           `;
         }
         
@@ -1557,17 +919,34 @@ if (isMiniMode) {
         
         sidebarCallsList.appendChild(item);
 
+        const retryBtn = item.querySelector('.processing-retry-btn');
+        if (retryBtn) {
+          retryBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const sid = retryBtn.getAttribute('data-retry-id');
+            if (!sid || !window.api.retryProcessing) return;
+            retryBtn.disabled = true;
+            retryBtn.textContent = 'Retrying…';
+            window.api.retryProcessing(sid).then(() => {
+              scheduleHistoryRefresh();
+            }).catch(() => {
+              retryBtn.disabled = false;
+              retryBtn.textContent = 'Retry';
+            });
+          });
+        }
+
         // History tab grid
         if (!relatedCallsList) {
           const card = document.createElement('div');
-          card.className = 'history-card glassmorphic p-4 rounded-xl border border-white/5 bg-slate-900/20 hover:bg-slate-900/40 hover:border-trail-500/20 cursor-pointer transition flex flex-col gap-2';
+          card.className = 'history-card glassmorphic';
           card.innerHTML = `
-            <div class="flex justify-between items-start gap-2">
-              <h3 class="text-sm font-bold text-white leading-tight">${call.title}</h3>
-              ${call.encrypted ? '<span class="px-2 py-0.5 rounded text-[9px] font-bold bg-amber-500/10 text-amber-400">🔒 Locked</span>' : ''}
+            <div class="history-card-header">
+              <h3>${escapeHtml(call.title || 'Meeting Session')}</h3>
+              ${call.encrypted ? '<span class="lock-badge">🔒 Locked</span>' : ''}
             </div>
-            <div class="text-[10px] text-slate-500 font-semibold">${call.date}</div>
-            <p class="text-xs text-slate-400 line-clamp-3 leading-relaxed">${call.encrypted ? 'Encrypted session' : (call.summary || 'No summary available.')}</p>
+            <div class="history-card-date">${escapeHtml(call.date || '')}</div>
+            <p class="history-card-desc">${escapeHtml(call.encrypted ? 'Encrypted session' : (call.summary || 'No summary available.'))}</p>
           `;
           card.addEventListener('click', () => {
             activateTab({ nav: navHome, pane: tabHubHome });
@@ -1576,11 +955,22 @@ if (isMiniMode) {
           historyGrid.appendChild(card);
         }
       });
+
+      renderHubHome(filteredCalls);
       
       if (relatedCallsList && historyGrid) {
         historyGrid.innerHTML = '<div class="empty-state">Filtered for related calls. View the sidebar list.</div>';
       }
+    }).catch((err) => {
+      console.error('Failed to load history list', err);
+      sidebarCallsList.innerHTML = '<div class="empty-state">Could not load sessions.</div>';
     });
+  }
+
+  let historyRefreshTimer = null;
+  function scheduleHistoryRefresh(delayMs = 350) {
+    clearTimeout(historyRefreshTimer);
+    historyRefreshTimer = setTimeout(() => loadHistoryList(), delayMs);
   }
 
   // Folders Rendering and Management (v0.2)
@@ -1842,20 +1232,19 @@ if (isMiniMode) {
   // Listen to call list updates from main process (including directory watcher)
   if (window.api.onCallListUpdated) {
     window.api.onCallListUpdated(() => {
-      console.log('Received calls list update from main process. Reloading...');
-      loadHistoryList();
+      scheduleHistoryRefresh();
     });
   }
 
   if (window.api.onProcessingJobsUpdated) {
     window.api.onProcessingJobsUpdated(() => {
-      loadHistoryList();
+      scheduleHistoryRefresh(250);
     });
   }
 
   if (window.api.onProcessingTranscriptUpdated) {
     window.api.onProcessingTranscriptUpdated(() => {
-      loadHistoryList();
+      scheduleHistoryRefresh(400);
     });
   }
 
@@ -1865,7 +1254,9 @@ if (isMiniMode) {
       console.log('Received session summary ready:', session);
       // Auto-refresh active session if it matches
       if (activeSession && session.id === activeSession.id) {
-        loadHistoryList();
+        scheduleHistoryRefresh(200);
+      } else {
+        scheduleHistoryRefresh(500);
       }
     });
   }
@@ -2504,6 +1895,27 @@ if (isMiniMode) {
 
   document.addEventListener('keydown', (event) => {
     const isMeta = event.ctrlKey || event.metaKey;
+    const target = event.target;
+    const tag = target?.tagName;
+    const typing = tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable;
+
+    if (event.key === 'Escape') {
+      passwordModal?.classList.add('hidden');
+      bulkDecryptModal?.classList.add('hidden');
+      callsContextMenu?.classList.add('hidden');
+      historyMenuDropdown?.classList.add('hidden');
+      document.getElementById('folder-modal')?.classList.add('hidden');
+      return;
+    }
+
+    if (!isMeta && event.key === '/' && !typing) {
+      event.preventDefault();
+      const search = document.getElementById('input-sidebar-search');
+      search?.focus();
+      search?.select();
+      return;
+    }
+
     if (!isMeta) return;
 
     if (event.key.toLowerCase() === 'b') {
@@ -2520,9 +1932,7 @@ if (isMiniMode) {
     }
 
     if (event.key.toLowerCase() === 'n') {
-      const target = event.target;
-      const tag = target?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
+      if (typing) return;
       event.preventDefault();
       document.getElementById('btn-new-meeting')?.click();
     }

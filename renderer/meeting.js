@@ -10,6 +10,10 @@
   let jotEditor = null;
   let messageCounter = 0;
   let pendingRecordingStart = false;
+  let activeChatRequestId = null;
+  let saveStatusTimer = null;
+  let transcriptSearchMatches = [];
+  let transcriptSearchIndex = -1;
 
   const llmStreamBuffers = new Map();
   const llmStreamRenderTimers = new Map();
@@ -117,9 +121,26 @@
   const editorHost = document.getElementById('editor-component-root');
   const btnMixEnhance = document.getElementById('btn-mix-enhance');
   const editorLegend = document.getElementById('editor-legend');
+  const editorSaveStatus = document.getElementById('editor-save-status');
   const editorWaveformBars = document.getElementById('editor-waveform-bars');
   const conflictModal = document.getElementById('recording-conflict-modal');
   const conflictMessage = document.getElementById('recording-conflict-message');
+  const queuePressureBanner = document.getElementById('queue-pressure-banner');
+  const transcriptSearchBar = document.getElementById('transcript-search-bar');
+  const inputTranscriptSearch = document.getElementById('input-transcript-search');
+  const transcriptSearchCount = document.getElementById('transcript-search-count');
+  const btnChatCancel = document.getElementById('btn-chat-cancel');
+
+  function setSaveStatus(text) {
+    if (!editorSaveStatus) return;
+    editorSaveStatus.textContent = text || '';
+    clearTimeout(saveStatusTimer);
+    if (text && text.startsWith('Saved')) {
+      saveStatusTimer = setTimeout(() => {
+        if (editorSaveStatus.textContent === text) editorSaveStatus.textContent = '';
+      }, 1800);
+    }
+  }
 
   function updateTitleUi() {
     if (!activeSession) return;
@@ -287,10 +308,11 @@
       jotEditor.applyEnhancedDocument(result.editorDocument);
       editorLegend.classList.remove('hidden');
       await window.api.saveCall(activeSession);
+      setSaveStatus('Saved');
     } catch (err) {
       alert(err.message);
-      jotEditor.setEnhancing(false);
     } finally {
+      jotEditor.setEnhancing(false);
       btnMixEnhance.disabled = false;
     }
   }
@@ -300,7 +322,12 @@
       onChange: (document) => {
         if (!activeSession) return;
         syncSessionFromEditorDocument(activeSession, document);
-        window.api.saveCallSilently(activeSession);
+        setSaveStatus('Saving…');
+        Promise.resolve(window.api.saveCallSilently(activeSession))
+          .then((ok) => {
+            setSaveStatus(ok === false ? 'Save failed' : 'Saved');
+          })
+          .catch(() => setSaveStatus('Save failed'));
       },
       onTraceTranscript: (ref) => {
         if (!ref?.segmentId) return;
@@ -552,6 +579,104 @@
     });
   });
 
+  window.api.onQueuePressure?.((pressure) => {
+    if (!queuePressureBanner) return;
+    const depth = pressure?.depth || 0;
+    const dropped = pressure?.droppedChunks || 0;
+    if (depth < 8 && !pressure?.droppedChunkIndex) {
+      queuePressureBanner.classList.add('hidden');
+      return;
+    }
+    queuePressureBanner.classList.remove('hidden');
+    queuePressureBanner.textContent = dropped > 0
+      ? `Whisper is falling behind — queue ${depth}, dropped ${dropped} chunk(s). Consider a smaller model.`
+      : `Whisper is catching up — transcription queue depth ${depth}.`;
+  });
+
+  window.api.onTranscriptionError?.((payload) => {
+    if (!queuePressureBanner) return;
+    queuePressureBanner.classList.remove('hidden');
+    queuePressureBanner.textContent = `Transcription error on chunk ${payload?.chunkIndex ?? '?'}: ${payload?.error || 'unknown'}`;
+  });
+
+  function clearTranscriptSearchHighlights() {
+    transcriptContainer?.querySelectorAll('.transcript-line.search-match, .transcript-line.search-match-active')
+      .forEach((el) => {
+        el.classList.remove('search-match', 'search-match-active');
+      });
+    transcriptSearchMatches = [];
+    transcriptSearchIndex = -1;
+    if (transcriptSearchCount) transcriptSearchCount.textContent = '';
+  }
+
+  function focusTranscriptSearchMatch(index) {
+    if (!transcriptSearchMatches.length) return;
+    transcriptSearchMatches.forEach((el) => el.classList.remove('search-match-active'));
+    transcriptSearchIndex = ((index % transcriptSearchMatches.length) + transcriptSearchMatches.length) % transcriptSearchMatches.length;
+    const el = transcriptSearchMatches[transcriptSearchIndex];
+    el.classList.add('search-match-active');
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (transcriptSearchCount) {
+      transcriptSearchCount.textContent = `${transcriptSearchIndex + 1} / ${transcriptSearchMatches.length}`;
+    }
+  }
+
+  function runTranscriptSearch(query) {
+    clearTranscriptSearchHighlights();
+    const q = String(query || '').trim().toLowerCase();
+    if (!q || !transcriptContainer) {
+      if (transcriptSearchCount) transcriptSearchCount.textContent = q ? '0' : '';
+      return;
+    }
+    const lines = [...transcriptContainer.querySelectorAll('.transcript-line')];
+    transcriptSearchMatches = lines.filter((line) => {
+      const text = line.querySelector('.line-text')?.textContent || '';
+      const hit = text.toLowerCase().includes(q);
+      if (hit) line.classList.add('search-match');
+      return hit;
+    });
+    if (!transcriptSearchMatches.length) {
+      if (transcriptSearchCount) transcriptSearchCount.textContent = '0';
+      return;
+    }
+    focusTranscriptSearchMatch(0);
+  }
+
+  function openTranscriptSearch() {
+    if (!transcriptSearchBar) return;
+    transcriptSearchBar.classList.remove('hidden');
+    inputTranscriptSearch?.focus();
+    inputTranscriptSearch?.select();
+  }
+
+  function closeTranscriptSearch() {
+    transcriptSearchBar?.classList.add('hidden');
+    clearTranscriptSearchHighlights();
+    if (inputTranscriptSearch) inputTranscriptSearch.value = '';
+  }
+
+  document.getElementById('btn-transcript-search')?.addEventListener('click', openTranscriptSearch);
+  document.getElementById('btn-transcript-search-close')?.addEventListener('click', closeTranscriptSearch);
+  document.getElementById('btn-transcript-search-next')?.addEventListener('click', () => {
+    focusTranscriptSearchMatch(transcriptSearchIndex + 1);
+  });
+  document.getElementById('btn-transcript-search-prev')?.addEventListener('click', () => {
+    focusTranscriptSearchMatch(transcriptSearchIndex - 1);
+  });
+  inputTranscriptSearch?.addEventListener('input', () => {
+    runTranscriptSearch(inputTranscriptSearch.value);
+  });
+  inputTranscriptSearch?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      focusTranscriptSearchMatch(e.shiftKey ? transcriptSearchIndex - 1 : transcriptSearchIndex + 1);
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeTranscriptSearch();
+    }
+  });
+
   // Meeting chat (always visible in layout)
   const chatWidget = document.getElementById('meeting-chat-widget');
   const chatMessages = document.getElementById('chat-messages');
@@ -587,6 +712,7 @@
     appendChatMessage('user', text);
     const loadingId = appendChatMessage('assistant', 'Thinking…');
     const transcriptText = buildTranscriptTextForChat();
+    btnChatCancel?.classList.remove('hidden');
 
     window.api.chatQuery({
       query: text,
@@ -597,15 +723,24 @@
       if (!result?.requestId) {
         const node = document.getElementById(loadingId);
         if (node) node.innerHTML = formatAISummary(result?.error || 'Could not reach local AI.');
+        btnChatCancel?.classList.add('hidden');
         return;
       }
+      activeChatRequestId = result.requestId;
       waitForLlmStream(result.requestId, (partial) => {
         const node = document.getElementById(loadingId);
         if (node) node.innerHTML = formatAISummary(partial);
       }).catch((err) => {
         const node = document.getElementById(loadingId);
         if (node) node.innerHTML = formatAISummary(`Error: ${err.message}`);
+      }).finally(() => {
+        activeChatRequestId = null;
+        btnChatCancel?.classList.add('hidden');
       });
+    }).catch((err) => {
+      const node = document.getElementById(loadingId);
+      if (node) node.innerHTML = formatAISummary(`Error: ${err.message}`);
+      btnChatCancel?.classList.add('hidden');
     });
   }
 
@@ -643,14 +778,43 @@
   }
 
   document.getElementById('btn-chat-send')?.addEventListener('click', submitChat);
+  btnChatCancel?.addEventListener('click', () => {
+    if (!activeChatRequestId) return;
+    window.api.cancelLlmStream?.(activeChatRequestId);
+    btnChatCancel.classList.add('hidden');
+  });
   inputChatQuery?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') submitChat();
   });
 
   document.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'j') {
+    const isMeta = e.ctrlKey || e.metaKey;
+    if (isMeta && e.key.toLowerCase() === 'j') {
       e.preventDefault();
       inputChatQuery?.focus();
+    }
+    if (isMeta && e.key.toLowerCase() === 'f') {
+      e.preventDefault();
+      openTranscriptSearch();
+    }
+    if (isMeta && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      if (activeSession && jotEditor) {
+        syncSessionFromEditorDocument(activeSession, jotEditor.getDocument());
+        setSaveStatus('Saving…');
+        Promise.resolve(window.api.saveCallSilently(activeSession))
+          .then((ok) => setSaveStatus(ok === false ? 'Save failed' : 'Saved'))
+          .catch(() => setSaveStatus('Save failed'));
+      }
+    }
+    if (e.key === 'Escape') {
+      if (transcriptSearchBar && !transcriptSearchBar.classList.contains('hidden')) {
+        closeTranscriptSearch();
+        return;
+      }
+      if (conflictModal && !conflictModal.classList.contains('hidden')) {
+        hideConflictModal();
+      }
     }
   });
 

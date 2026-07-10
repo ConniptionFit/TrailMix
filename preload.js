@@ -36,6 +36,16 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.on('audio:on-levels', subscription);
     return () => ipcRenderer.removeListener('audio:on-levels', subscription);
   },
+  onQueuePressure: (callback) => {
+    const subscription = (event, data) => callback(data);
+    ipcRenderer.on('audio:on-queue-pressure', subscription);
+    return () => ipcRenderer.removeListener('audio:on-queue-pressure', subscription);
+  },
+  onTranscriptionError: (callback) => {
+    const subscription = (event, data) => callback(data);
+    ipcRenderer.on('audio:on-transcription-error', subscription);
+    return () => ipcRenderer.removeListener('audio:on-transcription-error', subscription);
+  },
   onCallListUpdated: (callback) => {
     const subscription = (event) => callback();
     ipcRenderer.on('calls:list-updated', subscription);
