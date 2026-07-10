@@ -213,7 +213,13 @@ if (isMiniMode) {
   
   function openMeetingForCall(call, options = {}) {
     const sessionId = call.id || (call.filePath ? call.filePath.replace(/\.trail.*$/, '').split('/').pop() : null);
-    if (sessionId) window.api.openMeeting(sessionId, options);
+    if (!sessionId) return;
+    openedSessionId = sessionId;
+    if (trailVirtual.calls.length) {
+      trailVirtual.start = -1;
+      renderVirtualTrailWindow();
+    }
+    window.api.openMeeting(sessionId, options);
   }
 
   function showToast(message, type = 'info') {
@@ -327,6 +333,7 @@ if (isMiniMode) {
   const btnModalDecrypt = document.getElementById('btn-modal-decrypt');
   let pendingCallToDecrypt = null;
   
+  let openedSessionId = null;
   let isMultiSelectMode = false;
   let selectedTrailIds = new Set();
   let relatedCallsList = null;
@@ -341,6 +348,18 @@ if (isMiniMode) {
   
   let historySortOrder = 'date-newest'; // default
   let selectedHistoryTags = new Set();
+
+  const TRAIL_ROW_ESTIMATE = 92;
+  const TRAIL_OVERSCAN = 6;
+  const HISTORY_CARD_CAP = 48;
+  const trailVirtual = {
+    calls: [],
+    byId: new Map(),
+    snippetById: new Map(),
+    start: 0,
+    end: 0,
+    scrollBound: false
+  };
 
   const historyTagFilters = document.getElementById('history-tag-filters');
   const historyTagPills = document.getElementById('history-tag-pills');
@@ -546,8 +565,8 @@ if (isMiniMode) {
       const selected = getSelectedTrailCalls();
       if (selected.length < 1) return;
       const ask = window.TrailMixConfirm?.ask
-        ? window.TrailMixConfirm.ask(`Are you sure you want to delete the ${selected.length} selected transcripts?`)
-        : Promise.resolve(window.confirm(`Are you sure you want to delete the ${selected.length} selected transcripts?`));
+        ? window.TrailMixConfirm.ask(`Are you sure you want to delete the ${selected.length} selected transcripts?`, { confirmLabel: 'Delete' })
+        : Promise.resolve(false);
       ask.then((ok) => {
         if (!ok) return;
         const paths = selected.map((c) => c.filePath || c.id);
@@ -601,8 +620,8 @@ if (isMiniMode) {
         const title = contextMenuTargetCall.title;
         const filePath = contextMenuTargetCall.filePath;
         const ask = window.TrailMixConfirm?.ask
-          ? window.TrailMixConfirm.ask(`Are you sure you want to delete "${title}"?`)
-          : Promise.resolve(window.confirm(`Are you sure you want to delete "${title}"?`));
+          ? window.TrailMixConfirm.ask(`Are you sure you want to delete "${title}"?`, { confirmLabel: 'Delete' })
+          : Promise.resolve(false);
         ask.then((ok) => {
           if (!ok) return;
           window.api.deleteCall(filePath).then((res) => {
@@ -657,18 +676,6 @@ if (isMiniMode) {
     });
   }
 
-  const TRAIL_ROW_ESTIMATE = 92;
-  const TRAIL_OVERSCAN = 6;
-  const HISTORY_CARD_CAP = 48;
-  const trailVirtual = {
-    calls: [],
-    byId: new Map(),
-    snippetById: new Map(),
-    start: 0,
-    end: 0,
-    scrollBound: false
-  };
-
   function getTrailScrollParent() {
     return sidebarCallsList?.closest('.sidebar-history-section') || null;
   }
@@ -679,7 +686,7 @@ if (isMiniMode) {
 
   function buildTrailItemElement(call) {
     const item = document.createElement('div');
-    const isSelected = activeSession && activeSession.id === call.id;
+    const isSelected = openedSessionId === call.id;
     item.className = `call-list-item ${isSelected ? 'selected' : ''}`;
     item.setAttribute('data-callid', call.id);
 
@@ -1125,6 +1132,27 @@ if (isMiniMode) {
   }
 
   // Folders Rendering and Management (v0.2)
+  function selectFolder(folderId) {
+    if (activeFolderId === folderId) {
+      loadHistoryList();
+      return;
+    }
+    activeFolderId = folderId;
+    const folderList = document.getElementById('sidebar-folders-list');
+    if (folderList) {
+      folderList.querySelectorAll('.folder-list-item').forEach((el) => {
+        const id = el.getAttribute('data-folderid') || 'all';
+        const selected = id === folderId;
+        el.className = `folder-list-item flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer transition text-xs ${
+          selected
+            ? 'bg-trail-500/10 text-trail-400 font-semibold border border-trail-500/20'
+            : 'text-slate-400 border border-transparent hover:bg-slate-800/30 hover:text-slate-200'
+        }`;
+      });
+    }
+    loadHistoryList();
+  }
+
   function renderFolders() {
     window.api.getFolders().then((folders) => {
       const folderList = document.getElementById('sidebar-folders-list');
@@ -1133,6 +1161,7 @@ if (isMiniMode) {
 
       // All Preserves default item
       const allItem = document.createElement('div');
+      allItem.setAttribute('data-folderid', 'all');
       allItem.className = `folder-list-item flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer transition text-xs ${
         activeFolderId === 'all' 
           ? 'bg-trail-500/10 text-trail-400 font-semibold border border-trail-500/20' 
@@ -1145,15 +1174,14 @@ if (isMiniMode) {
         </div>
       `;
       allItem.addEventListener('click', () => {
-        activeFolderId = 'all';
-        renderFolders();
-        loadHistoryList();
+        selectFolder('all');
       });
       folderList.appendChild(allItem);
 
       // Render filesystem folders from save location
       folders.forEach(folder => {
         const item = document.createElement('div');
+        item.setAttribute('data-folderid', folder.id);
         const isSelected = activeFolderId === folder.id;
         const isRootTrail = folder.id === 'fs:';
         const canManage = folder.id.startsWith('fs:') && !isRootTrail;
@@ -1180,9 +1208,7 @@ if (isMiniMode) {
         
         item.addEventListener('click', (e) => {
           if (e.target.closest('.folder-actions')) return;
-          activeFolderId = folder.id;
-          renderFolders();
-          loadHistoryList();
+          selectFolder(folder.id);
         });
 
         const editBtn = item.querySelector('.btn-folder-edit');
@@ -1198,8 +1224,8 @@ if (isMiniMode) {
           deleteBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             const ask = window.TrailMixConfirm?.ask
-              ? window.TrailMixConfirm.ask(`Delete folder "${folder.name}"? It must be empty first.`)
-              : Promise.resolve(window.confirm(`Delete folder "${folder.name}"? It must be empty first.`));
+              ? window.TrailMixConfirm.ask(`Delete folder "${folder.name}"? It must be empty first.`, { confirmLabel: 'Delete' })
+              : Promise.resolve(false);
             ask.then((ok) => {
               if (!ok) return;
               window.api.deleteFolder(folder.id).then((res) => {
@@ -1514,9 +1540,11 @@ if (isMiniMode) {
   });
 
   function displaySession(session) {
-    document.querySelectorAll('.call-list-item').forEach(item => {
-      item.classList.toggle('selected', item.getAttribute('data-callid') === session.id);
-    });
+    openedSessionId = session?.id || null;
+    if (trailVirtual.calls.length) {
+      trailVirtual.start = -1;
+      renderVirtualTrailWindow();
+    }
     openMeetingForCall(session);
   }
 
@@ -1619,11 +1647,9 @@ if (isMiniMode) {
 
   // Make scrolling context global so onclick can find it
   window.scrollToTranscriptSegment = function(segmentId) {
-    const line = document.getElementById(`line-${segmentId}`);
+    const line = document.getElementById(`line-${segmentId}`) || document.querySelector(`.subline-${segmentId}`);
     if (line) {
       line.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      
-      // Trigger a flash effect
       line.classList.add('highlight-flash');
       setTimeout(() => {
         line.classList.remove('highlight-flash');
@@ -2363,9 +2389,9 @@ if (isMiniMode) {
     ctxDeleteDeadline.addEventListener('click', () => {
       if (contextMenuTargetDeadline) {
         const task = contextMenuTargetDeadline;
-        const ask = window.TrailMixConfirm?.ask
-          ? window.TrailMixConfirm.ask(`Are you sure you want to delete this action item: "${task.text}"?`)
-          : Promise.resolve(window.confirm(`Are you sure you want to delete this action item: "${task.text}"?`));
+          const ask = window.TrailMixConfirm?.ask
+            ? window.TrailMixConfirm.ask(`Are you sure you want to delete this action item: "${task.text}"?`, { confirmLabel: 'Delete' })
+            : Promise.resolve(false);
         ask.then((ok) => {
           if (!ok) return;
           window.api.deleteTask(task.id).then(res => {
@@ -2737,17 +2763,6 @@ if (isMiniMode) {
       }
     }).catch(() => showToast('Could not open source call.', 'error'));
   }
-  
-  window.scrollToTranscriptSegment = function(segmentId) {
-    const line = document.getElementById(`line-${segmentId}`) || document.querySelector(`.subline-${segmentId}`);
-    if (line) {
-      line.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      line.classList.add('highlight-flash');
-      setTimeout(() => {
-        line.classList.remove('highlight-flash');
-      }, 2000);
-    }
-  };
   
   window.toggleTaskStatus = function(taskId) {
     window.api.toggleTask(taskId).then(res => {

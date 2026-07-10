@@ -12,6 +12,7 @@ function registerIpcHandlers(rt) {
     stopRecordingHandler, resumeCallTranscriptionHandler,
     getSession, setSession, createNewSession, deleteSession,
     loadSessionPayloadFromDb, saveSessionToDbPromise, saveSessionToFileSilently,
+    scheduleSilentSessionSave, flushSilentSessionSave,
     saveSessionToFile, resolveSessionRecord, syncDatabaseWithFiles,
     getCallsDir, watchCallsDirectory, openMeetingWindow, saveSettings,
     getHardwareSpecs, runSessionEnrichment, extractTasksFromActionItems,
@@ -488,9 +489,13 @@ ipcMain.handle(IPC.SEARCH_SESSIONS, async (event, rawTerm, options = {}) => {
     if (!hits.length) return [];
 
     const processingJobs = await sessionProcessingService.getJobMap();
+    const ids = hits.map((hit) => hit.id);
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = await dbAll(`SELECT * FROM sessions WHERE id IN (${placeholders})`, ids);
+    const rowById = new Map(rows.map((row) => [row.id, row]));
     const results = [];
     for (const hit of hits) {
-      const row = await dbGet('SELECT * FROM sessions WHERE id = ?', [hit.id]);
+      const row = rowById.get(hit.id);
       if (!row) continue;
       let tags = [];
       let suggestedTags = [];
@@ -612,10 +617,12 @@ ipcMain.handle(IPC.CALLS_SAVE_SILENTLY, async (event, callData, password) => {
       callData.encrypted = true;
       decryptionKeys.set(callData.id, password);
     }
-    const result = await saveSessionToDbPromise(callData, { password: password || undefined });
-    if (result?.needsPassword) {
+    if (callData.encrypted && !decryptionKeys.get(callData.id) && !password) {
       return { success: false, needsPassword: true };
     }
+    // Debounce high-frequency editor/autosave writes; FTS runs on flush/explicit save.
+    setSession(callData);
+    scheduleSilentSessionSave(callData);
     return { success: true };
   } catch (err) {
     console.error(err);

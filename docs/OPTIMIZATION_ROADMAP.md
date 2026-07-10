@@ -29,6 +29,8 @@ This document captures the review findings from the v0.5 modular architecture pa
 - **Dual transcription workers** on 8+ core machines; parallel L/R VAD; adaptive Whisper thread budget.
 - **Parallel precision diarization** (2 LLM blocks at a time) with ordered checkpoints.
 - `lib/ipc-channels.js` wired through preload, register-all, and runtime sends.
+- Debounced silent saves skip FTS until flush; directory watcher re-syncs DB before list refresh.
+- Batch FTS hit hydration; folder select without full re-fetch; LLM transcript truncation.
 
 ### UX
 - Meeting chat stream batched with `requestAnimationFrame`.

@@ -370,9 +370,13 @@ function watchCallsDirectory() {
       console.log(`Directory change detected: ${eventType} on ${filename}`);
       clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
-        if (getHubWindow()) {
-          getHubWindow().webContents.send(IPC.CALLS_LIST_UPDATED);
-        }
+        syncDatabaseWithFiles()
+          .catch((err) => console.error('Watcher sync failed', err))
+          .finally(() => {
+            if (getHubWindow()) {
+              getHubWindow().webContents.send(IPC.CALLS_LIST_UPDATED);
+            }
+          });
       }, 350);
     });
   } catch (err) {
@@ -1212,16 +1216,14 @@ async function saveSessionToDbPromise(session, options = {}) {
     }
     await fs.promises.writeFile(filePath, payload, 'utf8');
 
-    // Index plaintext for offline search. Never index locked ciphertext.
-    try {
-      if (wantsEncryption) {
-        // Encrypted payloads are ciphertext on disk; index only while unlocked in-memory.
+    // Index plaintext for offline search. Skip on high-frequency silent saves;
+    // flush/explicit save paths reindex.
+    if (!options.skipFts) {
+      try {
         await upsertSessionFts(session);
-      } else {
-        await upsertSessionFts(session);
+      } catch (ftsErr) {
+        console.error('FTS upsert failed', ftsErr);
       }
-    } catch (ftsErr) {
-      console.error('FTS upsert failed', ftsErr);
     }
     return { saved: true };
   } catch (err) {
@@ -1258,7 +1260,8 @@ function scheduleSilentSessionSave(session, delayMs = SILENT_SAVE_DEBOUNCE_MS) {
   if (existing) clearTimeout(existing);
   const timer = setTimeout(() => {
     silentSaveTimers.delete(session.id);
-    saveSessionToDbPromise(session).catch((err) => {
+    // Defer FTS until flush/explicit save — transcript grows every few seconds while recording.
+    saveSessionToDbPromise(session, { skipFts: true }).catch((err) => {
       console.error('Failed to save session silently', err);
     });
   }, delayMs);
@@ -1528,10 +1531,11 @@ async function diarizeSpeakersPromise() {
 
 function triggerOllamaContextRename(transcriptText, callback) {
   const model = settings.selectedLlm;
+  const bounded = truncateTranscriptForLlm(transcriptText);
   const systemPrompt = `You are a local metadata generation assistant.
 Output your results ONLY as a valid JSON object with keys "title" (a very short tagline of 3-5 words), "description" (a longer summary description of 1-2 sentences), and "suggestedTags" (an array of 2-3 broad tags representing call categories like "projects", "vendor calls", "sales", "company meetings", "support", "hiring", etc.).
 Do not include any reasoning, markdown formatting, or conversational text. Output ONLY the raw JSON object.`;
-  const prompt = `Based on the following meeting transcript, generate the title, description, and suggested tags:\n\n${transcriptText}\n\nReturn the JSON object.`;
+  const prompt = `Based on the following meeting transcript, generate the title, description, and suggested tags:\n\n${bounded}\n\nReturn the JSON object.`;
 
   llmService.queryComplete(prompt, model, systemPrompt)
     .then(response => {
@@ -1596,7 +1600,9 @@ async function runSessionEnrichment(sessionId) {
     session.enhancedNotes = enhanceResult.enhancedNotes;
   }
 
-  const textContent = session.transcript.map((t) => `[${t.timestamp}] ${t.speaker}: ${t.text}`).join('\n');
+  const textContent = truncateTranscriptForLlm(
+    session.transcript.map((t) => `[${t.timestamp}] ${t.speaker}: ${t.text}`).join('\n')
+  );
   if (!textContent.trim()) {
     await saveSessionPayloadToDb(sessionId, session);
     const hub = getHubWindow();
@@ -1614,7 +1620,7 @@ async function runSessionEnrichment(sessionId) {
         applyAutoTitle(session, title, description, tags);
         setSession(session);
 
-        extractTasksFromActionItems(session);
+        await extractTasksFromActionItems(session);
         await saveSessionPayloadToDb(sessionId, session);
 
         try {
@@ -1835,15 +1841,23 @@ async function saveSessionToFile(session) {
 // Ollama API Integrations (Local LLM)
 // ----------------------------------------------------
 
+function truncateTranscriptForLlm(transcriptText, maxChars = 48000) {
+  const text = String(transcriptText || '');
+  if (text.length <= maxChars) return text;
+  // Prefer the newest content — titles/summaries care most about the end of the meeting.
+  return `…[earlier transcript truncated]…\n${text.slice(-maxChars)}`;
+}
+
 function triggerOllamaSummary(transcriptText, callback) {
   const model = settings.selectedLlm;
+  const bounded = truncateTranscriptForLlm(transcriptText);
   const summaryPrompt = applyPromptTemplate(
     settings.summaryPromptTemplate || DEFAULT_PROMPTS.summary,
-    transcriptText
+    bounded
   );
   const actionItemsPrompt = applyPromptTemplate(
     settings.actionPromptTemplate || DEFAULT_PROMPTS.actionItems,
-    transcriptText
+    bounded
   );
 
   Promise.all([
@@ -1939,6 +1953,8 @@ const runtime = {
   loadSessionPayloadFromDb,
   saveSessionToDbPromise,
   saveSessionToFileSilently,
+  scheduleSilentSessionSave,
+  flushSilentSessionSave,
   saveSessionToFile,
   resolveSessionRecord,
   syncDatabaseWithFiles,

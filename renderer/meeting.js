@@ -939,6 +939,18 @@
     focusTranscriptSegment(payload?.segmentId);
   });
 
+  window.addEventListener('beforeunload', () => {
+    if (!activeSession) return;
+    // Flush debounced silent saves so Mix notes / title edits are not lost on close.
+    if (activeSession.encrypted) {
+      if (sessionEncryptionPassword) {
+        window.api.saveCall(activeSession, sessionEncryptionPassword);
+      }
+      return;
+    }
+    window.api.saveCall(activeSession);
+  });
+
   // Init session
   window.api.loadMeetingSession(sessionId).then((session) => {
     if (!session) {
