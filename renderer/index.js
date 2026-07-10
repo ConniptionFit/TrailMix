@@ -2102,11 +2102,11 @@ if (isMiniMode) {
     appendChatMessage('user', `${recipe.icon || ''} ${recipe.label}`.trim());
     const loadingId = appendChatMessage('assistant', 'Running recipe locally…');
 
-    const transcriptText = activeSession && activeSession.transcript
-      ? activeSession.transcript.map(t => `[${t.timestamp}] ${t.speaker}: ${t.text}`).join('\n')
-      : 'No transcript active.';
-
-    window.api.chatQuery(recipe.id, transcriptText).then((result) => {
+    window.api.chatQuery({
+      query: recipe.id,
+      sessionId: openedSessionId || activeSession?.id || null,
+      scope: 'hub'
+    }).then((result) => {
       if (!result || !result.requestId) {
         updateChatMessage(loadingId, result?.error || 'Could not query local AI model.');
         return;
@@ -2179,12 +2179,12 @@ if (isMiniMode) {
     if (inputGlobalAsk) inputGlobalAsk.value = '';
     
     const loadingId = appendChatMessage('assistant', 'Generating local response...');
-    
-    const transcriptText = activeSession && activeSession.transcript 
-      ? activeSession.transcript.map(t => `[${t.timestamp}] ${t.speaker}: ${t.text}`).join('\n') 
-      : 'No transcript active.';
       
-    window.api.chatQuery(text, transcriptText).then((result) => {
+    window.api.chatQuery({
+      query: text,
+      sessionId: openedSessionId || activeSession?.id || null,
+      scope: 'hub'
+    }).then((result) => {
       if (!result || !result.requestId) {
         updateChatMessage(loadingId, result?.error || 'Could not query local AI model.');
         return;
