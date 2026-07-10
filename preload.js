@@ -54,7 +54,7 @@ contextBridge.exposeInMainWorld('api', {
 
   // Hub / meeting windows
   createMeeting: () => ipcRenderer.invoke('meetings:new'),
-  openMeeting: (sessionId) => ipcRenderer.invoke('meetings:open', sessionId),
+  openMeeting: (sessionId, options) => ipcRenderer.invoke('meetings:open', sessionId, options || {}),
   focusMeeting: (sessionId) => ipcRenderer.invoke('meetings:focus', sessionId),
   loadMeetingSession: (sessionId) => ipcRenderer.invoke('session:load-meeting', sessionId),
   setSessionTitle: (sessionId, title, userEdited = true) =>
@@ -63,6 +63,11 @@ contextBridge.exposeInMainWorld('api', {
     const subscription = (event, data) => callback(data);
     ipcRenderer.on('session:updated', subscription);
     return () => ipcRenderer.removeListener('session:updated', subscription);
+  },
+  onFocusSegment: (callback) => {
+    const subscription = (event, data) => callback(data);
+    ipcRenderer.on('session:focus-segment', subscription);
+    return () => ipcRenderer.removeListener('session:focus-segment', subscription);
   },
 
   // Models & Hardware
@@ -77,6 +82,7 @@ contextBridge.exposeInMainWorld('api', {
 
   // File operations & Encryption
   getCallList: () => ipcRenderer.invoke('calls:get-list'),
+  searchSessions: (term, options) => ipcRenderer.invoke('search:sessions', term, options),
   saveCall: (callData, password) => ipcRenderer.invoke('calls:save', callData, password),
   loadCall: (filePath, password) => ipcRenderer.invoke('calls:load', filePath, password),
   decryptCall: (filePath, password) => ipcRenderer.invoke('calls:decrypt', filePath, password),

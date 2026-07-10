@@ -204,7 +204,7 @@
           </div>
         </div>
         <div class="sidebar-search-container" style="margin-bottom: 12px; padding: 0 4px;">
-          <input type="text" id="input-sidebar-search" placeholder="Search transcripts or #tag..." class="input-text" style="width: 100%; font-size: 11px; padding: 6px 8px; box-sizing: border-box;">
+          <input type="text" id="input-sidebar-search" placeholder="Search notes, transcript, or #tag..." class="input-text" style="width: 100%; font-size: 11px; padding: 6px 8px; box-sizing: border-box;" aria-label="Search The Trail">
         </div>
         <div id="sidebar-bulk-actions" class="bulk-actions-bar hidden">
           <span id="bulk-select-count">0 selected</span>
@@ -557,9 +557,10 @@
               </label>
             </div>
             <div class="settings-field">
-              <label for="input-encrypt-password">Encryption Password / Shareable Key</label>
-              <input type="password" id="input-encrypt-password" class="input-text" placeholder="Enter security passphrase">
-              <p class="field-desc">This password will derive an AES-256 key to secure calls. Share this key to let recipients decrypt the call file.</p>
+              <p class="field-desc">
+                Encryption passwords are never stored in settings. When you unlock an encrypted session,
+                the key stays in memory for this app session only. New encrypted meetings prompt for a password at save/unlock time.
+              </p>
             </div>
           </div>
         </div>
@@ -688,6 +689,7 @@
   <div id="global-tooltip" class="global-tooltip-el hidden"></div>
 
   <script src="shared/ipc-client.js"></script>
+  <script src="shared/toast.js"></script>
   <script src="index.js"></script>
 </body>
 </html>

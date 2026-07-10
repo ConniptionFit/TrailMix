@@ -1,6 +1,7 @@
 (function () {
   const urlParams = new URLSearchParams(window.location.search);
   const sessionId = urlParams.get('sessionId');
+  const focusSegmentId = urlParams.get('segmentId');
 
   let activeSession = null;
   let recordingInterval = null;
@@ -835,10 +836,25 @@
     });
   }
 
+  function focusTranscriptSegment(segmentId) {
+    if (!segmentId) return false;
+    const line = document.getElementById(`line-${segmentId}`) || document.querySelector(`.subline-${segmentId}`);
+    if (!line) return false;
+    line.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    line.classList.add('highlight-flash');
+    setTimeout(() => line.classList.remove('highlight-flash'), 2000);
+    return true;
+  }
+
+  window.api.onFocusSegment?.((payload) => {
+    focusTranscriptSegment(payload?.segmentId);
+  });
+
   // Init session
   window.api.loadMeetingSession(sessionId).then((session) => {
     if (!session) {
-      alert('Could not load this meeting session.');
+      if (window.TrailMixToast) window.TrailMixToast.show('Could not load this meeting session.', { type: 'error' });
+      else alert('Could not load this meeting session.');
       return;
     }
     activeSession = session;
@@ -846,6 +862,9 @@
     renderTranscript(session.transcript || []);
     if (jotEditor) jotEditor.loadDocument(normalizeEditorDocument(session));
     updateIdleRecordButton();
+    if (focusSegmentId) {
+      setTimeout(() => focusTranscriptSegment(focusSegmentId), 120);
+    }
     window.api.getRecordingStatus().then((status) => {
       if (status?.sessionId === sessionId && (status.isRecording || status.isPaused)) {
         applyRecordingStatus({
@@ -858,6 +877,7 @@
     });
   }).catch((err) => {
     console.error('Failed to load meeting session', err);
-    alert(err?.message || 'Could not load this meeting session.');
+    if (window.TrailMixToast) window.TrailMixToast.show(err?.message || 'Could not load this meeting session.', { type: 'error' });
+    else alert(err?.message || 'Could not load this meeting session.');
   });
 })();

@@ -21,7 +21,8 @@ function registerIpcHandlers(rt) {
     moveStorageContents, resolveSessionFilePath, relativePathFromFolderId,
     secureShredFile, formatTaskRow, formatTimestamp, documentFromSession,
     splitTranscriptIntoBlocks, PROCESSING_STATUS, decryptionKeys,
-    activeRecordingSessionId, isRecording, isPaused, activeSession, windowManager
+    activeRecordingSessionId, isRecording, isPaused, activeSession, windowManager,
+    searchSessionsFts, deleteSessionFts, upsertSessionFts
   } = rt;
 
   let callsListSyncedOnce = false;
@@ -35,7 +36,8 @@ ipcMain.handle('audio:get-devices', () => {
 });
 
 ipcMain.handle('settings:get', () => {
-  return rt.settings;
+  const { encryptionPassword, ...safe } = rt.settings || {};
+  return safe;
 });
 
 ipcMain.handle('settings:get-default-prompts', () => {
@@ -94,7 +96,10 @@ ipcMain.handle('settings:save', async (event, newSettings) => {
     }
   }
   
-  rt.settings = { ...rt.settings, ...newSettings };
+  const incoming = { ...(newSettings || {}) };
+  delete incoming.encryptionPassword;
+  rt.settings = { ...rt.settings, ...incoming };
+  delete rt.settings.encryptionPassword;
   saveSettings();
 
   if (rt.settings.autoUpdateEnabled !== false) {
@@ -144,8 +149,8 @@ ipcMain.handle('audio:get-recording-status', () => ({
   sessionId: activeRecordingSessionId
 }));
 
-ipcMain.handle('meetings:open', async (event, sessionId) => {
-  openMeetingWindow(sessionId);
+ipcMain.handle('meetings:open', async (event, sessionId, options = {}) => {
+  openMeetingWindow(sessionId, options || {});
   return { success: true };
 });
 
@@ -468,6 +473,48 @@ ipcMain.handle('calls:get-list', async () => {
   }
 });
 
+ipcMain.handle('search:sessions', async (event, rawTerm, options = {}) => {
+  try {
+    const term = String(rawTerm || '').trim();
+    if (!term) return [];
+    const hits = await searchSessionsFts(term, { limit: options.limit || 200 });
+    if (!hits.length) return [];
+
+    const processingJobs = await sessionProcessingService.getJobMap();
+    const results = [];
+    for (const hit of hits) {
+      const row = await dbGet('SELECT * FROM sessions WHERE id = ?', [hit.id]);
+      if (!row) continue;
+      let tags = [];
+      let suggestedTags = [];
+      try { tags = JSON.parse(row.tags || '[]'); } catch (e) {}
+      try { suggestedTags = JSON.parse(row.suggestedTags || '[]'); } catch (e) {}
+      results.push({
+        id: row.id,
+        title: row.title || 'Meeting Session',
+        date: row.date,
+        encrypted: row.encrypted === 1,
+        unlocked: row.encrypted !== 1 || decryptionKeys.has(row.id),
+        filePath: row.id,
+        storagePath: resolveSessionFilePath(getCallsDir(), row.id, row.folder_id || UNCATEGORIZED_FOLDER_ID),
+        summary: row.summary,
+        description: row.description || 'No description available.',
+        tags,
+        suggestedTags,
+        folder_id: row.folder_id,
+        mtimeMs: row.mtimeMs,
+        processing: processingJobs[row.id] || null,
+        snippet: hit.snippet || '',
+        rank: hit.rank
+      });
+    }
+    return results;
+  } catch (err) {
+    console.error('search:sessions failed', err);
+    return [];
+  }
+});
+
 ipcMain.handle('calls:decrypt', async (event, sessionId, password) => {
   try {
     const session = await dbGet("SELECT * FROM sessions WHERE id = ?", [sessionId]);
@@ -478,6 +525,11 @@ ipcMain.handle('calls:decrypt', async (event, sessionId, password) => {
     sessionData.folder_id = session.folder_id;
     
     decryptionKeys.set(sessionData.id, password);
+    try {
+      await upsertSessionFts(sessionData);
+    } catch (ftsErr) {
+      console.error('FTS reindex after decrypt failed', ftsErr);
+    }
     return { success: true, session: sessionData };
   } catch (error) {
     return { success: false, error: error.message };
@@ -490,7 +542,7 @@ ipcMain.handle('calls:load', async (event, sessionId, password) => {
     if (!session) return { success: false, error: 'Session not found' };
     
     if (session.encrypted) {
-      const cachedKey = password || decryptionKeys.get(sessionId) || rt.settings.encryptionPassword;
+      const cachedKey = password || decryptionKeys.get(sessionId);
       if (!cachedKey) {
         return { success: false, requirePassword: true };
       }
@@ -557,6 +609,7 @@ ipcMain.handle('calls:save-silently', async (event, callData) => {
 ipcMain.handle('calls:delete', async (event, sessionId) => {
   try {
     await dbRun("DELETE FROM sessions WHERE id = ?", [sessionId]);
+    await deleteSessionFts(sessionId);
     if (getHubWindow()) getHubWindow().webContents.send('calls:list-updated');
     return { success: true };
   } catch (e) {
@@ -569,6 +622,9 @@ ipcMain.handle('calls:delete-multiple', async (event, sessionIds) => {
     if (sessionIds.length === 0) return { success: true };
     const placeholders = sessionIds.map(() => '?').join(',');
     await dbRun(`DELETE FROM sessions WHERE id IN (${placeholders})`, sessionIds);
+    for (const id of sessionIds) {
+      await deleteSessionFts(id);
+    }
     if (getHubWindow()) getHubWindow().webContents.send('calls:list-updated');
     return { success: true };
   } catch (e) {

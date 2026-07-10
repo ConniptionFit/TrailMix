@@ -211,9 +211,17 @@ if (isMiniMode) {
     }
   }
   
-  function openMeetingForCall(call) {
+  function openMeetingForCall(call, options = {}) {
     const sessionId = call.id || (call.filePath ? call.filePath.replace(/\.trail.*$/, '').split('/').pop() : null);
-    if (sessionId) window.api.openMeeting(sessionId);
+    if (sessionId) window.api.openMeeting(sessionId, options);
+  }
+
+  function showToast(message, type = 'info') {
+    if (window.TrailMixToast) {
+      window.TrailMixToast.show(message, { type });
+      return;
+    }
+    console.log(`[toast:${type}]`, message);
   }
 
   function escapeHtml(value) {
@@ -664,13 +672,23 @@ if (isMiniMode) {
       : window.api.getCallList();
 
     const searchInput = document.getElementById('input-sidebar-search');
-    const searchTerm = searchInput ? searchInput.value.trim().toLowerCase() : '';
+    const searchTermRaw = searchInput ? searchInput.value.trim() : '';
+    const searchTerm = searchTermRaw.toLowerCase();
+    const ftsPromise = (searchTermRaw && !searchTermRaw.startsWith('#') && window.api.searchSessions)
+      ? window.api.searchSessions(searchTermRaw).catch(() => null)
+      : Promise.resolve(null);
 
-    fetchPromise.then((calls) => {
+    Promise.all([fetchPromise, ftsPromise]).then(([calls, ftsHits]) => {
       sidebarCallsList.innerHTML = '';
       historyGrid.innerHTML = '';
       
       let filteredCalls = calls;
+      const snippetById = new Map();
+      if (Array.isArray(ftsHits)) {
+        ftsHits.forEach((hit) => {
+          if (hit?.id) snippetById.set(hit.id, hit.snippet || '');
+        });
+      }
       
       // Filter by active folder (filesystem-backed)
       if (activeFolderId && activeFolderId !== 'all') {
@@ -712,6 +730,12 @@ if (isMiniMode) {
         if (searchTerm.startsWith('#')) {
           const targetTag = searchTerm.substring(1);
           filteredCalls = filteredCalls.filter(c => c.tags && c.tags.some(t => t.toLowerCase() === targetTag));
+        } else if (ftsHits) {
+          const hitIds = new Set(ftsHits.map((h) => h.id));
+          filteredCalls = filteredCalls.filter((c) => hitIds.has(c.id));
+          // Prefer FTS ranking when available.
+          const rank = new Map(ftsHits.map((h, idx) => [h.id, idx]));
+          filteredCalls.sort((a, b) => (rank.get(a.id) ?? 9999) - (rank.get(b.id) ?? 9999));
         } else {
           filteredCalls = filteredCalls.filter(c => 
             (c.title && c.title.toLowerCase().includes(searchTerm)) ||
@@ -741,9 +765,12 @@ if (isMiniMode) {
         }
         
         const tagline = call.title || 'Meeting Session';
+        const ftsSnippet = snippetById.get(call.id);
         const description = call.encrypted && !call.unlocked
           ? '🔒 Encrypted — click to unlock'
-          : (call.encrypted ? 'Encrypted session' : (call.description || 'No description available.'));
+          : (ftsSnippet
+            ? ftsSnippet.replace(/\[\[/g, '').replace(/\]\]/g, '')
+            : (call.encrypted ? 'Encrypted session' : (call.description || 'No description available.')));
         
         let tagsHtml = '';
         const tags = call.tags || [];
@@ -1442,7 +1469,7 @@ if (isMiniMode) {
   const selectSysDevice = document.getElementById('select-sys-device');
   
   const checkEncryptDefault = document.getElementById('check-encrypt-default');
-  const inputEncryptPassword = document.getElementById('input-encrypt-password');
+  const inputEncryptPassword = null; // Passwords are session-only; field removed from settings UI.
   
   const btnDownloadWhisper = document.getElementById('btn-download-whisper');
   const btnSaveSettings = document.getElementById('btn-save-settings');
@@ -1487,7 +1514,6 @@ if (isMiniMode) {
   window.api.getSettings().then((saved) => {
     activeSettings = saved;
     checkEncryptDefault.checked = saved.encryptByDefault;
-    inputEncryptPassword.value = saved.encryptionPassword || '';
     document.getElementById('check-color-deadlines').checked = saved.colorCodeDeadlines || false;
     document.getElementById('input-user-name').value = saved.userName || '';
     document.getElementById('check-noise-cancel').checked = saved.enableNoiseCancellation !== false;
@@ -1680,7 +1706,6 @@ if (isMiniMode) {
       selectedMic: selectMicDevice.value,
       selectedSink: selectSysDevice.value,
       encryptByDefault: checkEncryptDefault.checked,
-      encryptionPassword: inputEncryptPassword.value,
       colorCodeDeadlines: document.getElementById('check-color-deadlines').checked,
       userName: document.getElementById('input-user-name').value.trim(),
       enableNoiseCancellation: document.getElementById('check-noise-cancel').checked,
@@ -1696,6 +1721,7 @@ if (isMiniMode) {
     window.api.saveSettings(updated).then(() => {
       activeSettings = updated;
       resetSettingsDirtyState();
+      showToast('Settings saved', 'success');
       if (settingsDirtyHint) {
         settingsDirtyHint.textContent = 'Settings saved';
         settingsDirtyHint.style.opacity = '1';
@@ -1708,7 +1734,7 @@ if (isMiniMode) {
       }
     }).catch((err) => {
       console.error('Failed to save settings', err);
-      alert(err?.message || 'Failed to save settings.');
+      showToast(err?.message || 'Failed to save settings.', 'error');
     });
   });
 
@@ -2523,11 +2549,11 @@ if (isMiniMode) {
     window.api.getCallList().then((calls) => {
       const call = calls.find(c => c.id === sourceCallId);
       if (call) {
-        openMeetingForCall(call);
+        openMeetingForCall(call, sourceSegmentId ? { segmentId: sourceSegmentId } : {});
       } else {
-        alert("Source call not found (it might have been deleted).");
+        showToast('Source call not found (it might have been deleted).', 'error');
       }
-    });
+    }).catch(() => showToast('Could not open source call.', 'error'));
   }
   
   window.scrollToTranscriptSegment = function(segmentId) {

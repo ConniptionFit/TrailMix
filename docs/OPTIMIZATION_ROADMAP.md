@@ -34,6 +34,8 @@ This document captures the review findings from the v0.5 modular architecture pa
 - **Ctrl/Cmd+N** starts a new meeting from the hub; **/** focuses search; **Esc** closes modals.
 - Mini widget shows latest transcript text.
 - Hub home recent meetings + Resume; in-meeting Ctrl+F search; save status; queue pressure banner; chat Stop; processing Retry.
+- **FTS5 transcript search** in The Trail; action-item jump-to-segment; toast notifications.
+- Encryption passwords no longer written to settings.json.
 - Basic a11y: transcript `aria-live`, meeting title label, bulk action labels, `prefers-reduced-motion`.
 
 ---
@@ -41,22 +43,20 @@ This document captures the review findings from the v0.5 modular architecture pa
 ## Recommended next optimizations (ranked)
 
 ### Tier 1 — high impact
-1. **Shared transcript view module** — extract remaining helpers into `renderer/shared/transcript-view.js`.
-2. **Virtualize The Trail list** — render only visible session rows; avoid full DOM rebuild on every filter.
-3. **SQLite FTS5 full-text search** — index transcript plain text; power sidebar search beyond title/summary.
-4. **Whisper pipeline fusion** — one ffmpeg split per chunk (or stereo whisper) and optional 2-worker pool when CPU allows.
-5. **Never persist encryption password in settings.json** — OS keychain / session-only unlock.
+1. **Virtualize The Trail list** — render only visible session rows; avoid full DOM rebuild on every filter.
+2. **Whisper pipeline fusion** — one ffmpeg split per chunk (or stereo whisper) and optional 2-worker pool when CPU allows.
+3. **Shared transcript view module** — extract remaining helpers into `renderer/shared/transcript-view.js`.
+4. **Prompt for encryption password** when `encryptByDefault` is on (session-scoped), instead of silently falling back to plaintext.
 
 ### Tier 2 — reliability & polish
-6. Wire `lib/ipc-channels.js` into `preload.js` and `register-all.js` (single source of truth).
-7. Toast/inline error system instead of remaining `alert()` / `confirm()` calls.
-8. Keep temp audio optional for playback/seek (or export WAV before shred).
-9. Navigate action-item → scroll to source segment in meeting window.
+5. Wire `lib/ipc-channels.js` into `preload.js` and `register-all.js` (single source of truth).
+6. Replace remaining `alert()` / `confirm()` with toasts/modals.
+7. Keep temp audio optional for playback/seek (or export WAV before shred).
 
 ### Tier 3 — architecture
-10. Move remaining IPC handlers from `register-all.js` into `main/modules/*`.
-11. Shrink `runtime.js` into orchestration + thin service facades.
-12. Complete `renderer/shared/ipc-client.js` coverage so hub/meeting stop using raw `window.api` ad hoc.
+8. Move remaining IPC handlers from `register-all.js` into `main/modules/*`.
+9. Shrink `runtime.js` into orchestration + thin service facades.
+10. Complete `renderer/shared/ipc-client.js` coverage so hub/meeting stop using raw `window.api` ad hoc.
 
 ---
 

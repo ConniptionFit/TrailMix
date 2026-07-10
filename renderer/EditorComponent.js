@@ -14,7 +14,7 @@ class EditorComponent {
       onTraceTranscript: null,
       onEnhanceRequest: null,
       onRegenerateRequest: null,
-      debounceMs: 400,
+      debounceMs: 800,
       ...options
     };
 

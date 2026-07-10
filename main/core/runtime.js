@@ -49,6 +49,7 @@ const {
 } = require('../../lib/storage-layout');
 const { resolveWhisperCli } = require('../../lib/resolve-whisper-cli');
 const { correctBleedInTranscript } = require('../../lib/transcript-bleed-correction');
+const { createSessionFtsHelpers } = require('../../lib/session-fts');
 const sqlite3 = require('sqlite3').verbose();
 
 // XDG Compliant Database Path
@@ -86,6 +87,14 @@ function dbGet(sql, params = []) {
     });
   });
 }
+
+const {
+  ensureFtsTables,
+  upsertSessionFts,
+  deleteSessionFts,
+  searchSessionsFts,
+  rebuildAllSessionsFts
+} = createSessionFtsHelpers({ dbRun, dbAll, dbGet });
 
 const { saveTaskToDb, getTasksListFromDb } = createTaskDbHelpers({ dbRun, dbAll });
 
@@ -524,7 +533,6 @@ let settings = {
   selectedModel: 'ggml-base.bin',
   selectedLlm: 'gemma3:1b',
   encryptByDefault: false,
-  encryptionPassword: '',
   selectedMic: 'default',
   selectedSink: 'default',
   colorCodeDeadlines: false,
@@ -548,6 +556,11 @@ if (fs.existsSync(SETTINGS_FILE)) {
   }
 }
 
+// Never persist encryption passwords on disk — unlock keys stay in-memory only.
+if (Object.prototype.hasOwnProperty.call(settings, 'encryptionPassword')) {
+  delete settings.encryptionPassword;
+}
+
 // Ensure new settings fields are populated
 if (!settings.selectedNoteStyle) settings.selectedNoteStyle = 'executive';
 if (!settings.notePromptTemplate) settings.notePromptTemplate = DEFAULT_PROMPTS.executive;
@@ -557,7 +570,8 @@ if (!settings.aecMode) settings.aecMode = 'os';
 if (settings.autoUpdateEnabled === undefined) settings.autoUpdateEnabled = true;
 
 function saveSettings() {
-  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8');
+  const { encryptionPassword, ...safeSettings } = settings;
+  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(safeSettings, null, 2), 'utf8');
 }
 
 // ----------------------------------------------------
@@ -618,7 +632,17 @@ function initDatabase() {
           db.run('CREATE INDEX IF NOT EXISTS idx_tasks_due ON tasks(dueDate)');
           db.run('CREATE INDEX IF NOT EXISTS idx_tasks_source ON tasks(sourceCallId)');
           db.run('CREATE INDEX IF NOT EXISTS idx_sessions_mtime ON sessions(mtimeMs DESC)');
-          migrateOldData().then(resolve).catch(reject);
+          migrateOldData()
+            .then(async () => {
+              await ensureFtsTables();
+              try {
+                await rebuildAllSessionsFts(async (id) => loadSessionPayloadFromDb(id));
+              } catch (ftsErr) {
+                console.error('FTS rebuild skipped:', ftsErr.message);
+              }
+              resolve();
+            })
+            .catch(reject);
         }
       });
     });
@@ -900,6 +924,7 @@ async function syncDatabaseWithFiles() {
       if (session.id !== 'live' && !existingIds.has(session.id)) {
         console.log(`Pruning session ${session.id} from database because file does not exist in ${callsDir}`);
         await dbRun('DELETE FROM sessions WHERE id = ?', [session.id]);
+        await deleteSessionFts(session.id);
       }
     }
   } catch (err) {
@@ -927,9 +952,9 @@ function createHubWindow() {
   return windowManager.createHubWindow();
 }
 
-function openMeetingWindow(sessionId) {
+function openMeetingWindow(sessionId, options = {}) {
   if (!windowManager) createHubWindow();
-  return windowManager.openMeetingWindow(sessionId);
+  return windowManager.openMeetingWindow(sessionId, options);
 }
 
 function updateTray() {
@@ -1175,6 +1200,17 @@ async function saveSessionToDbPromise(session, options = {}) {
       fs.mkdirSync(fileDir, { recursive: true });
     }
     await fs.promises.writeFile(filePath, payload, 'utf8');
+
+    // Index plaintext for offline search. Never index locked ciphertext.
+    try {
+      if (isEncrypted && !decryptionKeys.get(session.id)) {
+        await deleteSessionFts(session.id);
+      } else {
+        await upsertSessionFts(session);
+      }
+    } catch (ftsErr) {
+      console.error('FTS upsert failed', ftsErr);
+    }
   } catch (err) {
     console.error("Failed to save session to DB", err);
   }
@@ -1925,7 +1961,10 @@ const runtime = {
   splitTranscriptIntoBlocks,
   PROCESSING_STATUS,
   cleanupStaleLoopbackModules,
-  resolveWhisperCli
+  resolveWhisperCli,
+  searchSessionsFts,
+  deleteSessionFts,
+  upsertSessionFts
 };
 
 module.exports = runtime;

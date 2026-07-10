@@ -43,10 +43,13 @@ class WindowManager {
     return this.hubWindow;
   }
 
-  openMeetingWindow(sessionId) {
+  openMeetingWindow(sessionId, options = {}) {
     const existing = this.meetingWindows.get(sessionId);
     if (existing && !existing.isDestroyed()) {
       existing.focus();
+      if (options.segmentId) {
+        existing.webContents.send('session:focus-segment', { segmentId: options.segmentId });
+      }
       return existing;
     }
 
@@ -69,8 +72,11 @@ class WindowManager {
       console.log(`[Meeting ${sessionId}] ${message} (${sourceId}:${line})`);
     });
 
+    const query = { sessionId };
+    if (options.segmentId) query.segmentId = options.segmentId;
+
     meetingWindow.loadFile(path.join(this.projectDir, 'renderer', 'meeting.html'), {
-      query: { sessionId }
+      query
     });
 
     meetingWindow.on('closed', () => {

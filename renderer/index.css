@@ -1095,6 +1095,53 @@ body {
   cursor: default;
 }
 
+.trailmix-toast-host {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+  max-width: min(360px, calc(100vw - 32px));
+}
+
+.trailmix-toast {
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 180ms ease, transform 180ms ease;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(18, 22, 28, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-main, #f0f2f5);
+  font-size: 13px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+}
+
+.trailmix-toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.trailmix-toast-success {
+  border-color: rgba(46, 204, 113, 0.45);
+}
+
+.trailmix-toast-error {
+  border-color: rgba(255, 77, 77, 0.45);
+}
+
+.highlight-flash {
+  animation: trailmix-highlight-flash 1.6s ease;
+}
+
+@keyframes trailmix-highlight-flash {
+  0% { background: rgba(164, 198, 57, 0.35); }
+  100% { background: transparent; }
+}
+
 /* Collapsible AI Chat Widget */
 .chat-widget {
   display: flex;
