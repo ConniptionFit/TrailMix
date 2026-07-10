@@ -116,7 +116,7 @@ async function loadSessionPayloadFromDb(sessionId) {
   if (!row) return null;
 
   if (row.encrypted) {
-    const cachedKey = decryptionKeys.get(sessionId) || settings.encryptionPassword;
+    const cachedKey = decryptionKeys.get(sessionId);
     if (!cachedKey) return null;
     const decrypted = encryption.decrypt(row.encrypted_payload, cachedKey);
     const session = JSON.parse(decrypted);
@@ -141,7 +141,7 @@ async function resolveSessionRecord(sessionId) {
 
   const directRow = await dbGet('SELECT * FROM sessions WHERE id = ?', [sessionId]);
   if (directRow?.encrypted) {
-    const cachedKey = decryptionKeys.get(sessionId) || settings.encryptionPassword;
+    const cachedKey = decryptionKeys.get(sessionId);
     if (!cachedKey) {
       return { requirePassword: true };
     }
@@ -172,7 +172,7 @@ async function resolveSessionRecord(sessionId) {
   const renamed = rows.find((row) => row.id.endsWith(`_${sessionId}`) || row.id.includes(sessionId));
   if (renamed) {
     if (renamed.encrypted) {
-      const cachedKey = decryptionKeys.get(renamed.id) || settings.encryptionPassword;
+      const cachedKey = decryptionKeys.get(renamed.id);
       if (!cachedKey) {
         return { requirePassword: true };
       }
@@ -771,7 +771,7 @@ async function migrateOldData() {
             
             let data = null;
             if (isEncrypted) {
-              const cachedKey = decryptionKeys.get(id) || settings.encryptionPassword;
+              const cachedKey = decryptionKeys.get(id);
               if (cachedKey) {
                 try {
                   const decrypted = encryption.decrypt(rawContent, cachedKey);
@@ -830,7 +830,7 @@ async function upsertSessionFromTrailFile({ sessionId, filePath, folderId }) {
   const suggestedTagsStr = '[]';
 
   if (isEncrypted) {
-    const cachedKey = decryptionKeys.get(sessionId) || settings.encryptionPassword;
+    const cachedKey = decryptionKeys.get(sessionId);
     if (cachedKey) {
       try {
         const decrypted = encryption.decrypt(rawContent, cachedKey);
@@ -1147,7 +1147,7 @@ async function saveSessionToDbPromise(session, options = {}) {
 
   try {
     const isEncrypted = session.encrypted ? 1 : 0;
-    const password = decryptionKeys.get(session.id) || settings.encryptionPassword;
+    const password = decryptionKeys.get(session.id);
     
     let payload = '';
     if (isEncrypted && password) {
