@@ -5,6 +5,24 @@ All notable changes to TrailMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Restored IPC runtime bindings broken in the v0.5 modular split (chat streaming, Mix enhance, Whisper download, open file location)
+- Meeting live transcript now applies coalesced `merged` segment updates instead of duplicating bubbles
+- Speaker label mapping in the meeting window uses turn-index keys correctly
+- Resume chunk offset uses last segment timestamp; numerical deadline parsing no longer references an undefined date
+
+### Changed
+- Debounced silent session saves during live capture; flush on pause/stop
+- Faster `calls:get-list` path (one-time filesystem sync per process)
+- Bounded Mix-Master history context and transcription queue backpressure
+- Async/sampled audio level metering; incremental bleed correction
+- Hub UX: debounced search, non-destructive chat close, Ctrl/Cmd+B sidebar toggle, Ctrl/Cmd+N new meeting
+
+### Added
+- `docs/OPTIMIZATION_ROADMAP.md` — ranked performance work and feature suggestions
+
 ## [0.5.0] - 2026-06-15
 
 ### Added

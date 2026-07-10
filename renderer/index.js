@@ -41,9 +41,13 @@ if (isMiniMode) {
     window.api.relaunch();
   });
 
-  // Listen to transcription updates in mini mode to know what's happening
+  // Surface the latest transcript line in the mini widget.
   window.api.onTranscriptionUpdate((segment) => {
-    console.log('Mini-mode transcription:', segment.text);
+    const miniStatus = document.getElementById('mini-status');
+    if (!miniStatus || !segment?.text) return;
+    const speaker = segment.speaker ? `${segment.speaker}: ` : '';
+    const text = String(segment.text).trim();
+    miniStatus.textContent = `${speaker}${text}`.slice(0, 96);
   });
 } else {
   // Setup Main mode
@@ -2119,6 +2123,7 @@ if (isMiniMode) {
         window.api.selectDirectory().then((dirPath) => {
           if (dirPath) {
             document.getElementById('input-storage-path').value = dirPath;
+            markSettingsDirty();
           }
         });
       });
@@ -2126,8 +2131,12 @@ if (isMiniMode) {
 
     const inputSidebarSearch = document.getElementById('input-sidebar-search');
     if (inputSidebarSearch) {
+      let searchDebounceTimer = null;
       inputSidebarSearch.addEventListener('input', () => {
-        loadHistoryList();
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = setTimeout(() => {
+          loadHistoryList();
+        }, 250);
       });
     }
     
@@ -2296,7 +2305,19 @@ if (isMiniMode) {
     window.api.saveSettings(updated).then(() => {
       activeSettings = updated;
       resetSettingsDirtyState();
-      alert('Settings saved successfully!');
+      if (settingsDirtyHint) {
+        settingsDirtyHint.textContent = 'Settings saved';
+        settingsDirtyHint.style.opacity = '1';
+        setTimeout(() => {
+          if (settingsDirtyHint.textContent === 'Settings saved') {
+            settingsDirtyHint.style.opacity = '0';
+            settingsDirtyHint.textContent = 'Unsaved changes';
+          }
+        }, 1800);
+      }
+    }).catch((err) => {
+      console.error('Failed to save settings', err);
+      alert(err?.message || 'Failed to save settings.');
     });
   });
 
@@ -2398,7 +2419,7 @@ if (isMiniMode) {
       chatAgentWidget.classList.add('closed');
       if (btnChatSidebarToggle) btnChatSidebarToggle.classList.remove('hidden');
       if (globalAskBar) globalAskBar.classList.remove('chat-open');
-      clearChatHistory();
+      // Keep chat history when closing so toggling Mix-Master is non-destructive.
     }
   }
 
@@ -2485,7 +2506,7 @@ if (isMiniMode) {
     const isMeta = event.ctrlKey || event.metaKey;
     if (!isMeta) return;
 
-    if (event.key.toLowerCase() === 's') {
+    if (event.key.toLowerCase() === 'b') {
       event.preventDefault();
       if (typeof window.toggleTrailSidebar === 'function') {
         window.toggleTrailSidebar();
@@ -2496,6 +2517,14 @@ if (isMiniMode) {
       event.preventDefault();
       toggleChatSidebar(true);
       if (inputChatQuery) inputChatQuery.focus();
+    }
+
+    if (event.key.toLowerCase() === 'n') {
+      const target = event.target;
+      const tag = target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
+      event.preventDefault();
+      document.getElementById('btn-new-meeting')?.click();
     }
   });
 

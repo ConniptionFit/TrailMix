@@ -252,10 +252,17 @@ function handleTranscriptionSegments({ chunkIndex, segments }) {
   });
 
   const { transcript: mergedTranscript, emitted } = coalesceIncomingSegments(activeSession.transcript, rawSegments);
-  const { transcript: correctedTranscript, removedSegmentIds } = correctBleedInTranscript(mergedTranscript);
+  const candidateSegmentIds = emitted
+    .filter((segment) => {
+      const speaker = String(segment.speaker || '').toLowerCase();
+      return speaker === 'you' || speaker === 'me';
+    })
+    .map((segment) => segment.id);
+  const { transcript: correctedTranscript, removedSegmentIds } = correctBleedInTranscript(mergedTranscript, {
+    candidateSegmentIds
+  });
   activeSession.transcript = correctedTranscript;
 
-  const emittedIds = new Set(emitted.map((segment) => segment.id));
   const visibleEmissions = emitted.filter((segment) => !removedSegmentIds.includes(segment.id));
 
   visibleEmissions.forEach((segment) => {
@@ -269,7 +276,7 @@ function handleTranscriptionSegments({ chunkIndex, segments }) {
   }
 
   if (visibleEmissions.length > 0 || removedSegmentIds.length > 0) {
-    saveSessionToFileSilently(activeSession);
+    scheduleSilentSessionSave(activeSession);
   }
 }
 
@@ -544,6 +551,9 @@ function initDatabase() {
   return new Promise((resolve, reject) => {
     db.serialize(() => {
       db.run("PRAGMA foreign_keys = ON;");
+      db.run("PRAGMA journal_mode = WAL;");
+      db.run("PRAGMA busy_timeout = 5000;");
+      db.run("PRAGMA synchronous = NORMAL;");
       
       // Folders Table
       db.run(`CREATE TABLE IF NOT EXISTS folders (
@@ -625,17 +635,24 @@ async function syncFilesystemFoldersToDb() {
   }
 }
 
-async function normalizeFolderIdForSave(folderId) {
+const ensuredFolderIds = new Set();
+
+async function normalizeFolderIdForSave(folderId, { syncFilesystem = false } = {}) {
   const normalized = folderId || UNCATEGORIZED_FOLDER_ID;
-  await syncFilesystemFoldersToDb();
-  const displayName = normalized === UNCATEGORIZED_FOLDER_ID
-    ? 'Trail (root)'
-    : normalized.replace(/^fs:/, '') || normalized;
-  await ensureFolderRecord(normalized, {
-    name: displayName,
-    icon: normalized === UNCATEGORIZED_FOLDER_ID ? '🥣' : '📁',
-    description: ''
-  });
+  if (syncFilesystem) {
+    await syncFilesystemFoldersToDb();
+  }
+  if (!ensuredFolderIds.has(normalized)) {
+    const displayName = normalized === UNCATEGORIZED_FOLDER_ID
+      ? 'Trail (root)'
+      : normalized.replace(/^fs:/, '') || normalized;
+    await ensureFolderRecord(normalized, {
+      name: displayName,
+      icon: normalized === UNCATEGORIZED_FOLDER_ID ? '🥣' : '📁',
+      description: ''
+    });
+    ensuredFolderIds.add(normalized);
+  }
   return normalized;
 }
 
@@ -1073,12 +1090,14 @@ function queryAudioDevices() {
 // Whisper & Transcription Runner
 // ----------------------------------------------------
 
-async function saveSessionToDbPromise(session) {
+async function saveSessionToDbPromise(session, options = {}) {
   if (!session) return;
   const tagsStr = JSON.stringify(session.tags || []);
   const suggestedTagsStr = JSON.stringify(session.suggestedTags || []);
   const mtimeMs = Date.now();
-  const folderId = await normalizeFolderIdForSave(session.folder_id);
+  const folderId = await normalizeFolderIdForSave(session.folder_id, {
+    syncFilesystem: Boolean(options.syncFilesystem)
+  });
   session.folder_id = folderId;
 
   try {
@@ -1119,16 +1138,49 @@ async function saveSessionToDbPromise(session) {
     if (!fs.existsSync(fileDir)) {
       fs.mkdirSync(fileDir, { recursive: true });
     }
-    fs.writeFileSync(filePath, payload, 'utf8');
+    await fs.promises.writeFile(filePath, payload, 'utf8');
   } catch (err) {
     console.error("Failed to save session to DB", err);
   }
 }
 
+const silentSaveTimers = new Map();
+const SILENT_SAVE_DEBOUNCE_MS = 2500;
+
 function saveSessionToFileSilently(session) {
+  if (!session) return;
+  // Flush any pending debounced save for this session first.
+  const pending = silentSaveTimers.get(session.id);
+  if (pending) {
+    clearTimeout(pending);
+    silentSaveTimers.delete(session.id);
+  }
   saveSessionToDbPromise(session).catch(err => {
     console.error("Failed to save session silently", err);
   });
+}
+
+function scheduleSilentSessionSave(session, delayMs = SILENT_SAVE_DEBOUNCE_MS) {
+  if (!session?.id) return;
+  const existing = silentSaveTimers.get(session.id);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(() => {
+    silentSaveTimers.delete(session.id);
+    saveSessionToDbPromise(session).catch((err) => {
+      console.error('Failed to save session silently', err);
+    });
+  }, delayMs);
+  silentSaveTimers.set(session.id, timer);
+}
+
+function flushSilentSessionSave(session) {
+  if (!session?.id) return Promise.resolve();
+  const existing = silentSaveTimers.get(session.id);
+  if (existing) {
+    clearTimeout(existing);
+    silentSaveTimers.delete(session.id);
+  }
+  return saveSessionToDbPromise(session);
 }
 
 // ----------------------------------------------------
@@ -1187,7 +1239,12 @@ async function startRecordingHandler(requestedSessionId = null) {
 
     activeRecordingSessionId = activeSession.id;
     setSession(activeSession);
-    sessionChunkOffset = activeSession.transcript?.length ? Math.ceil(activeSession.transcript.length / 2) : 0;
+    if (activeSession.transcript?.length) {
+      const lastSeg = activeSession.transcript[activeSession.transcript.length - 1];
+      sessionChunkOffset = Math.ceil((lastSeg.timestampMs || 0) / 2000);
+    } else {
+      sessionChunkOffset = 0;
+    }
   } else {
     await audioCaptureService.prepareTempDir(true);
     if (requestedSessionId) {
@@ -1232,6 +1289,9 @@ async function pauseRecordingHandler() {
   }
 
   await audioCaptureService.stopFfmpeg();
+  if (activeSession) {
+    void flushSilentSessionSave(activeSession);
+  }
 
   setTimeout(async () => {
     const chunkCount = await audioCaptureService.countChunkCandidates();
@@ -1267,7 +1327,10 @@ async function stopRecordingHandler() {
   flushingFinalChunks = true;
   try {
     await audioCaptureService.flushRemainingChunks();
-    await transcriptionService.waitForIdle();
+    await transcriptionService.waitForIdle(60000);
+    if (activeSession) {
+      await flushSilentSessionSave(activeSession);
+    }
     await finalizeAndSaveSession();
     if (stoppingSessionId) {
       const session = getSession(stoppingSessionId) || await loadSessionPayloadFromDb(stoppingSessionId);
@@ -1595,7 +1658,10 @@ function parseDeadlineDate(text) {
     if (numMatch[3] && numMatch[3].length === 2) {
       year += 2000;
     }
-    return d.toISOString().split('T')[0];
+    const d = new Date(year, month, day);
+    if (!Number.isNaN(d.getTime())) {
+      return d.toISOString().split('T')[0];
+    }
   }
 
   return '';
@@ -1749,6 +1815,7 @@ const runtime = {
   PROJECT_DIR,
   DATA_DIR,
   TEMP_DIR,
+  XDG_CONFIG_DIR,
   SETTINGS_FILE,
   WHISPER_DIR,
   audioCaptureService,

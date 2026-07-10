@@ -3,8 +3,8 @@
  */
 function registerIpcHandlers(rt) {
   const {
-    ipcMain, app, dialog, shell, path, fs, os, encryption,
-    dbRun, dbAll, dbGet, DATA_DIR, PROJECT_DIR,
+    ipcMain, app, dialog, shell, path, fs, os, encryption, spawn, BrowserWindow,
+    dbRun, dbAll, dbGet, DATA_DIR, PROJECT_DIR, XDG_CONFIG_DIR, WHISPER_DIR,
     getHubWindow, broadcastToSession, broadcastRecordingStatus,
     queryAudioDevices, startRecordingHandler, pauseRecordingHandler,
     stopRecordingHandler, resumeCallTranscriptionHandler,
@@ -14,15 +14,17 @@ function registerIpcHandlers(rt) {
     getCallsDir, watchCallsDirectory, openMeetingWindow, saveSettings,
     getHardwareSpecs, runSessionEnrichment, extractTasksFromActionItems,
     CHAT_RECIPES, buildRecipePrompt, llmService, sessionProcessingService,
-    updateService, normalizeFolderIdForSave, getTasksListFromDb, saveTaskToDb,
-    upsertSessionFromTrailFile, ensureFolderRecord, parseDeadlineDate,
-    appEventBus, ROOT_FOLDER_ID, UNCATEGORIZED_FOLDER_ID,
-    scanStorageLayout, ensureFolderDir, moveSessionFile, moveStorageContents,
-    resolveSessionFilePath, relativePathFromFolderId, secureShredFile,
-    formatTaskRow, formatTimestamp, documentFromSession,
+    enhanceNotesService, updateService, normalizeFolderIdForSave,
+    getTasksListFromDb, saveTaskToDb, upsertSessionFromTrailFile,
+    ensureFolderRecord, parseDeadlineDate, appEventBus, ROOT_FOLDER_ID,
+    UNCATEGORIZED_FOLDER_ID, scanStorageLayout, ensureFolderDir, moveSessionFile,
+    moveStorageContents, resolveSessionFilePath, relativePathFromFolderId,
+    secureShredFile, formatTaskRow, formatTimestamp, documentFromSession,
     splitTranscriptIntoBlocks, PROCESSING_STATUS, decryptionKeys,
     activeRecordingSessionId, isRecording, isPaused, activeSession, windowManager
   } = rt;
+
+  let callsListSyncedOnce = false;
 
   const DEFAULT_PROMPTS = rt.DEFAULT_PROMPTS;
 
@@ -261,23 +263,26 @@ ipcMain.handle('chat:query', async (event, payload, legacyTranscriptText) => {
     const notesContext = scope === 'meeting' ? buildMeetingNotesContext(sessionForContext) : '';
 
     const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-    const rows = await dbAll("SELECT title, date, summary, actionItems, mixNotes, enhancedNotes, mtimeMs FROM sessions");
+    // Bound chat context: recent/limited rows only (avoids loading every session into the prompt).
+    const rows = await dbAll(
+      "SELECT title, date, summary, actionItems, mixNotes, enhancedNotes, mtimeMs FROM sessions ORDER BY mtimeMs DESC LIMIT 40"
+    );
 
     let historyContext = '';
     if (scope === 'meeting' && !isRecipe) {
       historyContext = 'You are answering about the CURRENT MEETING first. Past sessions are secondary context unless the user explicitly asks about history (e.g. "past week", "recent discussions").\n\n';
-      const recent = rows.filter((r) => (r.mtimeMs || 0) >= oneWeekAgo);
+      const recent = rows.filter((r) => (r.mtimeMs || 0) >= oneWeekAgo).slice(0, 12);
       historyContext += 'Recent sessions (past 7 days):\n';
       recent.forEach((r) => {
         historyContext += `- [${r.date}] ${r.title}\n`;
-        if (r.summary) historyContext += `  Summary: ${r.summary}\n`;
+        if (r.summary) historyContext += `  Summary: ${String(r.summary).slice(0, 280)}\n`;
       });
     } else if (scope !== 'meeting') {
-      historyContext = 'Here is the context of past calls:\n';
-      rows.forEach((r) => {
+      historyContext = 'Here is the context of past calls (most recent first):\n';
+      rows.slice(0, 20).forEach((r) => {
         historyContext += `- [${r.date}] Title: ${r.title}\n`;
-        if (r.summary) historyContext += `  Summary: ${r.summary}\n`;
-        if (r.actionItems) historyContext += `  Action Items: ${r.actionItems}\n`;
+        if (r.summary) historyContext += `  Summary: ${String(r.summary).slice(0, 400)}\n`;
+        if (r.actionItems) historyContext += `  Action Items: ${String(r.actionItems).slice(0, 300)}\n`;
         historyContext += '\n';
       });
     }
@@ -427,8 +432,11 @@ ipcMain.handle('calls:decrypt-multiple', async (event, sessionIds, password) => 
 
 ipcMain.handle('calls:get-list', async () => {
   try {
-    await migrateOldData();
-    await syncDatabaseWithFiles();
+    // Full filesystem sync is expensive; do it once per process, then rely on watchers/saves.
+    if (!callsListSyncedOnce) {
+      await syncDatabaseWithFiles();
+      callsListSyncedOnce = true;
+    }
     const processingJobs = await sessionProcessingService.getJobMap();
     const rows = await dbAll("SELECT * FROM sessions ORDER BY mtimeMs DESC");
     return rows.map(row => {

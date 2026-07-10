@@ -12,6 +12,7 @@
   let pendingRecordingStart = false;
 
   const llmStreamBuffers = new Map();
+  const llmStreamRenderTimers = new Map();
   const llmStreamWaiters = new Map();
 
   function formatTimerSeconds(totalSeconds) {
@@ -53,12 +54,18 @@
     if (payload.token) {
       const next = (llmStreamBuffers.get(payload.requestId) || '') + payload.token;
       llmStreamBuffers.set(payload.requestId, next);
-      waiter.onUpdate(next);
+      if (!llmStreamRenderTimers.has(payload.requestId)) {
+        llmStreamRenderTimers.set(payload.requestId, requestAnimationFrame(() => {
+          llmStreamRenderTimers.delete(payload.requestId);
+          waiter.onUpdate(llmStreamBuffers.get(payload.requestId) || '');
+        }));
+      }
     }
     if (payload.done) {
       const finalText = payload.fullResponse || llmStreamBuffers.get(payload.requestId) || '';
       llmStreamWaiters.delete(payload.requestId);
       llmStreamBuffers.delete(payload.requestId);
+      llmStreamRenderTimers.delete(payload.requestId);
       waiter.onUpdate(finalText);
       payload.error ? waiter.reject(new Error(payload.error)) : waiter.resolve(finalText);
     }
@@ -136,21 +143,99 @@
     return n === 'you' || n === 'me';
   }
 
+  function getDisplaySpeakerName(speakerName) {
+    const normalizedSpeaker = String(speakerName || '').toLowerCase();
+    if (normalizedSpeaker === 'you' || normalizedSpeaker === 'me') return 'Me';
+    if (normalizedSpeaker === 'speaker 1') return 'Them';
+    return speakerName;
+  }
+
+  function applySpeakerLabelMapping(transcript, mapping) {
+    let updatedAny = false;
+    transcript.forEach((segment, index) => {
+      let label = mapping[segment.id];
+      if (!label) {
+        label = mapping[(index + 1).toString()] || mapping[index + 1];
+      }
+      if (!label) return;
+      if (label !== 'You' && String(segment.speaker || '').toLowerCase() === 'you') return;
+      if (segment.speaker !== label) {
+        segment.speaker = label;
+        updatedAny = true;
+      }
+    });
+    return updatedAny;
+  }
+
   function appendTranscriptLine(segment, container = transcriptContainer) {
     const empty = container.querySelector('.transcript-empty-state');
     if (empty) empty.remove();
 
-    const lineDiv = document.createElement('div');
-    lineDiv.id = `line-${segment.id}`;
-    lineDiv.className = `transcript-line transcript-bubble ${isMicSpeaker(segment.speaker) ? 'bubble-mic' : 'bubble-system'}`;
-    lineDiv.setAttribute('data-timestamp-ms', segment.timestampMs || 0);
-    lineDiv.innerHTML = `
-      <div class="line-meta">
-        <span class="line-speaker ${isMicSpeaker(segment.speaker) ? 'mic' : 'system'}">${segment.speaker}</span>
-        <span class="line-time">${segment.timestamp || ''}</span>
-      </div>
-      <div class="line-text">${segment.text}</div>`;
-    container.appendChild(lineDiv);
+    // Backend coalesces contiguous speech into the same segment id with merged:true.
+    if (segment.merged) {
+      const existingLine = document.getElementById(`line-${segment.id}`);
+      if (existingLine) {
+        const textDiv = existingLine.querySelector('.line-text');
+        if (textDiv) textDiv.textContent = segment.text;
+        existingLine.setAttribute('data-timestamp-ms', segment.timestampMs || 0);
+        if (!isUserScrolledUp && container === transcriptContainer) {
+          container.scrollTop = container.scrollHeight;
+        }
+        return;
+      }
+    }
+
+    const isMic = isMicSpeaker(segment.speaker);
+    const displaySpeakerName = getDisplaySpeakerName(segment.speaker);
+    const lastLineDiv = container.lastElementChild;
+    let merged = false;
+
+    if (lastLineDiv && lastLineDiv.classList.contains('transcript-line')) {
+      const speakerSpan = lastLineDiv.querySelector('.line-speaker');
+      const textDiv = lastLineDiv.querySelector('.line-text');
+      if (speakerSpan && textDiv) {
+        const lastSpeaker = speakerSpan.textContent.trim();
+        const lastTimestampMs = parseInt(lastLineDiv.getAttribute('data-timestamp-ms') || '0', 10);
+        const timeDiffMs = (segment.timestampMs || 0) - lastTimestampMs;
+        if (lastSpeaker.toLowerCase() === displaySpeakerName.toLowerCase() && timeDiffMs < 12000) {
+          textDiv.textContent += ` ${segment.text}`;
+          lastLineDiv.setAttribute('data-timestamp-ms', segment.timestampMs || 0);
+          lastLineDiv.classList.add(`subline-${segment.id}`);
+          merged = true;
+        }
+      }
+    }
+
+    if (!merged) {
+      const lineDiv = document.createElement('div');
+      lineDiv.id = `line-${segment.id}`;
+      lineDiv.className = `transcript-line transcript-bubble ${isMic ? 'bubble-mic' : 'bubble-system'}`;
+      lineDiv.setAttribute('data-timestamp-ms', segment.timestampMs || 0);
+      lineDiv.setAttribute('data-segment-id', segment.id || '');
+
+      const metaDiv = document.createElement('div');
+      metaDiv.className = 'line-meta';
+
+      const speakerSpan = document.createElement('span');
+      speakerSpan.className = `line-speaker ${isMic ? 'mic' : 'system'}`;
+      speakerSpan.textContent = displaySpeakerName;
+
+      const timeSpan = document.createElement('span');
+      timeSpan.className = 'line-time';
+      timeSpan.textContent = segment.timestamp || '';
+
+      metaDiv.appendChild(speakerSpan);
+      metaDiv.appendChild(timeSpan);
+
+      const textDiv = document.createElement('div');
+      textDiv.className = 'line-text';
+      textDiv.textContent = segment.text || '';
+
+      lineDiv.appendChild(metaDiv);
+      lineDiv.appendChild(textDiv);
+      container.appendChild(lineDiv);
+    }
+
     if (!isUserScrolledUp && container === transcriptContainer) {
       container.scrollTop = container.scrollHeight;
     }
@@ -159,10 +244,24 @@
   function renderTranscript(transcript) {
     transcriptContainer.innerHTML = '';
     if (!transcript?.length) {
-      transcriptContainer.innerHTML = '<div class="transcript-empty-state"><span class="empty-icon">🎧</span><p>Start the Trail to begin live transcription.</p></div>';
+      const empty = document.createElement('div');
+      empty.className = 'transcript-empty-state';
+      empty.innerHTML = '<span class="empty-icon">🎧</span><p>Start the Trail to begin live transcription.</p>';
+      transcriptContainer.appendChild(empty);
       return;
     }
-    transcript.forEach((segment) => appendTranscriptLine(segment));
+    lastSegmentTimeMs = null;
+    transcript.forEach((segment) => {
+      const currentTime = getSegmentTimestampMs(segment);
+      if (lastSegmentTimeMs && currentTime - lastSegmentTimeMs > 30000) {
+        const divider = document.createElement('div');
+        divider.className = 'transcript-break-divider';
+        divider.textContent = formatGapDuration(currentTime - lastSegmentTimeMs);
+        transcriptContainer.appendChild(divider);
+      }
+      lastSegmentTimeMs = currentTime;
+      appendTranscriptLine(segment);
+    });
   }
 
   async function runMixEnhance(templateKey = null) {
@@ -378,12 +477,8 @@
 
   window.api.onSpeakerLabelsUpdated?.((mapping) => {
     if (!activeSession?.transcript?.length || !mapping) return;
-    activeSession.transcript.forEach((segment) => {
-      if (mapping[segment.speaker]) {
-        segment.speaker = mapping[segment.speaker];
-      }
-    });
-    renderTranscript(activeSession.transcript);
+    const updated = applySpeakerLabelMapping(activeSession.transcript, mapping);
+    if (updated) renderTranscript(activeSession.transcript);
   });
 
   function removeTranscriptLines(segmentIds) {
@@ -404,16 +499,27 @@
 
   window.api.onTranscriptionUpdate((segment) => {
     if (!activeSession) return;
-    const currentTime = getSegmentTimestampMs(segment);
-    if (lastSegmentTimeMs && currentTime - lastSegmentTimeMs > 30000) {
-      const divider = document.createElement('div');
-      divider.className = 'transcript-break-divider';
-      divider.textContent = formatGapDuration(currentTime - lastSegmentTimeMs);
-      transcriptContainer.appendChild(divider);
-    }
-    lastSegmentTimeMs = currentTime;
     if (!activeSession.transcript) activeSession.transcript = [];
-    activeSession.transcript.push(segment);
+
+    if (segment.merged) {
+      const idx = activeSession.transcript.findIndex((entry) => entry.id === segment.id);
+      if (idx >= 0) {
+        activeSession.transcript[idx] = { ...activeSession.transcript[idx], ...segment };
+      } else {
+        activeSession.transcript.push(segment);
+      }
+    } else {
+      const currentTime = getSegmentTimestampMs(segment);
+      if (lastSegmentTimeMs && currentTime - lastSegmentTimeMs > 30000) {
+        const divider = document.createElement('div');
+        divider.className = 'transcript-break-divider';
+        divider.textContent = formatGapDuration(currentTime - lastSegmentTimeMs);
+        transcriptContainer.appendChild(divider);
+      }
+      lastSegmentTimeMs = currentTime;
+      activeSession.transcript.push(segment);
+    }
+
     appendTranscriptLine(segment);
   });
 
@@ -567,6 +673,10 @@
 
   // Init session
   window.api.loadMeetingSession(sessionId).then((session) => {
+    if (!session) {
+      alert('Could not load this meeting session.');
+      return;
+    }
     activeSession = session;
     updateTitleUi();
     renderTranscript(session.transcript || []);
@@ -582,5 +692,8 @@
         });
       }
     });
+  }).catch((err) => {
+    console.error('Failed to load meeting session', err);
+    alert(err?.message || 'Could not load this meeting session.');
   });
 })();

@@ -131,7 +131,7 @@
       <img src="../assets/logo.png" alt="TrailMix Logo" class="mini-logo">
       <div class="mini-info">
         <span class="mini-title">TrailMix</span>
-        <span class="mini-status animate-pulse">Transcribing...</span>
+        <span class="mini-status animate-pulse" id="mini-status">Transcribing...</span>
       </div>
     </div>
     <div class="mini-controls">
@@ -209,11 +209,11 @@
         <div id="sidebar-bulk-actions" class="bulk-actions-bar hidden">
           <span id="bulk-select-count">0 selected</span>
           <div class="bulk-buttons">
-            <button id="btn-bulk-decrypt" class="bulk-btn" title="Unlock selected encrypted notes">🔓</button>
-            <button id="btn-bulk-merge" class="bulk-btn" title="Merge Selected">🔗</button>
-            <button id="btn-bulk-export" class="bulk-btn" title="Export Selected">📤</button>
-            <button id="btn-bulk-delete" class="bulk-btn delete" title="Delete Selected">🗑️</button>
-            <button id="btn-bulk-cancel" class="bulk-btn" title="Cancel">❌</button>
+            <button id="btn-bulk-decrypt" class="bulk-btn" title="Unlock selected encrypted notes" aria-label="Unlock selected encrypted notes">🔓</button>
+            <button id="btn-bulk-merge" class="bulk-btn" title="Merge Selected" aria-label="Merge selected">🔗</button>
+            <button id="btn-bulk-export" class="bulk-btn" title="Export Selected" aria-label="Export selected">📤</button>
+            <button id="btn-bulk-delete" class="bulk-btn delete" title="Delete Selected" aria-label="Delete selected">🗑️</button>
+            <button id="btn-bulk-cancel" class="bulk-btn" title="Cancel" aria-label="Cancel multi-select">❌</button>
           </div>
         </div>
         <div id="sidebar-calls-list" class="calls-list">

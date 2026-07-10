@@ -20,7 +20,8 @@
   <div id="meeting-app" class="meeting-app chat-docked">
     <header class="meeting-header">
       <div class="meeting-title-block">
-        <input id="input-meeting-title" class="meeting-title-input" type="text" value="New Meeting" maxlength="120">
+        <label class="sr-only" for="input-meeting-title">Meeting title</label>
+        <input id="input-meeting-title" class="meeting-title-input" type="text" value="New Meeting" maxlength="120" aria-label="Meeting title">
         <p id="meeting-title-hint" class="meeting-title-hint">Title will be auto-generated when you finish unless you change it</p>
       </div>
     </header>
@@ -71,7 +72,7 @@
         <div class="pane-header">
           <h2>Transcript</h2>
         </div>
-        <div id="transcript-container" class="transcript-container">
+        <div id="transcript-container" class="transcript-container" role="log" aria-live="polite" aria-relevant="additions text">
           <div class="transcript-empty-state">
             <span class="empty-icon">🎧</span>
             <p>Start the Trail to begin live transcription.</p>

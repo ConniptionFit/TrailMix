@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn, execSync } = require('child_process');
-const { computeStereoLevels } = require('../lib/audio-levels');
+const { computeStereoLevelsAsync } = require('../lib/audio-levels');
 
 /**
  * Detect whether PipeWire is managing audio (informational only).
@@ -142,12 +142,20 @@ class AudioCaptureService {
 
   startLevelPolling() {
     this.stopLevelPolling();
+    this._levelPollInFlight = false;
 
+    // 250ms is enough for UI meters and halves main-thread I/O vs 120ms.
     this.levelPollTimer = setInterval(() => {
-      this.pollAudioLevels().catch((err) => {
-        console.error('Level polling failed', err);
-      });
-    }, 120);
+      if (this._levelPollInFlight) return;
+      this._levelPollInFlight = true;
+      this.pollAudioLevels()
+        .catch((err) => {
+          console.error('Level polling failed', err);
+        })
+        .finally(() => {
+          this._levelPollInFlight = false;
+        });
+    }, 250);
   }
 
   stopChunkPolling() {
@@ -181,7 +189,7 @@ class AudioCaptureService {
       const stats = await fs.promises.stat(chunkPath);
       if (stats.size < 1024) return;
 
-      const levels = computeStereoLevels(chunkPath);
+      const levels = await computeStereoLevelsAsync(chunkPath);
       this.latestLevels = levels;
 
       if (this.onLevels) {
