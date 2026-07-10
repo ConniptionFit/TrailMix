@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Obsidian vault pack** — `Trailmix/` notes (Overview, Master Prompt, Architecture, capture/Mix/Trail/processing/privacy/settings/IPC/dev/troubleshooting, Future Improvements) plus repo `CLAUDE.md` mirror of the Master Prompt
+
 ### Fixed
 - Restored IPC runtime bindings broken in the v0.5 modular split (chat streaming, Mix enhance, Whisper download, open file location)
 - Meeting live transcript now applies coalesced `merged` segment updates instead of duplicating bubbles

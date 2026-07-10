@@ -1,5 +1,7 @@
 # TrailMix Optimization Roadmap
 
+> Product/agent roadmap also lives in the Obsidian vault: `Trailmix/Future Improvements.md` (and `Trailmix/Master Prompt.md`). Prefer the vault for prioritization; keep this file as the engineering measurement checklist.
+
 This document captures the review findings from the v0.5 modular architecture pass, what shipped in the first optimization PR, and the recommended next features.
 
 ## What shipped (this pass)

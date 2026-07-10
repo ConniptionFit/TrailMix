@@ -32,6 +32,7 @@ TrailMix records system audio and your microphone, transcribes speech locally wi
 - [Screenshots](#screenshots)
 - [Configuration reference](#configuration-reference)
 - [Privacy & security](#privacy--security)
+- [Documentation (Obsidian)](#documentation-obsidian)
 - [Architecture](#architecture)
 - [Development](#development)
 - [Troubleshooting](#troubleshooting)
@@ -329,6 +330,21 @@ Session files and the SQLite task database:
 - **Optional encryption** — AES-256-GCM with PBKDF2 key derivation; passwords never leave your machine
 - **Secure delete** — temporary audio chunks can be shredded after processing
 - **Local SQLite** — folder and task metadata stays in `~/.config/trailmix/`
+
+---
+
+## Documentation (Obsidian)
+
+Full product/agent documentation lives in the **`Trailmix/`** folder (Powarr-style vault notes):
+
+| Note | Purpose |
+|------|---------|
+| `Trailmix/TrailMix Overview.md` | Landing page / doc map |
+| `Trailmix/Master Prompt.md` | Authoritative LLM agent context |
+| `Trailmix/Future Improvements.md` | Living roadmap (To-Do + Complete) |
+| `Trailmix/*.md` | Architecture, capture, Mix, Trail, privacy, IPC, etc. |
+
+Copy or symlink `Trailmix/` into your Obsidian vault next to `Powarr/`. The repo root **`CLAUDE.md`** mirrors `Trailmix/Master Prompt.md` — keep them identical.
 
 ---
 
