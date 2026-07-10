@@ -212,7 +212,7 @@ Enter your name under **User Profile** so speaker diarization can label you as *
 
 ### 5. Encryption (optional)
 
-Enable **Encrypt sessions by default** and set a password if you want session files stored as AES-256-GCM blobs.
+Enable **Encrypt sessions by default** if you want new meetings marked for encryption. TrailMix prompts for a password when saving an encrypted meeting; the password stays in memory for the current app session only and is **not** written to `settings.json`.
 
 ---
 

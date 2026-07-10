@@ -1146,11 +1146,20 @@ async function saveSessionToDbPromise(session, options = {}) {
   session.folder_id = folderId;
 
   try {
-    const isEncrypted = session.encrypted ? 1 : 0;
-    const password = decryptionKeys.get(session.id);
-    
+    const wantsEncryption = Boolean(session.encrypted);
+    const password = decryptionKeys.get(session.id) || options.password || null;
+    if (password && session.id) {
+      decryptionKeys.set(session.id, password);
+    }
+
+    // Never persist an "encrypted" session as plaintext — that leaks content into FTS/disk.
+    if (wantsEncryption && !password) {
+      console.warn(`Skipping save for encrypted session ${session.id}: password not unlocked`);
+      return { saved: false, needsPassword: true };
+    }
+
     let payload = '';
-    if (isEncrypted && password) {
+    if (wantsEncryption && password) {
       let reuseEnvelope = encryptionEnvelopes.get(session.id) || null;
       if (!reuseEnvelope) {
         try {
@@ -1178,6 +1187,7 @@ async function saveSessionToDbPromise(session, options = {}) {
       ]);
       decryptionKeys.set(session.id, password);
     } else {
+      session.encrypted = false;
       payload = JSON.stringify(session);
       await dbRun(`INSERT OR REPLACE INTO sessions (
         id, date, title, description, summary, actionItems, mixNotes, enhancedNotes, 
@@ -1203,16 +1213,19 @@ async function saveSessionToDbPromise(session, options = {}) {
 
     // Index plaintext for offline search. Never index locked ciphertext.
     try {
-      if (isEncrypted && !decryptionKeys.get(session.id)) {
-        await deleteSessionFts(session.id);
+      if (wantsEncryption) {
+        // Encrypted payloads are ciphertext on disk; index only while unlocked in-memory.
+        await upsertSessionFts(session);
       } else {
         await upsertSessionFts(session);
       }
     } catch (ftsErr) {
       console.error('FTS upsert failed', ftsErr);
     }
+    return { saved: true };
   } catch (err) {
     console.error("Failed to save session to DB", err);
+    return { saved: false, error: err.message };
   }
 }
 
@@ -1234,6 +1247,12 @@ function saveSessionToFileSilently(session) {
 
 function scheduleSilentSessionSave(session, delayMs = SILENT_SAVE_DEBOUNCE_MS) {
   if (!session?.id) return;
+  if (session.encrypted && !decryptionKeys.get(session.id)) {
+    if (activeRecordingSessionId === session.id) {
+      broadcastToSession(session.id, 'session:needs-encryption-password', { sessionId: session.id });
+    }
+    return;
+  }
   const existing = silentSaveTimers.get(session.id);
   if (existing) clearTimeout(existing);
   const timer = setTimeout(() => {

@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Directory watcher now reacts to `.trail.bak` session files (canonical on-disk format)
 - History cards use real CSS classes instead of missing Tailwind utilities
 - Action Items / calendar links now open the meeting and scroll to the source transcript segment
+- Encrypted sessions no longer fall back to plaintext saves when a password is missing
 
 ### Changed
 - Debounced silent session saves during live capture; flush on pause/stop
@@ -29,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Chunked secure shred to avoid OOM on large temp WAVs
 - Removed ~600 lines of dead hub-embedded meeting UI
 - Encryption passwords are no longer stored in `settings.json` (in-memory unlock only)
+- Transcription worker uses one ffmpeg split + parallel Whisper channels
+- Trail list capped/batched with DocumentFragment; processing badges update in place
+- Hub alerts/confirms moved to toasts and confirm modal
 
 ### Added
 - Hub home recent meetings with Open / Resume Trail
@@ -37,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Task/session SQLite indexes; workflow webhook localhost validation
 - **SQLite FTS5** full-text search over titles, notes, and transcripts (`search:sessions`)
 - Lightweight toast notifications for settings / navigation feedback
+- Encryption password prompt for encrypted meetings before save
 - `docs/OPTIMIZATION_ROADMAP.md` — ranked performance work and feature suggestions
 
 ## [0.5.0] - 2026-06-15

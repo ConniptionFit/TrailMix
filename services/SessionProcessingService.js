@@ -373,7 +373,7 @@ class SessionProcessingService {
   }
 
   yieldCpu() {
-    return new Promise((resolve) => setTimeout(resolve, 120));
+    return new Promise((resolve) => setImmediate(resolve));
   }
 }
 

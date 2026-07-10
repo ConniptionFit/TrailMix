@@ -284,15 +284,15 @@ if (isMiniMode) {
             return;
           }
           if (res?.conflict) {
-            alert(`Another Trail is already recording (${res.activeSessionId}).`);
+            showToast(`Another Trail is already recording (${res.activeSessionId}).`, 'info');
             return;
           }
           if (res?.success === false) {
-            alert(res.error || 'Could not resume this Trail.');
+            showToast(res.error || 'Could not resume this Trail.', 'error');
             return;
           }
           openMeetingForCall(call);
-        }).catch((err) => alert(err?.message || 'Could not resume this Trail.'));
+        }).catch((err) => showToast(err?.message || 'Could not resume this Trail.', 'error'));
       });
       card.addEventListener('click', () => openMeetingForCall(call));
       grid.appendChild(card);
@@ -464,12 +464,12 @@ if (isMiniMode) {
       const paths = checked.map(cb => cb.getAttribute('data-filepath'));
       window.api.mergeCalls(paths).then(res => {
         if (res.success) {
-          alert(`Successfully merged selected calls into "${res.session.title}"`);
+          showToast(`Successfully merged selected calls into "${res.session.title}"`, 'info');
           isMultiSelectMode = false;
           toggleMultiSelectModeUI();
           loadHistoryList();
         } else {
-          alert("Merge failed: " + res.error);
+          showToast('Merge failed: ' + res.error, 'error');
         }
       });
     });
@@ -522,9 +522,9 @@ if (isMiniMode) {
       const paths = checked.map(cb => cb.getAttribute('data-filepath'));
       window.api.exportCalls(paths).then(res => {
         if (res.success) {
-          alert(`Successfully exported transcripts to: ${res.filePath}`);
+          showToast(`Successfully exported transcripts to: ${res.filePath}`, 'info');
         } else {
-          alert("Export failed: " + res.error);
+          showToast('Export failed: ' + res.error, 'error');
         }
         isMultiSelectMode = false;
         toggleMultiSelectModeUI();
@@ -536,14 +536,18 @@ if (isMiniMode) {
     btnBulkDelete.addEventListener('click', () => {
       const checked = Array.from(document.querySelectorAll('.call-item-checkbox:checked'));
       if (checked.length < 1) return;
-      if (confirm(`Are you sure you want to delete the ${checked.length} selected transcripts?`)) {
+      const ask = window.TrailMixConfirm?.ask
+        ? window.TrailMixConfirm.ask(`Are you sure you want to delete the ${checked.length} selected transcripts?`)
+        : Promise.resolve(window.confirm(`Are you sure you want to delete the ${checked.length} selected transcripts?`));
+      ask.then((ok) => {
+        if (!ok) return;
         const paths = checked.map(cb => cb.getAttribute('data-filepath'));
         window.api.deleteMultipleCalls(paths).then(res => {
           isMultiSelectMode = false;
           toggleMultiSelectModeUI();
           loadHistoryList();
         });
-      }
+      });
     });
   }
   
@@ -595,18 +599,24 @@ if (isMiniMode) {
   if (ctxDeleteCall) {
     ctxDeleteCall.addEventListener('click', () => {
       if (contextMenuTargetCall) {
-        if (confirm(`Are you sure you want to delete "${contextMenuTargetCall.title}"?`)) {
-          window.api.deleteCall(contextMenuTargetCall.filePath).then((res) => {
+        const title = contextMenuTargetCall.title;
+        const filePath = contextMenuTargetCall.filePath;
+        const ask = window.TrailMixConfirm?.ask
+          ? window.TrailMixConfirm.ask(`Are you sure you want to delete "${title}"?`)
+          : Promise.resolve(window.confirm(`Are you sure you want to delete "${title}"?`));
+        ask.then((ok) => {
+          if (!ok) return;
+          window.api.deleteCall(filePath).then((res) => {
             if (res.success) {
               loadHistoryList();
-              if (activeSession && activeSession.filePath === contextMenuTargetCall.filePath) {
+              if (activeSession && activeSession.filePath === filePath) {
                 activeSession = null;
               }
             } else {
-              alert("Error deleting call: " + res.error);
+              showToast('Error deleting call: ' + res.error, 'error');
             }
           });
-        }
+        });
       }
       callsContextMenu.classList.add('hidden');
     });
@@ -752,8 +762,14 @@ if (isMiniMode) {
         renderHubHome(calls);
         return;
       }
+
+      const SIDEBAR_RENDER_CAP = 200;
+      const totalMatches = filteredCalls.length;
+      const renderCalls = filteredCalls.slice(0, SIDEBAR_RENDER_CAP);
+      const sidebarFragment = document.createDocumentFragment();
+      const historyFragment = document.createDocumentFragment();
       
-      filteredCalls.forEach((call) => {
+      renderCalls.forEach((call) => {
         const item = document.createElement('div');
         const isSelected = activeSession && activeSession.id === call.id;
         item.className = `call-list-item ${isSelected ? 'selected' : ''}`;
@@ -944,7 +960,7 @@ if (isMiniMode) {
           }
         });
         
-        sidebarCallsList.appendChild(item);
+        sidebarFragment.appendChild(item);
 
         const retryBtn = item.querySelector('.processing-retry-btn');
         if (retryBtn) {
@@ -979,9 +995,18 @@ if (isMiniMode) {
             activateTab({ nav: navHome, pane: tabHubHome });
             openMeetingForCall(call);
           });
-          historyGrid.appendChild(card);
+          historyFragment.appendChild(card);
         }
       });
+
+      sidebarCallsList.appendChild(sidebarFragment);
+      if (totalMatches > SIDEBAR_RENDER_CAP) {
+        const more = document.createElement('div');
+        more.className = 'empty-state';
+        more.textContent = `Showing ${SIDEBAR_RENDER_CAP} of ${totalMatches}. Refine search to narrow results.`;
+        sidebarCallsList.appendChild(more);
+      }
+      if (!relatedCallsList) historyGrid.appendChild(historyFragment);
 
       renderHubHome(filteredCalls);
       
@@ -1073,17 +1098,21 @@ if (isMiniMode) {
         if (deleteBtn) {
           deleteBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            if (confirm(`Delete folder "${folder.name}"? It must be empty first.`)) {
+            const ask = window.TrailMixConfirm?.ask
+              ? window.TrailMixConfirm.ask(`Delete folder "${folder.name}"? It must be empty first.`)
+              : Promise.resolve(window.confirm(`Delete folder "${folder.name}"? It must be empty first.`));
+            ask.then((ok) => {
+              if (!ok) return;
               window.api.deleteFolder(folder.id).then((res) => {
                 if (res?.success === false) {
-                  alert(res.error || 'Could not delete folder');
+                  showToast(res.error || 'Could not delete folder', 'error');
                   return;
                 }
                 if (activeFolderId === folder.id) activeFolderId = 'all';
                 renderFolders();
                 loadHistoryList();
               });
-            }
+            });
           });
         }
 
@@ -1095,9 +1124,9 @@ if (isMiniMode) {
               if (dir) {
                 window.api.exportObsidian(folder.id, dir).then(res => {
                   if (res.success) {
-                    alert(`Successfully exported ${res.count} notes to your Obsidian vault at: ${dir}`);
+                    showToast(`Successfully exported ${res.count} notes to your Obsidian vault at: ${dir}`, 'info');
                   } else {
-                    alert(`Export failed: ${res.error}`);
+                    showToast(`Export failed: ${res.error}`, 'error');
                   }
                 });
               }
@@ -1140,7 +1169,7 @@ if (isMiniMode) {
           activeSession.folder_id = folderId || null;
           loadHistoryList();
         } else {
-          alert('Error moving note: ' + res.error);
+          showToast('Error moving note: ' + res.error, 'error');
         }
       });
     });
@@ -1196,7 +1225,7 @@ if (isMiniMode) {
         closeFolderModal();
         renderFolders();
       } else {
-        alert('Error creating folder: ' + res.error);
+        showToast('Error creating folder: ' + res.error, 'error');
       }
     });
   }
@@ -1218,16 +1247,16 @@ if (isMiniMode) {
   if (btnExportObsidianNote) {
     btnExportObsidianNote.addEventListener('click', () => {
       if (!activeSession || activeSession.id === 'live') {
-        alert("Please select a saved call session first.");
+        showToast("Please select a saved call session first.", 'info');
         return;
       }
       window.api.selectDirectory().then(dir => {
         if (dir) {
           window.api.exportObsidian(activeSession.id, dir).then(res => {
             if (res.success) {
-              alert("Successfully exported note to your Obsidian vault!");
+              showToast("Successfully exported note to your Obsidian vault!", 'info');
             } else {
-              alert("Failed to export: " + res.error);
+              showToast('Failed to export: ' + res.error, 'error');
             }
           });
         }
@@ -1256,6 +1285,63 @@ if (isMiniMode) {
   renderCalendar();
   renderActionItems();
 
+  function patchSidebarProcessingBadges(jobs = {}) {
+    if (!sidebarCallsList) return;
+    const items = sidebarCallsList.querySelectorAll('.call-list-item[data-callid]');
+    let missing = false;
+    items.forEach((item) => {
+      const id = item.getAttribute('data-callid');
+      const details = item.querySelector('.call-item-details');
+      if (!details) return;
+      const job = jobs[id];
+      const existingBadge = details.querySelector('.processing-badge');
+      const existingTrack = details.querySelector('.processing-progress-track');
+      const existingRetry = details.querySelector('.processing-retry-btn');
+
+      if (!job || job.status === 'complete') {
+        existingBadge?.remove();
+        existingTrack?.remove();
+        existingRetry?.remove();
+        return;
+      }
+
+      const label = job.label || 'Processing…';
+      const progress = job.progress || 0;
+      const failed = job.status === 'failed';
+      if (!existingBadge) {
+        // New processing state on an existing row — full refresh keeps markup consistent.
+        missing = true;
+        return;
+      }
+      existingBadge.className = `processing-badge ${failed ? 'failed' : ''}`;
+      existingBadge.innerHTML = `<span class="processing-badge-dot"></span>${label}`;
+      if (existingTrack) {
+        const fill = existingTrack.querySelector('.processing-progress-fill');
+        if (fill) fill.style.width = `${progress}%`;
+      }
+      if (failed && !existingRetry) {
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'processing-retry-btn';
+        retry.setAttribute('data-retry-id', id);
+        retry.textContent = 'Retry';
+        retry.addEventListener('click', (e) => {
+          e.stopPropagation();
+          retry.disabled = true;
+          retry.textContent = 'Retrying…';
+          window.api.retryProcessing?.(id).then(() => scheduleHistoryRefresh()).catch(() => {
+            retry.disabled = false;
+            retry.textContent = 'Retry';
+          });
+        });
+        details.appendChild(retry);
+      } else if (!failed && existingRetry) {
+        existingRetry.remove();
+      }
+    });
+    if (missing) scheduleHistoryRefresh(200);
+  }
+
   // Listen to call list updates from main process (including directory watcher)
   if (window.api.onCallListUpdated) {
     window.api.onCallListUpdated(() => {
@@ -1264,8 +1350,12 @@ if (isMiniMode) {
   }
 
   if (window.api.onProcessingJobsUpdated) {
-    window.api.onProcessingJobsUpdated(() => {
-      scheduleHistoryRefresh(250);
+    window.api.onProcessingJobsUpdated((jobs) => {
+      if (jobs && typeof jobs === 'object') {
+        patchSidebarProcessingBadges(jobs);
+      } else {
+        scheduleHistoryRefresh(250);
+      }
     });
   }
 
@@ -1646,7 +1736,7 @@ if (isMiniMode) {
         downloadProgressPercent.textContent = '100%';
         downloadProgressFill.style.width = '100%';
         downloadProgressLog.textContent += '\nDownload complete! Model loaded successfully.';
-        alert('Whisper model downloaded successfully!');
+        showToast('Whisper model downloaded successfully!', 'info');
       })
       .catch((err) => {
         downloadProgressLog.textContent += `\nError during model download: ${err}`;
@@ -2185,14 +2275,19 @@ if (isMiniMode) {
   if (ctxDeleteDeadline) {
     ctxDeleteDeadline.addEventListener('click', () => {
       if (contextMenuTargetDeadline) {
-        if (confirm(`Are you sure you want to delete this action item: "${contextMenuTargetDeadline.text}"?`)) {
-          window.api.deleteTask(contextMenuTargetDeadline.id).then(res => {
+        const task = contextMenuTargetDeadline;
+        const ask = window.TrailMixConfirm?.ask
+          ? window.TrailMixConfirm.ask(`Are you sure you want to delete this action item: "${task.text}"?`)
+          : Promise.resolve(window.confirm(`Are you sure you want to delete this action item: "${task.text}"?`));
+        ask.then((ok) => {
+          if (!ok) return;
+          window.api.deleteTask(task.id).then(res => {
             if (res.success) {
               renderCalendar();
               renderActionItems();
             }
           });
-        }
+        });
       }
       if (deadlinesContextMenu) deadlinesContextMenu.classList.add('hidden');
     });

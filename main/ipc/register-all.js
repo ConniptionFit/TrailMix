@@ -156,7 +156,12 @@ ipcMain.handle('meetings:open', async (event, sessionId, options = {}) => {
 
 ipcMain.handle('meetings:new', async () => {
   const session = createNewSession({ encryptByDefault: rt.settings.encryptByDefault });
-  await saveSessionToDbPromise(session);
+  // Defer first disk write for encrypted sessions until a password is provided.
+  if (!session.encrypted) {
+    await saveSessionToDbPromise(session);
+  } else {
+    setSession(session);
+  }
   openMeetingWindow(session.id);
   return { success: true, sessionId: session.id };
 });
@@ -586,23 +591,33 @@ ipcMain.handle('calls:save', async (event, callData, password) => {
       callData.encrypted = true;
       decryptionKeys.set(callData.id, encryptionPassword);
     }
-    
-    await saveSessionToDbPromise(callData);
+
+    const result = await saveSessionToDbPromise(callData, { password: encryptionPassword || undefined });
+    if (result?.needsPassword) {
+      return { success: false, needsPassword: true };
+    }
     if (getHubWindow()) getHubWindow().webContents.send('calls:list-updated');
-    return true;
+    return { success: true };
   } catch (err) {
     console.error(err);
-    return false;
+    return { success: false, error: err.message };
   }
 });
 
-ipcMain.handle('calls:save-silently', async (event, callData) => {
+ipcMain.handle('calls:save-silently', async (event, callData, password) => {
   try {
-    await saveSessionToDbPromise(callData);
-    return true;
+    if (password) {
+      callData.encrypted = true;
+      decryptionKeys.set(callData.id, password);
+    }
+    const result = await saveSessionToDbPromise(callData, { password: password || undefined });
+    if (result?.needsPassword) {
+      return { success: false, needsPassword: true };
+    }
+    return { success: true };
   } catch (err) {
     console.error(err);
-    return false;
+    return { success: false, error: err.message };
   }
 });
 

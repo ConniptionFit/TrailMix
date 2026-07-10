@@ -1,3 +1,4 @@
+const { IPC } = require('./lib/ipc-channels');
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
@@ -53,8 +54,8 @@ contextBridge.exposeInMainWorld('api', {
   },
 
   // Hub / meeting windows
-  createMeeting: () => ipcRenderer.invoke('meetings:new'),
-  openMeeting: (sessionId, options) => ipcRenderer.invoke('meetings:open', sessionId, options || {}),
+  createMeeting: () => ipcRenderer.invoke(IPC.MEETINGS_NEW),
+  openMeeting: (sessionId, options) => ipcRenderer.invoke(IPC.MEETINGS_OPEN, sessionId, options || {}),
   focusMeeting: (sessionId) => ipcRenderer.invoke('meetings:focus', sessionId),
   loadMeetingSession: (sessionId) => ipcRenderer.invoke('session:load-meeting', sessionId),
   setSessionTitle: (sessionId, title, userEdited = true) =>
@@ -81,16 +82,16 @@ contextBridge.exposeInMainWorld('api', {
   },
 
   // File operations & Encryption
-  getCallList: () => ipcRenderer.invoke('calls:get-list'),
-  searchSessions: (term, options) => ipcRenderer.invoke('search:sessions', term, options),
-  saveCall: (callData, password) => ipcRenderer.invoke('calls:save', callData, password),
-  loadCall: (filePath, password) => ipcRenderer.invoke('calls:load', filePath, password),
+  getCallList: () => ipcRenderer.invoke(IPC.CALLS_GET_LIST),
+  searchSessions: (term, options) => ipcRenderer.invoke(IPC.SEARCH_SESSIONS, term, options),
+  saveCall: (callData, password) => ipcRenderer.invoke(IPC.CALLS_SAVE, callData, password),
+  loadCall: (filePath, password) => ipcRenderer.invoke(IPC.CALLS_LOAD, filePath, password),
   decryptCall: (filePath, password) => ipcRenderer.invoke('calls:decrypt', filePath, password),
   decryptMultipleCalls: (sessionIds, password) => ipcRenderer.invoke('calls:decrypt-multiple', sessionIds, password),
 
   // Settings
-  getSettings: () => ipcRenderer.invoke('settings:get'),
-  saveSettings: (newSettings) => ipcRenderer.invoke('settings:save', newSettings),
+  getSettings: () => ipcRenderer.invoke(IPC.SETTINGS_GET),
+  saveSettings: (newSettings) => ipcRenderer.invoke(IPC.SETTINGS_SAVE, newSettings),
   selectDirectory: () => ipcRenderer.invoke('settings:select-directory'),
   getDefaultPrompts: () => ipcRenderer.invoke('settings:get-default-prompts'),
 
@@ -133,22 +134,22 @@ contextBridge.exposeInMainWorld('api', {
   // Chat Agent
   chatQuery: (queryOrPayload, transcriptText) => {
     if (queryOrPayload && typeof queryOrPayload === 'object') {
-      return ipcRenderer.invoke('chat:query', queryOrPayload);
+      return ipcRenderer.invoke(IPC.CHAT_QUERY, queryOrPayload);
     }
-    return ipcRenderer.invoke('chat:query', queryOrPayload, transcriptText);
+    return ipcRenderer.invoke(IPC.CHAT_QUERY, queryOrPayload, transcriptText);
   },
   getChatRecipes: () => ipcRenderer.invoke('chat:get-recipes'),
-  saveCallSilently: (callData) => ipcRenderer.invoke('calls:save-silently', callData),
+  saveCallSilently: (callData, password) => ipcRenderer.invoke(IPC.CALLS_SAVE_SILENTLY, callData, password),
   mixEnhance: (payload) => ipcRenderer.invoke('chat:mix-enhance', payload),
   onLlmStreamChunk: (callback) => {
     const subscription = (event, data) => callback(data);
     ipcRenderer.on('llm:stream-chunk', subscription);
     return () => ipcRenderer.removeListener('llm:stream-chunk', subscription);
   },
-  cancelLlmStream: (requestId) => ipcRenderer.invoke('llm:cancel', requestId),
+  cancelLlmStream: (requestId) => ipcRenderer.invoke(IPC.LLM_CANCEL, requestId),
 
-  getProcessingJobs: () => ipcRenderer.invoke('processing:get-jobs'),
-  retryProcessing: (sessionId) => ipcRenderer.invoke('processing:retry', sessionId),
+  getProcessingJobs: () => ipcRenderer.invoke(IPC.PROCESSING_GET_JOBS),
+  retryProcessing: (sessionId) => ipcRenderer.invoke(IPC.PROCESSING_RETRY, sessionId),
   onProcessingJobsUpdated: (callback) => {
     const subscription = (event, data) => callback(data);
     ipcRenderer.on('processing:jobs-updated', subscription);
@@ -158,6 +159,11 @@ contextBridge.exposeInMainWorld('api', {
     const subscription = (event, data) => callback(data);
     ipcRenderer.on('processing:transcript-updated', subscription);
     return () => ipcRenderer.removeListener('processing:transcript-updated', subscription);
+  },
+  onNeedsEncryptionPassword: (callback) => {
+    const subscription = (event, data) => callback(data);
+    ipcRenderer.on('session:needs-encryption-password', subscription);
+    return () => ipcRenderer.removeListener('session:needs-encryption-password', subscription);
   },
 
   // Folders & Obsidian Export (v0.3)

@@ -15,6 +15,8 @@
   let saveStatusTimer = null;
   let transcriptSearchMatches = [];
   let transcriptSearchIndex = -1;
+  let sessionEncryptionPassword = null;
+  let encryptPasswordResolver = null;
 
   const llmStreamBuffers = new Map();
   const llmStreamRenderTimers = new Map();
@@ -140,6 +142,84 @@
       saveStatusTimer = setTimeout(() => {
         if (editorSaveStatus.textContent === text) editorSaveStatus.textContent = '';
       }, 1800);
+    }
+  }
+
+  const encryptPasswordModal = document.getElementById('encrypt-password-modal');
+  const encryptPasswordInput = document.getElementById('encrypt-password-input');
+  const encryptPasswordConfirm = document.getElementById('encrypt-password-confirm');
+  const encryptPasswordError = document.getElementById('encrypt-password-error');
+
+  function hideEncryptPasswordModal() {
+    encryptPasswordModal?.classList.add('hidden');
+    if (encryptPasswordInput) encryptPasswordInput.value = '';
+    if (encryptPasswordConfirm) encryptPasswordConfirm.value = '';
+    encryptPasswordError?.classList.add('hidden');
+  }
+
+  function ensureEncryptionPassword() {
+    if (!activeSession?.encrypted) return Promise.resolve(null);
+    if (sessionEncryptionPassword) return Promise.resolve(sessionEncryptionPassword);
+    return new Promise((resolve) => {
+      encryptPasswordResolver = resolve;
+      encryptPasswordModal?.classList.remove('hidden');
+      encryptPasswordInput?.focus();
+    });
+  }
+
+  document.getElementById('btn-encrypt-password-cancel')?.addEventListener('click', () => {
+    hideEncryptPasswordModal();
+    if (encryptPasswordResolver) {
+      encryptPasswordResolver(null);
+      encryptPasswordResolver = null;
+    }
+  });
+
+  document.getElementById('btn-encrypt-password-submit')?.addEventListener('click', () => {
+    const pw = encryptPasswordInput?.value || '';
+    const confirm = encryptPasswordConfirm?.value || '';
+    if (pw.length < 4 || pw !== confirm) {
+      encryptPasswordError?.classList.remove('hidden');
+      return;
+    }
+    sessionEncryptionPassword = pw;
+    hideEncryptPasswordModal();
+    if (encryptPasswordResolver) {
+      encryptPasswordResolver(pw);
+      encryptPasswordResolver = null;
+    }
+  });
+
+  async function persistSession(options = {}) {
+    if (!activeSession) return false;
+    let password = sessionEncryptionPassword;
+    if (activeSession.encrypted && !password) {
+      password = await ensureEncryptionPassword();
+      if (!password) {
+        setSaveStatus('Encryption password required');
+        return false;
+      }
+      sessionEncryptionPassword = password;
+    }
+    setSaveStatus('Saving…');
+    try {
+      const result = activeSession.encrypted
+        ? await window.api.saveCall(activeSession, password)
+        : await window.api.saveCallSilently(activeSession, password || undefined);
+      if (result?.needsPassword) {
+        sessionEncryptionPassword = null;
+        setSaveStatus('Encryption password required');
+        return false;
+      }
+      if (result === false || result?.success === false) {
+        setSaveStatus('Save failed');
+        return false;
+      }
+      setSaveStatus('Saved');
+      return true;
+    } catch (err) {
+      setSaveStatus('Save failed');
+      return false;
     }
   }
 
@@ -290,7 +370,7 @@
     if (!activeSession || !jotEditor) return;
     const currentDocument = jotEditor.getDocument();
     if (!currentDocument.plainText.trim()) {
-      alert('Add some Mix-Ins before running Mix notes.');
+      (window.TrailMixToast ? window.TrailMixToast.show('Add some Mix-Ins before running Mix notes.', { type: 'info' }) : alert('Add some Mix-Ins before running Mix notes.'));
       return;
     }
     syncSessionFromEditorDocument(activeSession, currentDocument);
@@ -308,10 +388,10 @@
       activeSession.enhancedNotes = result.enhancedNotes;
       jotEditor.applyEnhancedDocument(result.editorDocument);
       editorLegend.classList.remove('hidden');
-      await window.api.saveCall(activeSession);
-      setSaveStatus('Saved');
+      await persistSession();
     } catch (err) {
-      alert(err.message);
+      if (window.TrailMixToast) window.TrailMixToast.show(err.message, { type: 'error' });
+      else alert(err.message);
     } finally {
       jotEditor.setEnhancing(false);
       btnMixEnhance.disabled = false;
@@ -323,12 +403,7 @@
       onChange: (document) => {
         if (!activeSession) return;
         syncSessionFromEditorDocument(activeSession, document);
-        setSaveStatus('Saving…');
-        Promise.resolve(window.api.saveCallSilently(activeSession))
-          .then((ok) => {
-            setSaveStatus(ok === false ? 'Save failed' : 'Saved');
-          })
-          .catch(() => setSaveStatus('Save failed'));
+        void persistSession();
       },
       onTraceTranscript: (ref) => {
         if (!ref?.segmentId) return;
@@ -391,7 +466,7 @@
       return;
     }
     if (result?.requirePassword) {
-      alert('Unlock this Trail with your password before resuming.');
+      (window.TrailMixToast ? window.TrailMixToast.show('Unlock this Trail with your password before resuming.', { type: 'info' }) : alert('Unlock this Trail with your password before resuming.'));
       return;
     }
     if (!result?.success) {
@@ -802,13 +877,14 @@
       e.preventDefault();
       if (activeSession && jotEditor) {
         syncSessionFromEditorDocument(activeSession, jotEditor.getDocument());
-        setSaveStatus('Saving…');
-        Promise.resolve(window.api.saveCallSilently(activeSession))
-          .then((ok) => setSaveStatus(ok === false ? 'Save failed' : 'Saved'))
-          .catch(() => setSaveStatus('Save failed'));
+        void persistSession();
       }
     }
     if (e.key === 'Escape') {
+      if (encryptPasswordModal && !encryptPasswordModal.classList.contains('hidden')) {
+        document.getElementById('btn-encrypt-password-cancel')?.click();
+        return;
+      }
       if (transcriptSearchBar && !transcriptSearchBar.classList.contains('hidden')) {
         closeTranscriptSearch();
         return;
@@ -846,6 +922,12 @@
     return true;
   }
 
+  window.api.onNeedsEncryptionPassword?.(() => {
+    void ensureEncryptionPassword().then((pw) => {
+      if (pw) void persistSession();
+    });
+  });
+
   window.api.onFocusSegment?.((payload) => {
     focusTranscriptSegment(payload?.segmentId);
   });
@@ -854,7 +936,7 @@
   window.api.loadMeetingSession(sessionId).then((session) => {
     if (!session) {
       if (window.TrailMixToast) window.TrailMixToast.show('Could not load this meeting session.', { type: 'error' });
-      else alert('Could not load this meeting session.');
+      else (window.TrailMixToast ? window.TrailMixToast.show('Could not load this meeting session.', { type: 'error' }) : alert('Could not load this meeting session.'));
       return;
     }
     activeSession = session;
@@ -864,6 +946,9 @@
     updateIdleRecordButton();
     if (focusSegmentId) {
       setTimeout(() => focusTranscriptSegment(focusSegmentId), 120);
+    }
+    if (session.encrypted && !sessionEncryptionPassword) {
+      void ensureEncryptionPassword();
     }
     window.api.getRecordingStatus().then((status) => {
       if (status?.sessionId === sessionId && (status.isRecording || status.isPaused)) {

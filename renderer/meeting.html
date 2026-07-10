@@ -128,6 +128,20 @@
     </div>
   </div>
 
+  <div id="encrypt-password-modal" class="modal hidden">
+    <div class="modal-content glassmorphic">
+      <h2>Set encryption password</h2>
+      <p>This meeting is marked for encryption. Choose a password to protect it. The password stays in memory for this app session only.</p>
+      <input type="password" id="encrypt-password-input" class="input-text" placeholder="Encryption password" autocomplete="new-password">
+      <input type="password" id="encrypt-password-confirm" class="input-text" placeholder="Confirm password" autocomplete="new-password" style="margin-top:8px;">
+      <p id="encrypt-password-error" class="modal-error hidden">Passwords must match and be at least 4 characters.</p>
+      <div class="modal-actions">
+        <button id="btn-encrypt-password-cancel" class="btn-secondary" type="button">Cancel</button>
+        <button id="btn-encrypt-password-submit" class="btn-primary" type="button">Save encrypted</button>
+      </div>
+    </div>
+  </div>
+
   <script src="shared/ipc-client.js"></script>
   <script src="shared/toast.js"></script>
   <script src="EditorComponent.js"></script>

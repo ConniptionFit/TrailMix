@@ -12,23 +12,19 @@ const { applyAecToWavBuffers, isMicDominatedBySystemEcho } = require('../lib/aud
 const { resolveWhisperCli } = require('../lib/resolve-whisper-cli');
 
 async function splitStereoChannels(chunkWavPath, leftWavPath, rightWavPath) {
+  // Single ffmpeg invocation for both channel extracts.
   await execFileAsync('ffmpeg', [
     '-y', '-i', chunkWavPath,
-    '-af', 'pan=mono|c0=c0',
-    leftWavPath
-  ]);
-
-  await execFileAsync('ffmpeg', [
-    '-y', '-i', chunkWavPath,
-    '-af', 'pan=mono|c0=c1',
-    rightWavPath
+    '-filter_complex', '[0:a]pan=mono|c0=c0[left];[0:a]pan=mono|c0=c1[right]',
+    '-map', '[left]', leftWavPath,
+    '-map', '[right]', rightWavPath
   ]);
 }
 
 async function transcribeMonoFile(monoWavPath, speakerName, whisperCli, whisperModel) {
   const outputBase = monoWavPath.replace('.wav', '_trans');
   const jsonPath = `${outputBase}.json`;
-  const threads = Math.min(8, Math.max(4, os.cpus().length - 2));
+  const threads = Math.min(4, Math.max(2, Math.floor((os.cpus().length - 1) / 2) || 2));
 
   await execFileAsync(whisperCli, [
     '-m', whisperModel,
@@ -76,11 +72,10 @@ async function transcribeMonoFile(monoWavPath, speakerName, whisperCli, whisperM
   }
 }
 
-async function applyAppLevelAec(leftWavPath, rightWavPath) {
-  const leftBuffer = await fs.promises.readFile(leftWavPath);
-  const rightBuffer = await fs.promises.readFile(rightWavPath);
+async function applyAppLevelAec(leftWavPath, rightWavPath, leftBuffer, rightBuffer) {
   const cleaned = applyAecToWavBuffers(leftBuffer, rightBuffer);
   await fs.promises.writeFile(rightWavPath, cleaned);
+  return cleaned;
 }
 
 function normalizeTranscriptText(text) {
@@ -117,17 +112,12 @@ function dedupeEchoSegments(segments) {
   return kept.sort((a, b) => a.fromMs - b.fromMs);
 }
 
-async function shouldTranscribeMicChannel(leftWavPath, rightWavPath, aecMode) {
+async function shouldTranscribeMicChannel(leftBuffer, rightBuffer, rightWavPath, aecMode) {
   if (aecMode === 'off') return true;
-
-  const leftBuffer = await fs.promises.readFile(leftWavPath);
-  const rightBuffer = await fs.promises.readFile(rightWavPath);
   if (isMicDominatedBySystemEcho(leftBuffer, rightBuffer)) {
     return false;
   }
-
-  const hasRightVoice = await checkVoiceActivity(rightWavPath);
-  return hasRightVoice;
+  return checkVoiceActivity(rightWavPath);
 }
 
 async function processChunk(job) {
@@ -161,9 +151,21 @@ async function processChunk(job) {
     throw new Error(`Ffmpeg channel splitting failed: ${err.message}`);
   }
 
+  let leftBuffer = null;
+  let rightBuffer = null;
+  try {
+    leftBuffer = await fs.promises.readFile(leftWavPath);
+    rightBuffer = await fs.promises.readFile(rightWavPath);
+  } catch (err) {
+    await secureShredFile(chunkPath);
+    await secureShredFile(leftWavPath);
+    await secureShredFile(rightWavPath);
+    throw err;
+  }
+
   if (aecMode === 'app' || aecMode === 'guard') {
     try {
-      await applyAppLevelAec(leftWavPath, rightWavPath);
+      rightBuffer = await applyAppLevelAec(leftWavPath, rightWavPath, leftBuffer, rightBuffer);
     } catch (err) {
       console.error(`App-level AEC failed for chunk ${chunkIndex}`, err);
     }
@@ -180,38 +182,40 @@ async function processChunk(job) {
     return [];
   }
 
-  const allSegments = [];
-
-  if (hasLeftVoice) {
-    try {
-      const leftSegments = await transcribeMonoFile(leftWavPath, 'Speaker 1', whisperCli, whisperModel);
-      allSegments.push(...leftSegments);
-    } catch (err) {
-      console.error('Whisper execution failed for Speaker 1', err);
+  if (hasRightVoice && hasLeftVoice && aecMode !== 'off') {
+    hasRightVoice = await shouldTranscribeMicChannel(leftBuffer, rightBuffer, rightWavPath, aecMode);
+    if (!hasRightVoice) {
+      console.log(`Bleed gate: Chunk ${chunkIndex} mic channel dominated by system echo. Skipping You.`);
     }
+  }
+
+  const whisperTasks = [];
+  if (hasLeftVoice) {
+    whisperTasks.push(
+      transcribeMonoFile(leftWavPath, 'Speaker 1', whisperCli, whisperModel)
+        .catch((err) => {
+          console.error('Whisper execution failed for Speaker 1', err);
+          return [];
+        })
+    );
   } else {
     await secureShredFile(leftWavPath);
   }
 
   if (hasRightVoice) {
-    if (hasLeftVoice && aecMode !== 'off') {
-      hasRightVoice = await shouldTranscribeMicChannel(leftWavPath, rightWavPath, aecMode);
-      if (!hasRightVoice) {
-        console.log(`Bleed gate: Chunk ${chunkIndex} mic channel dominated by system echo. Skipping You.`);
-      }
-    }
-  }
-
-  if (hasRightVoice) {
-    try {
-      const rightSegments = await transcribeMonoFile(rightWavPath, 'You', whisperCli, whisperModel);
-      allSegments.push(...rightSegments);
-    } catch (err) {
-      console.error('Whisper execution failed for You', err);
-    }
+    whisperTasks.push(
+      transcribeMonoFile(rightWavPath, 'You', whisperCli, whisperModel)
+        .catch((err) => {
+          console.error('Whisper execution failed for You', err);
+          return [];
+        })
+    );
   } else {
     await secureShredFile(rightWavPath);
   }
+
+  const segmentGroups = await Promise.all(whisperTasks);
+  const allSegments = segmentGroups.flat();
 
   const dedupedSegments = allSegments.some((segment) => segment.speaker === 'You')
     && allSegments.some((segment) => segment.speaker !== 'You')
