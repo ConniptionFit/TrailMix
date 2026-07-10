@@ -1,19 +1,13 @@
-/** @module chat — Mix-Master AI chat and enhance */
+const { IPC } = require('../../lib/ipc-channels');
+
 module.exports = {
   id: 'chat',
   version: '1.0.0',
-  dependencies: ['sessions'],
   channels: [
-    'chat:query',
-    'chat:get-recipes',
-    'chat:mix-enhance',
-    'llm:stream-chunk',
-    'llm:cancel'
-  ],
-  register(ctx) {
-    ctx.chat = {
-      recipes: ctx.runtime.CHAT_RECIPES,
-      buildRecipe: ctx.runtime.buildRecipePrompt
-    };
-  }
+    IPC.CHAT_QUERY,
+    IPC.CHAT_GET_RECIPES,
+    IPC.CHAT_MIX_ENHANCE,
+    IPC.LLM_STREAM_CHUNK,
+    IPC.LLM_CANCEL
+  ]
 };

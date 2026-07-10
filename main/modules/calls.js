@@ -1,31 +1,25 @@
-/** @module calls — archive, encryption, import/export */
+const { IPC } = require('../../lib/ipc-channels');
+
 module.exports = {
   id: 'calls',
   version: '1.0.0',
-  dependencies: ['sessions', 'folders'],
   channels: [
-    'calls:get-list',
-    'calls:save',
-    'calls:save-silently',
-    'calls:load',
-    'calls:decrypt',
-    'calls:decrypt-multiple',
-    'calls:delete',
-    'calls:delete-multiple',
-    'calls:merge',
-    'calls:export',
-    'calls:export-obsidian',
-    'calls:find-related',
-    'calls:open-file-location',
-    'calls:resume-transcription',
-    'calls:move-to-folder',
-    'calls:list-updated',
-    'calls:session-summary-ready'
-  ],
-  register(ctx) {
-    ctx.calls = {
-      sync: ctx.runtime.syncDatabaseWithFiles,
-      getDir: ctx.runtime.getCallsDir
-    };
-  }
+    IPC.CALLS_GET_LIST,
+    IPC.CALLS_SAVE,
+    IPC.CALLS_SAVE_SILENTLY,
+    IPC.CALLS_LOAD,
+    IPC.CALLS_DECRYPT,
+    IPC.CALLS_DECRYPT_MULTIPLE,
+    IPC.CALLS_DELETE,
+    IPC.CALLS_DELETE_MULTIPLE,
+    IPC.CALLS_MERGE,
+    IPC.CALLS_EXPORT,
+    IPC.CALLS_EXPORT_OBSIDIAN,
+    IPC.CALLS_FIND_RELATED,
+    IPC.CALLS_OPEN_FILE_LOCATION,
+    IPC.CALLS_RESUME_TRANSCRIPTION,
+    IPC.CALLS_MOVE_TO_FOLDER,
+    IPC.CALLS_LIST_UPDATED,
+    IPC.CALLS_SESSION_SUMMARY_READY
+  ]
 };

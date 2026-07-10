@@ -1,19 +1,13 @@
-/** @module tasks — global action items */
+const { IPC } = require('../../lib/ipc-channels');
+
 module.exports = {
   id: 'tasks',
   version: '1.0.0',
   channels: [
-    'tasks:get',
-    'tasks:toggle',
-    'tasks:delete',
-    'tasks:set-omitted',
-    'tasks:delete-multiple'
-  ],
-  register(ctx) {
-    ctx.tasks = {
-      list: ctx.runtime.getTasksListFromDb,
-      save: ctx.runtime.saveTaskToDb,
-      extract: ctx.runtime.extractTasksFromActionItems
-    };
-  }
+    IPC.TASKS_GET,
+    IPC.TASKS_TOGGLE,
+    IPC.TASKS_DELETE,
+    IPC.TASKS_SET_OMITTED,
+    IPC.TASKS_DELETE_MULTIPLE
+  ]
 };

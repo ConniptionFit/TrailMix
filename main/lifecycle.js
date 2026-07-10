@@ -8,7 +8,6 @@ function registerLifecycle(rt, ctx) {
     createHubWindow,
     initDatabase,
     migrateOldData,
-    syncFilesystemFoldersToDb,
     sessionProcessingService,
     updateService,
     setupTray,
@@ -26,8 +25,8 @@ function registerLifecycle(rt, ctx) {
   app.whenReady().then(async () => {
     cleanupStaleLoopbackModules();
     await initDatabase();
+    // migrateOldData already syncs filesystem folders + DB with trail files
     await migrateOldData();
-    await syncFilesystemFoldersToDb();
     await sessionProcessingService.initSchema();
     await sessionProcessingService.recoverInterruptedJobs();
     createHubWindow();
@@ -49,9 +48,7 @@ function registerLifecycle(rt, ctx) {
     watchCallsDirectory();
     broadcastProcessingProgress();
 
-    if (ctx?.registry) {
-      await ctx.registry.runOnReady(rt);
-    }
+    await ctx.registry.runOnReady(ctx);
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createHubWindow();
@@ -59,9 +56,7 @@ function registerLifecycle(rt, ctx) {
   });
 
   app.on('before-quit', () => {
-    if (ctx?.registry) {
-      ctx.registry.runOnBeforeQuit(rt);
-    }
+    ctx.registry.runOnBeforeQuit(ctx);
     transcriptionService.shutdown();
     audioCaptureService.stopFfmpeg().catch(() => {});
   });

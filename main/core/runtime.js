@@ -337,7 +337,9 @@ function watchCallsDirectory() {
   try {
     callsDirWatcher = fs.watch(targetDir, (eventType, filename) => {
       if (filename && filename.endsWith('.trail')) {
-        console.log(`Directory change detected: ${eventType} on ${filename}`);
+        if (process.env.TRAILMIX_DEBUG) {
+          console.log(`Directory change detected: ${eventType} on ${filename}`);
+        }
         if (getHubWindow()) {
           getHubWindow().webContents.send('calls:list-updated');
         }

@@ -5,13 +5,26 @@ All notable changes to TrailMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **Simplified modular main layer** — domain modules are channel metadata only (no unused facades); `AppContext` slimmed to `{ runtime, registry }`; modules import channel names from `lib/ipc-channels.js`
+- **Boot path** — drop duplicate folder sync and processing progress broadcast; pass real `AppContext` into module lifecycle hooks
+- **`calls:get-list`** — no longer re-runs full `migrateOldData` on every list fetch (boot already migrates)
+
+### Removed
+- Unused `renderer/shared/ipc-client.js` wrapper (renderer continues to use `window.api` from preload)
+- Unused `ModuleRegistry.registerAllIpc` until IPC is actually split per module
+- One-time `scripts/split-main.js` migrator archived to `legacy/split-main.v0.5-migration.js`
+
+---
+
 ## [0.5.0] - 2026-06-15
 
 ### Added
 - **Modular main process architecture** — `main/` directory with `ModuleRegistry`, `AppContext`, and 13 domain modules (audio, sessions, meetings, calls, chat, tasks, folders, processing, updates, models, windows, workflow)
-- **Plugin-style module API** — `register`, `registerIpc`, `onReady`, `onBeforeQuit` hooks for expandable functionality (`docs/MODULES.md`)
-- **IPC channel registry** — complete `lib/ipc-channels.js` contract covering all main ↔ renderer channels
-- **Renderer IPC client** — `renderer/shared/ipc-client.js` typed wrapper over `window.api`
+- **Plugin-style module API** — optional `register`, `onReady`, `onBeforeQuit` hooks for expandable functionality (`docs/MODULES.md`)
+- **IPC channel registry** — `lib/ipc-channels.js` constants shared by domain module metadata
 - **Legacy recovery** — git tag `v0.4.0`, branch `legacy/v0.4.0`, and `legacy/main.v0.4.0.js` snapshot
 - **electron-builder AppImage** — Linux packaging config with whisper.cpp extraResources
 

@@ -1,27 +1,19 @@
-/** @module audio — capture, transcription stream, recording controls */
+const { IPC } = require('../../lib/ipc-channels');
+
 module.exports = {
   id: 'audio',
   version: '1.0.0',
   channels: [
-    'audio:get-devices',
-    'audio:start-recording',
-    'audio:stop-recording',
-    'audio:pause-recording',
-    'audio:resume-recording',
-    'audio:get-recording-status',
-    'audio:on-transcription-update',
-    'audio:on-transcription-correction',
-    'audio:on-recording-status',
-    'audio:on-levels',
-    'audio:on-speaker-labels-updated'
-  ],
-  register(ctx) {
-    ctx.recording = {
-      start: ctx.runtime.startRecordingHandler,
-      stop: ctx.runtime.stopRecordingHandler,
-      pause: ctx.runtime.pauseRecordingHandler,
-      resume: ctx.runtime.resumeCallTranscriptionHandler,
-      getDevices: ctx.runtime.queryAudioDevices
-    };
-  }
+    IPC.AUDIO_GET_DEVICES,
+    IPC.AUDIO_START_RECORDING,
+    IPC.AUDIO_STOP_RECORDING,
+    IPC.AUDIO_PAUSE_RECORDING,
+    IPC.AUDIO_RESUME_RECORDING,
+    IPC.AUDIO_GET_RECORDING_STATUS,
+    IPC.AUDIO_ON_TRANSCRIPTION_UPDATE,
+    IPC.AUDIO_ON_TRANSCRIPTION_CORRECTION,
+    IPC.AUDIO_ON_RECORDING_STATUS,
+    IPC.AUDIO_ON_LEVELS,
+    IPC.AUDIO_ON_SPEAKER_LABELS
+  ]
 };

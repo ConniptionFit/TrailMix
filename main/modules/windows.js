@@ -1,18 +1,11 @@
-/** @module windows — Hub, Meeting, Mini window management */
+const { IPC } = require('../../lib/ipc-channels');
+
 module.exports = {
   id: 'windows',
   version: '1.0.0',
   channels: [
-    'app:minimize',
-    'app:relaunch',
-    'app:get-version'
-  ],
-  register(ctx) {
-    ctx.windows = {
-      createHub: ctx.runtime.createHubWindow,
-      openMeeting: ctx.runtime.openMeetingWindow,
-      getHub: ctx.runtime.getHubWindow,
-      setupTray: ctx.runtime.setupTray
-    };
-  }
+    IPC.APP_MINIMIZE,
+    IPC.APP_RELAUNCH,
+    IPC.APP_GET_VERSION
+  ]
 };

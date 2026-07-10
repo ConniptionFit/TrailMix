@@ -15,7 +15,7 @@ function registerIpcHandlers(rt) {
     getHardwareSpecs, runSessionEnrichment, extractTasksFromActionItems,
     CHAT_RECIPES, buildRecipePrompt, llmService, sessionProcessingService,
     updateService, normalizeFolderIdForSave, getTasksListFromDb, saveTaskToDb,
-    upsertSessionFromTrailFile, ensureFolderRecord, parseDeadlineDate,
+    ensureFolderRecord, parseDeadlineDate,
     appEventBus, ROOT_FOLDER_ID, UNCATEGORIZED_FOLDER_ID,
     scanStorageLayout, ensureFolderDir, moveSessionFile, moveStorageContents,
     resolveSessionFilePath, relativePathFromFolderId, secureShredFile,
@@ -427,7 +427,7 @@ ipcMain.handle('calls:decrypt-multiple', async (event, sessionIds, password) => 
 
 ipcMain.handle('calls:get-list', async () => {
   try {
-    await migrateOldData();
+    // Boot already ran migrateOldData; only re-sync FS ↔ DB for list freshness
     await syncDatabaseWithFiles();
     const processingJobs = await sessionProcessingService.getJobMap();
     const rows = await dbAll("SELECT * FROM sessions ORDER BY mtimeMs DESC");

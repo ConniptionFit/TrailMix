@@ -1,9 +1,10 @@
-/** @module workflow — event bus webhook triggers */
+const { IPC } = require('../../lib/ipc-channels');
+
 module.exports = {
   id: 'workflow',
   version: '1.0.0',
   channels: [
-    'workflow:register-trigger',
-    'workflow:emit'
+    IPC.WORKFLOW_REGISTER,
+    IPC.WORKFLOW_EMIT
   ]
 };

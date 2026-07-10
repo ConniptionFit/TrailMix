@@ -1,20 +1,11 @@
-/** @module processing — multi-pass transcription pipeline + breadcrumbs */
+const { IPC } = require('../../lib/ipc-channels');
+
 module.exports = {
   id: 'processing',
   version: '1.0.0',
-  dependencies: ['sessions'],
   channels: [
-    'processing:get-jobs',
-    'processing:retry',
-    'processing:jobs-updated'
-  ],
-  register(ctx) {
-    ctx.processing = {
-      service: ctx.runtime.sessionProcessingService,
-      enrich: ctx.runtime.runSessionEnrichment
-    };
-  },
-  onReady(ctx) {
-    ctx.runtime.broadcastProcessingProgress();
-  }
+    IPC.PROCESSING_GET_JOBS,
+    IPC.PROCESSING_RETRY,
+    IPC.PROCESSING_JOBS_UPDATED
+  ]
 };

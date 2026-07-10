@@ -1,18 +1,12 @@
-/** @module settings — Nuts and Bolts configuration */
+const { IPC } = require('../../lib/ipc-channels');
+
 module.exports = {
   id: 'settings',
   version: '1.0.0',
   channels: [
-    'settings:get',
-    'settings:save',
-    'settings:get-default-prompts',
-    'settings:select-directory'
-  ],
-  register(ctx) {
-    ctx.settingsApi = {
-      get: () => ctx.runtime.settings,
-      save: ctx.runtime.saveSettings,
-      defaults: ctx.runtime.DEFAULT_PROMPTS
-    };
-  }
+    IPC.SETTINGS_GET,
+    IPC.SETTINGS_SAVE,
+    IPC.SETTINGS_GET_DEFAULT_PROMPTS,
+    IPC.SETTINGS_SELECT_DIRECTORY
+  ]
 };

@@ -3,18 +3,18 @@
  *
  * Modules export:
  *   id: string
- *   version: string
- *   channels?: string[]       — IPC channels owned by this module
+ *   version?: string
+ *   channels?: string[]       — IPC channels owned by this module (metadata)
  *   dependencies?: string[]   — other module ids required first
- *   register(ctx)            — called before IPC wiring (optional)
- *   registerIpc?(ctx)         — register IPC handlers (optional, future split)
- *   onReady?(ctx)             — called after app.whenReady init (optional)
- *   onBeforeQuit?(ctx)        — cleanup hook (optional)
+ *   register?(ctx)            — called before IPC wiring
+ *   onReady?(ctx)             — called after app.whenReady init
+ *   onBeforeQuit?(ctx)        — cleanup hook
  */
 class ModuleRegistry {
   constructor() {
     this.modules = new Map();
     this.order = [];
+    this._resolved = null;
   }
 
   register(mod) {
@@ -25,9 +25,12 @@ class ModuleRegistry {
     }
     this.modules.set(mod.id, mod);
     this.order.push(mod.id);
+    this._resolved = null;
   }
 
   resolveOrder() {
+    if (this._resolved) return this._resolved;
+
     const resolved = [];
     const visiting = new Set();
     const visited = new Set();
@@ -49,21 +52,14 @@ class ModuleRegistry {
     };
 
     for (const id of this.order) visit(id);
-    return resolved.map((id) => this.modules.get(id));
+    this._resolved = resolved.map((id) => this.modules.get(id));
+    return this._resolved;
   }
 
   registerAll(ctx) {
     for (const mod of this.resolveOrder()) {
       if (typeof mod.register === 'function') {
         mod.register(ctx);
-      }
-    }
-  }
-
-  registerAllIpc(ctx) {
-    for (const mod of this.resolveOrder()) {
-      if (typeof mod.registerIpc === 'function') {
-        mod.registerIpc(ctx);
       }
     }
   }
