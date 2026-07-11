@@ -220,6 +220,8 @@ function broadcastProcessingProgress() {
   sessionProcessingService.getJobMap().then((jobs) => {
     const hub = getHubWindow();
     if (hub) hub.webContents.send(IPC.PROCESSING_JOBS_UPDATED, jobs);
+  }).catch((err) => {
+    console.error('Failed to broadcast processing progress:', err.message);
   });
 }
 

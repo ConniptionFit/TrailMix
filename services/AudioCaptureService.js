@@ -176,9 +176,11 @@ class AudioCaptureService {
     if (!fs.existsSync(this.tempDir)) return;
 
     const files = await fs.promises.readdir(this.tempDir);
+    // Numeric sort: ffmpeg's %03d grows to 4 digits past chunk 999 (~33 min at
+    // 2s segments), where lexicographic order would stop tracking the latest chunk.
     const wavChunks = files
       .filter((file) => this.isChunkCandidate(file))
-      .sort();
+      .sort((a, b) => parseInt(a.match(/\d+/)[0], 10) - parseInt(b.match(/\d+/)[0], 10));
 
     if (wavChunks.length === 0) return;
 
@@ -218,7 +220,11 @@ class AudioCaptureService {
     if (!fs.existsSync(this.tempDir)) return [];
 
     const files = await fs.promises.readdir(this.tempDir);
-    const wavChunks = files.filter((file) => this.isChunkCandidate(file)).sort();
+    // Numeric sort (see pollAudioLevels): keeps the still-being-written newest
+    // chunk in last position so slice(0, -1) protects it past chunk 999.
+    const wavChunks = files
+      .filter((file) => this.isChunkCandidate(file))
+      .sort((a, b) => parseInt(a.match(/\d+/)[0], 10) - parseInt(b.match(/\d+/)[0], 10));
     const readyChunks = includeLastChunk ? wavChunks : wavChunks.slice(0, -1);
     const newlyReady = [];
 

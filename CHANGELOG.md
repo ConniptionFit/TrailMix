@@ -5,9 +5,14 @@ All notable changes to TrailMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.1] - 2026-07-10
 
 ### Fixed
+- **Preload crash broke every window** — `preload.js` requires `./lib/ipc-channels`, but Electron sandboxes preloads by default and sandboxed preloads can only require built-ins; `window.api` was never exposed and no renderer could reach the main process. Windows now set `sandbox: false` (context isolation and nodeIntegration protections unchanged).
+- **Processing module boot crash (BUG-02)** — `main/lifecycle.js` passed the runtime instead of the AppContext to `runOnReady`/`runOnBeforeQuit`, so `ctx.runtime.broadcastProcessingProgress()` dereferenced `undefined` on every boot (visible as an UnhandledPromiseRejectionWarning). Module hooks now receive the AppContext per the ModuleRegistry contract, and `broadcastProcessingProgress` gained a `.catch`.
+- **Long-recording chunk handling** — chunk files were sorted lexicographically in both `pollForCompletedChunks` and `pollAudioLevels`; past chunk 999 (~33 minutes at 2s segments) `chunk_1000.wav` sorts before `chunk_999.wav`, defeating the still-being-written-chunk guard and freezing level metering on a stale chunk. Both paths now sort numerically.
+- **Latent TDZ crash removed (BUG-04)** — deleted the now-unused `clearChatHistory()`, which assigned `messageCounter` ~170 lines before its `let` declaration and would throw "Cannot access before initialization" if ever called during init (it did exactly that in v0.5.0, killing hub startup).
+- **Dead hub DOM references (BUG-03 remainder)** — removed the leftover move-to-folder dropdown, single-note Obsidian export button, live-trail drawer toggles, and chat sidebar toggle wiring; none of those elements exist in `index.html`.
 - Restored IPC runtime bindings broken in the v0.5 modular split (chat streaming, Mix enhance, Whisper download, open file location)
 - Meeting live transcript now applies coalesced `merged` segment updates instead of duplicating bubbles
 - Speaker label mapping in the meeting window uses turn-index keys correctly

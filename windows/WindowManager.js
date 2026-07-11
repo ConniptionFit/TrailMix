@@ -24,7 +24,11 @@ class WindowManager {
       webPreferences: {
         preload: this.preloadPath,
         contextIsolation: true,
-        nodeIntegration: false
+        nodeIntegration: false,
+        // preload.js requires ./lib/ipc-channels — sandboxed preloads can only
+        // require Electron built-ins, so the sandbox must stay off or window.api
+        // never gets exposed and every renderer breaks.
+        sandbox: false
       }
     });
 
@@ -64,6 +68,7 @@ class WindowManager {
         preload: this.preloadPath,
         contextIsolation: true,
         nodeIntegration: false,
+        sandbox: false,
         additionalArguments: [`sessionId=${sessionId}`]
       }
     });
@@ -150,7 +155,8 @@ class WindowManager {
       webPreferences: {
         preload: this.preloadPath,
         contextIsolation: true,
-        nodeIntegration: false
+        nodeIntegration: false,
+        sandbox: false
       }
     });
 

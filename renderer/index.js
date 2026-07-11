@@ -1261,42 +1261,6 @@ if (isMiniMode) {
 
         folderList.appendChild(item);
       });
-      
-      // Update the Move-To dropdown inside the active call view
-      updateMoveFolderDropdown(folders);
-    });
-  }
-
-  function updateMoveFolderDropdown(folders) {
-    const dropdown = document.getElementById('select-move-folder');
-    if (!dropdown) return;
-    dropdown.innerHTML = '<option value="">📁 Move to Folder...</option>';
-    
-    folders.forEach(f => {
-      const opt = document.createElement('option');
-      opt.value = f.id;
-      opt.textContent = f.name;
-      if (activeSession && activeSession.folder_id === f.id) {
-        opt.selected = true;
-      }
-      dropdown.appendChild(opt);
-    });
-  }
-
-  // Bind dropdown movement change
-  const selectMoveFolder = document.getElementById('select-move-folder');
-  if (selectMoveFolder) {
-    selectMoveFolder.addEventListener('change', () => {
-      if (!activeSession || activeSession.id === 'live') return;
-      const folderId = selectMoveFolder.value;
-      window.api.moveToFolder(activeSession.id, folderId || null).then(res => {
-        if (res.success) {
-          activeSession.folder_id = folderId || null;
-          loadHistoryList();
-        } else {
-          showToast('Error moving note: ' + res.error, 'error');
-        }
-      });
     });
   }
 
@@ -1367,43 +1331,6 @@ if (isMiniMode) {
     btnAddFolder.addEventListener('click', () => openFolderModal({ mode: 'create' }));
   }
 
-  // Single note Obsidian export
-  const btnExportObsidianNote = document.getElementById('btn-export-obsidian-note');
-  if (btnExportObsidianNote) {
-    btnExportObsidianNote.addEventListener('click', () => {
-      if (!activeSession || activeSession.id === 'live') {
-        showToast("Please select a saved call session first.", 'info');
-        return;
-      }
-      window.api.selectDirectory().then(dir => {
-        if (dir) {
-          window.api.exportObsidian(activeSession.id, dir).then(res => {
-            if (res.success) {
-              showToast("Successfully exported note to your Obsidian vault!", 'info');
-            } else {
-              showToast('Failed to export: ' + res.error, 'error');
-            }
-          });
-        }
-      });
-    });
-  }
-
-  // Collapsible Live Trail drawer toggle
-  const btnToggleLiveTrail = document.getElementById('btn-toggle-live-trail');
-  const btnCloseLiveTrail = document.getElementById('btn-close-live-trail');
-  const liveTrailDrawer = document.getElementById('live-trail-drawer');
-
-  if (btnToggleLiveTrail && liveTrailDrawer) {
-    btnToggleLiveTrail.addEventListener('click', () => {
-      liveTrailDrawer.classList.toggle('hidden');
-    });
-  }
-  if (btnCloseLiveTrail && liveTrailDrawer) {
-    btnCloseLiveTrail.addEventListener('click', () => {
-      liveTrailDrawer.classList.add('hidden');
-    });
-  }
   // Initial load
   renderFolders();
   loadHistoryList();
@@ -2007,7 +1934,6 @@ if (isMiniMode) {
   // ----------------------------------------------------
   const chatAgentWidget = document.getElementById('chat-agent-widget');
   const btnChatToggle = document.getElementById('btn-chat-toggle');
-  const btnChatSidebarToggle = document.getElementById('btn-chat-sidebar-toggle');
   const chatHeader = document.getElementById('chat-header');
   const chatMessages = document.getElementById('chat-messages');
   const inputChatQuery = document.getElementById('input-chat-query');
@@ -2017,27 +1943,13 @@ if (isMiniMode) {
   const inputGlobalAsk = document.getElementById('input-global-ask');
   const btnGlobalAskOpen = document.getElementById('btn-global-ask-open');
 
-  const CHAT_WELCOME_HTML = `
-    <div class="msg system">
-      Hi! I'm Mix-Master, your offline meeting AI. Ask questions or use a recipe above to analyze your notes and transcript.
-    </div>
-  `;
-
-  function clearChatHistory() {
-    if (!chatMessages) return;
-    chatMessages.innerHTML = CHAT_WELCOME_HTML;
-    messageCounter = 0;
-  }
-
   function toggleChatSidebar(isOpen) {
     if (!chatAgentWidget) return;
     if (isOpen) {
       chatAgentWidget.classList.remove('closed');
-      if (btnChatSidebarToggle) btnChatSidebarToggle.classList.add('hidden');
       if (globalAskBar) globalAskBar.classList.add('chat-open');
     } else {
       chatAgentWidget.classList.add('closed');
-      if (btnChatSidebarToggle) btnChatSidebarToggle.classList.remove('hidden');
       if (globalAskBar) globalAskBar.classList.remove('chat-open');
       // Keep chat history when closing so toggling Mix-Master is non-destructive.
     }
@@ -2046,12 +1958,6 @@ if (isMiniMode) {
   if (btnChatToggle) {
     btnChatToggle.addEventListener('click', () => {
       toggleChatSidebar(false);
-    });
-  }
-
-  if (btnChatSidebarToggle) {
-    btnChatSidebarToggle.addEventListener('click', () => {
-      toggleChatSidebar(true);
     });
   }
 

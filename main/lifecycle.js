@@ -50,7 +50,7 @@ function registerLifecycle(rt, ctx) {
     broadcastProcessingProgress();
 
     if (ctx?.registry) {
-      await ctx.registry.runOnReady(rt);
+      await ctx.registry.runOnReady(ctx);
     }
 
     app.on('activate', () => {
@@ -60,7 +60,7 @@ function registerLifecycle(rt, ctx) {
 
   app.on('before-quit', () => {
     if (ctx?.registry) {
-      ctx.registry.runOnBeforeQuit(rt);
+      ctx.registry.runOnBeforeQuit(ctx);
     }
     transcriptionService.shutdown();
     audioCaptureService.stopFfmpeg().catch(() => {});
