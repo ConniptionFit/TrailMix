@@ -2830,3 +2830,110 @@ body {
   padding: 0;
   font-size: 12px;
 }
+
+/* ── The Trail toolbar + grid/list toggle (redesign 3b, 2026-07-11 handoff) ── */
+.trail-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+}
+
+.trail-search-input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 8px 11px;
+  font-size: 12px;
+}
+
+.trail-sort-select {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 12px;
+  color: var(--text-muted, #9aa2b1);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+[data-theme="light"] .trail-search-input,
+[data-theme="light"] .trail-sort-select {
+  background: var(--bg-surface, #ffffff);
+  border-color: var(--color-border-subtle, rgba(26, 26, 24, 0.08));
+  color: var(--color-text-secondary, #64748b);
+}
+
+.trail-view-toggle {
+  display: flex;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 3px;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+[data-theme="light"] .trail-view-toggle {
+  background: var(--bg-surface, #ffffff);
+  border-color: var(--color-border-subtle, rgba(26, 26, 24, 0.08));
+}
+
+.trail-view-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #9aa2b1);
+  font-size: 13px;
+  padding: 6px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.trail-view-btn.active {
+  background: var(--color-accent-soft, rgba(164, 198, 57, 0.12));
+  color: var(--color-accent, #a4c639);
+}
+
+/* List view: compact rows instead of cards. */
+.history-grid.list-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.history-grid.list-view .history-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 14px;
+  border-radius: 10px;
+}
+
+.history-grid.list-view .history-card-header {
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.history-grid.list-view .history-card h3 {
+  font-size: 13.5px;
+  margin: 0;
+}
+
+.history-grid.list-view .history-card-desc {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 11.5px;
+}
+
+.history-grid.list-view .history-card-date {
+  flex-shrink: 0;
+  margin: 0;
+  order: 3;
+}

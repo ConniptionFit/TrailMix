@@ -320,8 +320,22 @@
       <!-- History Tab -->
       <section id="tab-history" class="tab-pane">
         <div class="tab-header">
-          <h1>Call History</h1>
+          <h1>The Trail</h1>
           <p>Review and search past local transcriptions</p>
+        </div>
+        <div class="trail-toolbar">
+          <input type="text" id="input-history-search" class="input-text trail-search-input" placeholder="Search notes, transcript, #tag…" aria-label="Search The Trail">
+          <label class="sr-only" for="select-history-sort">Sort sessions</label>
+          <select id="select-history-sort" class="input-select trail-sort-select">
+            <option value="date-newest">Sort: Newest</option>
+            <option value="date-oldest">Sort: Oldest</option>
+            <option value="title-asc">Sort: Title A–Z</option>
+            <option value="title-desc">Sort: Title Z–A</option>
+          </select>
+          <div class="trail-view-toggle" role="group" aria-label="Trail layout">
+            <button id="btn-trail-grid" class="trail-view-btn active" type="button" title="Grid view" aria-label="Grid view">▦</button>
+            <button id="btn-trail-list" class="trail-view-btn" type="button" title="List view" aria-label="List view">☰</button>
+          </div>
         </div>
         <div id="history-tag-filters" class="history-tag-filters hidden">
           <span class="history-tag-filters-label">Filter by tags:</span>

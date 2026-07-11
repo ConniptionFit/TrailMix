@@ -1,3 +1,8 @@
+/* Meeting window — "Quiet Canvas + Persistent Rail" (redesign option 2a, 2026-07-11 handoff).
+   Notes column is the star: no card chrome, sparse canvas. Share/Ask live in a fixed
+   250px right rail. The transcript is background context — a slide-in overlay panel
+   opened from "View full transcript", not a persistent third column. */
+
 html,
 .meeting-window-body {
   margin: 0;
@@ -8,22 +13,27 @@ html,
 }
 
 .meeting-app {
+  /* index.css sets body { display:flex } — fill it, don't shrink to content */
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   height: 100vh;
   min-height: 520px;
-  padding: 14px 16px 12px;
-  gap: 10px;
   background: var(--bg-base, var(--color-bg-app, #0c0e11));
   box-sizing: border-box;
+  position: relative;
 }
 
+/* ── Header row: title + status line left, controls right ── */
 .meeting-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   flex-shrink: 0;
+  padding: 20px 28px 12px;
+  border-bottom: 1px solid rgba(var(--accent-rgb, 164, 198, 57), 0.08);
 }
 
 .meeting-title-block {
@@ -36,89 +46,89 @@ html,
   background: transparent;
   border: none;
   color: var(--text-main, var(--color-text-primary, #f0f2f5));
-  font-size: 22px;
+  font-family: var(--font-family-display, 'Roboto Slab', serif);
+  font-size: 19px;
   font-weight: 600;
   outline: none;
   padding: 0;
 }
 
-.meeting-title-hint {
-  margin: 4px 0 0;
-  font-size: 11px;
+.meeting-status-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 3px;
+  font-size: 11.5px;
   color: var(--text-muted, var(--color-text-muted, #9aa2b1));
+}
+
+.meeting-status-line h3 {
+  margin: 0;
+  font-family: var(--font-family, 'Plus Jakarta Sans', sans-serif);
+  font-size: 11.5px;
+  font-weight: 500;
+  color: inherit;
+}
+
+.meeting-status-line #rec-timer {
+  font-variant-numeric: tabular-nums;
+}
+
+.meeting-status-sep {
+  color: var(--color-text-muted, #6b7280);
+}
+
+.meeting-status-line .rec-indicator-static,
+.meeting-status-line .rec-indicator-active {
+  width: 8px;
+  height: 8px;
+  min-width: 8px;
+  min-height: 8px;
+  border-radius: 50%;
+}
+
+.meeting-title-hint {
+  margin: 3px 0 0;
+  font-size: 11px;
+  color: var(--color-text-muted, #6b7280);
 }
 
 .meeting-title-hint.hidden {
   display: none;
 }
 
-.meeting-rec-panel {
+.meeting-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-shrink: 0;
 }
 
-.meeting-body-row {
-  display: grid;
-  grid-template-columns: minmax(260px, 1.4fr) minmax(200px, 0.9fr) minmax(240px, 1fr);
-  gap: 10px;
-  flex: 1;
-  min-height: 0;
-  align-items: stretch;
+/* Header buttons: compact pills. Stop state is the red destructive control from the
+   handoff ("⏹ Stop & Enhance" language stays split across Stop Trail + Mix notes). */
+.meeting-header-actions .btn-record {
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 9px 16px;
+  border-radius: 9px;
 }
 
-.meeting-editor-pane,
-.meeting-transcript-pane,
-.meeting-chat-widget {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  min-width: 0;
-  background: var(--bg-surface, var(--color-bg-card, rgba(18, 22, 28, 0.7)));
-  border-radius: 12px;
-  overflow: hidden;
+.meeting-header-actions .btn-record.stop {
+  background: var(--btn-red, #ff4d4d);
+  border-color: transparent;
+  color: #fff;
 }
 
-.meeting-editor-pane .editor-component-host {
-  flex: 1;
-  min-height: 160px;
-}
-
-.meeting-transcript-pane .transcript-container {
-  flex: 1;
-  min-height: 0;
-  background: transparent;
-}
-
-.meeting-chat-widget {
-  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.06));
-}
-
-.meeting-chat-widget .chat-body {
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.meeting-chat-widget .chat-messages {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.editor-component-status {
-  display: none;
-}
-
-.editor-save-status {
-  margin: 0;
-  font-size: 11px;
-  color: var(--text-muted, var(--color-text-muted, #9aa2b1));
-  min-height: 14px;
+.meeting-header-actions .btn-mix {
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 9px 16px;
+  border-radius: 9px;
 }
 
 .queue-pressure-banner {
   flex-shrink: 0;
+  margin: 10px 28px 0;
   padding: 8px 12px;
   border-radius: 8px;
   background: rgba(243, 156, 18, 0.12);
@@ -131,17 +141,299 @@ html,
   display: none;
 }
 
+/* ── Body: quiet notes canvas + fixed 250px right rail ── */
+.meeting-body-row {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  align-items: stretch;
+}
+
+.meeting-notes-col {
+  flex: 1.3;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 22px 32px 12px;
+}
+
+.meeting-chip-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 18px;
+  flex-shrink: 0;
+}
+
+.meeting-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-muted, #9aa2b1);
+  font-size: 11.5px;
+  padding: 5px 10px;
+  border-radius: 7px;
+}
+
+.meeting-chip-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--primary, #a4c639);
+}
+
+.meeting-notes-col .editor-component-host {
+  flex: 1;
+  min-height: 160px;
+}
+
+/* Quiet canvas: strip any card chrome the editor host inherits. */
+.meeting-notes-col .editor-component-host,
+.meeting-notes-col .editor-component-host .editor-surface {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.mix-stage-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-shrink: 0;
+  padding-top: 8px;
+}
+
+.editor-save-status {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-muted, var(--color-text-muted, #9aa2b1));
+  min-height: 14px;
+}
+
+.view-transcript-link {
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted, #6b7280);
+  font-size: 11.5px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: rgba(107, 114, 128, 0.4);
+  padding: 4px 2px;
+  white-space: nowrap;
+}
+
+.view-transcript-link:hover {
+  color: var(--text-muted, #9aa2b1);
+}
+
+/* ── Right rail (250px): Share pills, Ask Mix-Master, pinned ask input ── */
+.meeting-rail {
+  width: 250px;
+  flex-shrink: 0;
+  border-left: 1px solid rgba(var(--accent-rgb, 164, 198, 57), 0.08);
+  padding: 16px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+.rail-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted, #6b7280);
+  font-weight: 600;
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+
+.rail-share-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 18px;
+  flex-shrink: 0;
+}
+
+.rail-pill {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #e5e7eb;
+  font-size: 11.5px;
+  font-family: inherit;
+  padding: 8px 6px;
+  border-radius: 8px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.rail-pill:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+/* Recipe suggestions render as stacked pills (markup comes from meeting.js). */
+.meeting-rail .chat-recipes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.meeting-rail .chat-recipes button,
+.meeting-rail .chat-recipes .chat-recipe {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #e5e7eb;
+  font-size: 12px;
+  text-align: left;
+  padding: 9px 11px;
+  border-radius: 9px;
+  cursor: pointer;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.meeting-rail .chat-recipes button:hover,
+.meeting-rail .chat-recipes .chat-recipe:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.meeting-rail .chat-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.meeting-rail .chat-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.meeting-rail .msg {
+  font-size: 12px;
+}
+
+/* Pinned ask row with the cricket "listening" cue. */
+.rail-ask-row {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 8px 10px;
+  flex-shrink: 0;
+}
+
+.rail-cricket {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted, #9aa2b1);
+  flex-shrink: 0;
+}
+
+.rail-ask-row .input-chat {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  font-size: 11.5px;
+  padding: 4px 2px;
+  color: var(--text-main, #f0f2f5);
+  background: transparent;
+  box-shadow: none;
+}
+
+.rail-ask-row .btn-chat-send {
+  background: transparent;
+  border: none;
+  color: var(--primary, #a4c639);
+  font-size: 14px;
+  padding: 2px 4px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.rail-ask-row .btn-chat-send:hover {
+  color: var(--primary-hover, #b8dc43);
+  background: transparent;
+  transform: none;
+}
+
+.btn-chat-cancel {
+  background: transparent;
+  border: 1px solid rgba(255, 77, 77, 0.4);
+  color: #ff7b7b;
+  border-radius: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.btn-chat-cancel.hidden {
+  display: none;
+}
+
+/* ── Transcript overlay panel (slides in over the notes column) ── */
+.transcript-overlay {
+  position: absolute;
+  top: 0;
+  right: 250px;
+  bottom: 0;
+  width: min(420px, 60vw);
+  background: var(--color-bg-panel, rgba(10, 12, 16, 0.97));
+  border-left: 1px solid rgba(var(--accent-rgb, 164, 198, 57), 0.12);
+  box-shadow: -18px 0 40px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  transform: translateX(16px);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform var(--motion-medium, 250ms ease-out), opacity var(--motion-medium, 250ms ease-out);
+  z-index: 30;
+}
+
+.transcript-overlay.open {
+  transform: translateX(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.transcript-overlay .transcript-container {
+  flex: 1;
+  min-height: 0;
+  background: transparent;
+}
+
 .pane-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 10px 12px 6px;
+  padding: 12px 12px 6px;
 }
 
 .pane-header h2 {
   margin: 0;
   font-size: 14px;
+}
+
+.pane-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .btn-icon-ghost {
@@ -193,17 +485,8 @@ html,
   background: rgba(164, 198, 57, 0.16);
 }
 
-.btn-chat-cancel {
-  background: transparent;
-  border: 1px solid rgba(255, 77, 77, 0.4);
-  color: #ff7b7b;
-  border-radius: 8px;
-  padding: 6px 10px;
-  cursor: pointer;
-  font-size: 12px;
-}
-
-.btn-chat-cancel.hidden {
+/* ── Misc: editor status, view switch (Blended/Mix-Ins), waveform ── */
+.editor-component-status {
   display: none;
 }
 
@@ -241,25 +524,39 @@ html,
   opacity: 0.92;
 }
 
-@media (max-width: 1100px) {
-  .meeting-body-row {
-    grid-template-columns: minmax(240px, 1fr) minmax(200px, 0.85fr);
-    grid-template-rows: minmax(200px, 1fr) minmax(220px, 0.75fr);
+.meeting-notes-col .editor-waveform-bars {
+  flex-shrink: 0;
+}
+
+@media (max-width: 900px) {
+  .meeting-rail {
+    width: 220px;
   }
 
-  .meeting-chat-widget {
-    grid-column: 1 / -1;
-    max-height: 280px;
+  .transcript-overlay {
+    right: 220px;
+    width: min(360px, 70vw);
+  }
+
+  .meeting-notes-col {
+    padding: 16px 20px 10px;
   }
 }
 
-@media (max-width: 820px) {
+@media (max-width: 680px) {
   .meeting-body-row {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(220px, 1.1fr) minmax(180px, 0.8fr) minmax(200px, 0.7fr);
+    flex-direction: column;
   }
 
-  .meeting-chat-widget {
-    max-height: 240px;
+  .meeting-rail {
+    width: 100%;
+    max-height: 260px;
+    border-left: none;
+    border-top: 1px solid rgba(var(--accent-rgb, 164, 198, 57), 0.08);
+  }
+
+  .transcript-overlay {
+    right: 0;
+    width: 100%;
   }
 }

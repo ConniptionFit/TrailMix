@@ -15,8 +15,10 @@
 :root,
 [data-theme="dark"] {
   --bg-base: #0c0e11;
-  --bg-surface: rgba(18, 22, 28, 0.7);
-  --bg-surface-hover: rgba(26, 32, 40, 0.85);
+  /* Quiet-canvas surfaces (redesign 2026-07-11): flat translucent white over the
+     near-black base instead of the old blue-gray glass fill. */
+  --bg-surface: rgba(255, 255, 255, 0.03);
+  --bg-surface-hover: rgba(255, 255, 255, 0.06);
   --border-color: rgba(164, 198, 57, 0.15);
   --border-glow: rgba(164, 198, 57, 0.3);
   --primary: #a4c639;
@@ -47,8 +49,8 @@
   --color-scrollbar: rgba(255, 255, 255, 0.1);
   --color-scrollbar-hover: rgba(164, 198, 57, 0.3);
 
-  --sidebar-bg: var(--color-bg-panel);
-  --sidebar-border: var(--color-border-subtle);
+  --sidebar-bg: rgba(255, 255, 255, 0.02);
+  --sidebar-border: rgba(164, 198, 57, 0.1);
   --sidebar-text: var(--color-text-primary);
   --sidebar-text-muted: var(--color-text-muted);
   --sidebar-text-subtle: var(--color-text-secondary);
@@ -65,9 +67,9 @@
   --editor-text-ai: #9aa2b1;
   --editor-placeholder: rgba(255, 255, 255, 0.35);
 
-  --body-gradient: radial-gradient(at 0% 0%, rgba(164, 198, 57, 0.1) 0px, transparent 50%),
-    radial-gradient(at 100% 100%, rgba(57, 198, 183, 0.08) 0px, transparent 50%);
-  --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+  /* Quiet canvas: no ambient glow gradients, no heavy card shadows. */
+  --body-gradient: none;
+  --glass-shadow: none;
 }
 
 /* ── Light mode (Granola-inspired) ── */

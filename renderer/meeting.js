@@ -983,3 +983,58 @@
     notify(err?.message || 'Could not load this meeting session.', 'error');
   });
 })();
+
+// ── Quiet-canvas rail & transcript overlay (redesign 2a, 2026-07-11) ──
+// Self-contained wiring for the static controls the redesigned layout added:
+// the "View full transcript" overlay toggle and the Share Notes copy pills.
+(function () {
+  const drawer = document.getElementById('meeting-transcript-drawer');
+  const btnView = document.getElementById('btn-view-transcript');
+  const btnClose = document.getElementById('btn-transcript-close');
+
+  function setTranscriptOpen(open) {
+    if (!drawer) return;
+    drawer.classList.toggle('open', open);
+    drawer.setAttribute('aria-hidden', String(!open));
+    if (btnView) btnView.setAttribute('aria-expanded', String(open));
+  }
+
+  btnView?.addEventListener('click', () => setTranscriptOpen(!drawer?.classList.contains('open')));
+  btnClose?.addEventListener('click', () => setTranscriptOpen(false));
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && drawer?.classList.contains('open')) {
+      const searchBar = document.getElementById('transcript-search-bar');
+      if (searchBar && !searchBar.classList.contains('hidden')) return; // search's own Esc handler runs first
+      setTranscriptOpen(false);
+    }
+  });
+
+  function toast(message, type) {
+    if (window.TrailMixToast) window.TrailMixToast.show(message, { type: type || 'info' });
+  }
+
+  async function copyText(text, label) {
+    if (!text || !text.trim()) {
+      toast(`Nothing to copy yet — ${label} is empty.`, 'info');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      toast(`${label} copied to clipboard.`, 'success');
+    } catch (err) {
+      console.error('Clipboard write failed', err);
+      toast('Could not copy to clipboard.', 'error');
+    }
+  }
+
+  document.getElementById('btn-copy-notes')?.addEventListener('click', () => {
+    const root = document.getElementById('editor-component-root');
+    copyText(root ? root.innerText : '', 'Notes');
+  });
+
+  document.getElementById('btn-copy-transcript')?.addEventListener('click', () => {
+    const container = document.getElementById('transcript-container');
+    const hasLines = container?.querySelector('.transcript-line');
+    copyText(hasLines ? container.innerText : '', 'Transcript');
+  });
+})();

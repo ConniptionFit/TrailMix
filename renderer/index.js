@@ -2679,3 +2679,50 @@ if (isMiniMode) {
     });
   };
 }
+
+// ── The Trail toolbar (redesign 3b, 2026-07-11) ──
+// Self-contained: the search box mirrors into the sidebar search input (whose
+// debounced listener already runs the FTS + #tag pipeline), the sort select
+// clicks the existing sort menu items, and the grid/list toggle is pure DOM
+// state persisted per-browser.
+(function () {
+  const historySearch = document.getElementById('input-history-search');
+  const sidebarSearch = document.getElementById('input-sidebar-search');
+  if (historySearch && sidebarSearch) {
+    historySearch.addEventListener('input', () => {
+      sidebarSearch.value = historySearch.value;
+      sidebarSearch.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    sidebarSearch.addEventListener('input', () => {
+      if (document.activeElement !== historySearch) historySearch.value = sidebarSearch.value;
+    });
+  }
+
+  const sortSelect = document.getElementById('select-history-sort');
+  const SORT_BUTTONS = {
+    'date-newest': 'menu-opt-sort-newest',
+    'date-oldest': 'menu-opt-sort-oldest',
+    'title-asc': 'menu-opt-sort-title-asc',
+    'title-desc': 'menu-opt-sort-title-desc'
+  };
+  sortSelect?.addEventListener('change', () => {
+    document.getElementById(SORT_BUTTONS[sortSelect.value])?.click();
+  });
+
+  const grid = document.getElementById('history-grid');
+  const btnGrid = document.getElementById('btn-trail-grid');
+  const btnList = document.getElementById('btn-trail-list');
+  const VIEW_KEY = 'trailmix-trail-view';
+
+  function applyTrailView(mode) {
+    if (!grid) return;
+    grid.classList.toggle('list-view', mode === 'list');
+    btnGrid?.classList.toggle('active', mode !== 'list');
+    btnList?.classList.toggle('active', mode === 'list');
+    try { localStorage.setItem(VIEW_KEY, mode); } catch { /* private mode etc. */ }
+  }
+
+  btnGrid?.addEventListener('click', () => applyTrailView('grid'));
+  btnList?.addEventListener('click', () => applyTrailView('list'));
+  applyTrailView(localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'grid');
+})();
