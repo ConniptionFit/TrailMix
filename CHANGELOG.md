@@ -5,6 +5,11 @@ All notable changes to TrailMix are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-07-10
+
+### Added
+- **Start menu shortcut** — `scripts/install-desktop-entry.sh` installs an XDG desktop entry (`~/.local/share/applications/trailmix.desktop`) that launches TrailMix from the source checkout with the app icon; guards against inherited `ELECTRON_RUN_AS_NODE`. Documented as optional Step 7 in the README installation guide.
+
 ## [0.5.1] - 2026-07-10
 
 ### Fixed

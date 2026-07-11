@@ -167,6 +167,14 @@ npm start
 
 TrailMix opens with the ![TrailMix icon](assets/logo.png) logo in the sidebar and system tray.
 
+### Step 7 (optional) — Add a start menu shortcut
+
+```bash
+./scripts/install-desktop-entry.sh
+```
+
+This installs an XDG desktop entry at `~/.local/share/applications/trailmix.desktop` that launches TrailMix from this checkout — so the shortcut always runs your current code, no packaging needed. Re-run the script if you move the project directory; remove the shortcut with `rm ~/.local/share/applications/trailmix.desktop`.
+
 ---
 
 ## First launch setup
