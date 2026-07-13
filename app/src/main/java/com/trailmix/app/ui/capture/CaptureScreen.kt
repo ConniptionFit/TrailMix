@@ -1,6 +1,9 @@
 package com.trailmix.app.ui.capture
 
 import android.Manifest
+import android.content.Intent
+import android.media.projection.MediaProjectionManager
+import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -23,7 +26,17 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -82,6 +95,15 @@ fun CaptureScreen(
         onCancel()
     }
 
+    val projectionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val data = result.data
+        if (result.resultCode == android.app.Activity.RESULT_OK && data != null) {
+            viewModel.onProjectionGranted(result.resultCode, data)
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -90,9 +112,11 @@ fun CaptureScreen(
             .imePadding()
             .padding(horizontal = 20.dp),
     ) {
-        // Recording status row
+        // Recording status row + audio menu (3 dots, upper right)
         Row(
-            modifier = Modifier.padding(top = 18.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
@@ -107,6 +131,26 @@ fun CaptureScreen(
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.padding(start = 8.dp),
+            )
+            if (state.deviceAudioActive) {
+                Text(
+                    text = "· device audio",
+                    color = c.teal,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(start = 6.dp),
+                )
+            }
+            Spacer(modifier = Modifier.weight(1f))
+            CaptureMenu(
+                state = state,
+                deviceAudioSupported = viewModel.deviceAudioSupported,
+                onSelectInput = viewModel::selectInput,
+                onEnableDeviceAudio = {
+                    val mpm = context.getSystemService(MediaProjectionManager::class.java)
+                    projectionLauncher.launch(mpm.createScreenCaptureIntent())
+                },
+                onDisableDeviceAudio = viewModel::disableDeviceAudio,
             )
         }
 
@@ -204,6 +248,112 @@ fun CaptureScreen(
                     fontWeight = FontWeight.Medium,
                 )
             }
+        }
+    }
+}
+
+/**
+ * The in-capture audio menu (3 dots, upper right): pick the input mic, toggle
+ * device-audio capture, or jump to the system output panel. Kept deliberately
+ * small — one glance, one tap.
+ */
+@Composable
+private fun CaptureMenu(
+    state: CaptureUiState,
+    deviceAudioSupported: Boolean,
+    onSelectInput: (Int) -> Unit,
+    onEnableDeviceAudio: () -> Unit,
+    onDisableDeviceAudio: () -> Unit,
+) {
+    val c = TrailMix.colors
+    val context = LocalContext.current
+    var open by remember { mutableStateOf(false) }
+
+    Box {
+        IconButton(onClick = { open = true }) {
+            Icon(
+                imageVector = Icons.Default.MoreVert,
+                contentDescription = "Audio settings",
+                tint = c.dim,
+            )
+        }
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+        ) {
+            Text(
+                text = "MICROPHONE",
+                color = c.dim,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 0.4.sp,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+            )
+            state.inputOptions.forEachIndexed { index, option ->
+                DropdownMenuItem(
+                    text = { Text(option.label, fontSize = 14.sp, color = c.text) },
+                    leadingIcon = {
+                        RadioButton(
+                            selected = index == state.selectedInputIndex,
+                            onClick = null,
+                            colors = RadioButtonDefaults.colors(selectedColor = c.amber),
+                        )
+                    },
+                    onClick = { onSelectInput(index) },
+                )
+            }
+            HorizontalDivider(color = c.border)
+            DropdownMenuItem(
+                text = {
+                    Column {
+                        Text("Capture device audio", fontSize = 14.sp, color = c.text)
+                        Text(
+                            text = if (deviceAudioSupported) {
+                                "Videos & media from other apps"
+                            } else {
+                                "Needs the on-device recognizer model"
+                            },
+                            fontSize = 11.sp,
+                            color = c.dim,
+                        )
+                    }
+                },
+                trailingIcon = {
+                    if (state.deviceAudioActive) {
+                        Icon(Icons.Default.Check, contentDescription = null, tint = c.teal)
+                    }
+                },
+                enabled = deviceAudioSupported,
+                onClick = {
+                    if (state.deviceAudioActive) onDisableDeviceAudio() else onEnableDeviceAudio()
+                    open = false
+                },
+            )
+            HorizontalDivider(color = c.border)
+            DropdownMenuItem(
+                text = { Text("Output device…", fontSize = 14.sp, color = c.text) },
+                onClick = {
+                    open = false
+                    // Output routing is a system function; the volume panel is
+                    // the closest surface a third-party app may open.
+                    runCatching {
+                        context.startActivity(
+                            Intent(Settings.Panel.ACTION_VOLUME)
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    }
+                },
+            )
+            Text(
+                text = when (state.engineKind) {
+                    com.trailmix.app.data.speech.EngineKind.MLKIT -> "Recognizer: Gemini on-device"
+                    com.trailmix.app.data.speech.EngineKind.LEGACY -> "Recognizer: system (mic only)"
+                    com.trailmix.app.data.speech.EngineKind.NONE -> "No speech recognizer available"
+                },
+                color = c.dim,
+                fontSize = 10.sp,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+            )
         }
     }
 }

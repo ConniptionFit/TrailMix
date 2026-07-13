@@ -1,12 +1,18 @@
 package com.trailmix.app.ui.capture
 
+import android.content.Context
+import android.content.Intent
+import android.media.AudioDeviceInfo
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.trailmix.app.data.ai.OnDeviceAiProcessor
 import com.trailmix.app.data.db.NotesRepository
 import com.trailmix.app.data.model.TranscriptLine
-import com.trailmix.app.data.speech.OnDeviceSpeechRecognizer
+import com.trailmix.app.data.speech.CaptureEngine
+import com.trailmix.app.data.speech.EngineKind
+import com.trailmix.app.service.CaptureService
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.Locale
 import javax.inject.Inject
 import kotlinx.coroutines.Job
@@ -16,6 +22,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+
+/** A selectable input in the capture menu; null device = automatic routing. */
+data class InputOption(val label: String, val device: AudioDeviceInfo?)
 
 data class CaptureUiState(
     val recording: Boolean = false,
@@ -24,11 +34,16 @@ data class CaptureUiState(
     val lastFinalLine: String = "",
     val merging: Boolean = false,
     val speechAvailable: Boolean = true,
+    val engineKind: EngineKind = EngineKind.NONE,
+    val deviceAudioActive: Boolean = false,
+    val inputOptions: List<InputOption> = emptyList(),
+    val selectedInputIndex: Int = 0,
 )
 
 @HiltViewModel
 class CaptureViewModel @Inject constructor(
-    private val speechRecognizer: OnDeviceSpeechRecognizer,
+    @ApplicationContext private val appContext: Context,
+    private val engine: CaptureEngine,
     private val aiProcessor: OnDeviceAiProcessor,
     private val notesRepository: NotesRepository,
 ) : ViewModel() {
@@ -48,12 +63,18 @@ class CaptureViewModel @Inject constructor(
         if (_state.value.recording || _state.value.merging) return
         startedAtMs = System.currentTimeMillis()
         transcriptLines.clear()
-        _state.value = _state.value.copy(
-            recording = true,
-            speechAvailable = speechRecognizer.isAvailable(),
-        )
+        refreshInputOptions()
+        _state.value = _state.value.copy(recording = true)
+        CaptureService.start(appContext)
         listenJob = viewModelScope.launch {
-            speechRecognizer.listen().collect { event ->
+            val selected = _state.value.inputOptions
+                .getOrNull(_state.value.selectedInputIndex)?.device
+            val events = engine.begin(selected)
+            _state.value = _state.value.copy(
+                engineKind = engine.kind.value,
+                speechAvailable = engine.kind.value != EngineKind.NONE,
+            )
+            events.collect { event ->
                 if (event.finalizedUtterance.isNotBlank()) {
                     transcriptLines += TranscriptLine(
                         label = elapsedLabel(),
@@ -70,21 +91,53 @@ class CaptureViewModel @Inject constructor(
         }
         tickerJob = viewModelScope.launch {
             while (isActive) {
-                _state.value = _state.value.copy(elapsedLabel = elapsedLabel())
+                _state.value = _state.value.copy(
+                    elapsedLabel = elapsedLabel(),
+                    deviceAudioActive = engine.deviceAudioActive.value,
+                )
                 delay(1_000)
             }
         }
     }
 
+    /** From the 3-dot menu: reroute the mic (index 0 is Auto). */
+    fun selectInput(index: Int) {
+        val option = _state.value.inputOptions.getOrNull(index) ?: return
+        _state.value = _state.value.copy(selectedInputIndex = index)
+        engine.setPreferredDevice(option.device)
+    }
+
+    /** Device-audio consent came back from the system dialog. */
+    fun onProjectionGranted(resultCode: Int, data: Intent) {
+        CaptureService.attachProjection(appContext, resultCode, data)
+        viewModelScope.launch {
+            // The service attaches asynchronously; reflect the result shortly after.
+            delay(500)
+            _state.value = _state.value.copy(deviceAudioActive = engine.deviceAudioActive.value)
+        }
+    }
+
+    fun disableDeviceAudio() {
+        engine.detachDeviceAudio()
+        _state.value = _state.value.copy(deviceAudioActive = false)
+    }
+
+    val deviceAudioSupported: Boolean
+        get() = engine.deviceAudioSupported
+
     fun endAndMerge(onDone: (Long) -> Unit) {
         if (_state.value.merging) return
-        stopCapture()
-        _state.value = _state.value.copy(merging = true)
+        _state.value = _state.value.copy(merging = true, recording = false)
         val durationMs = System.currentTimeMillis() - startedAtMs
-        val createdAt = System.currentTimeMillis()
-        val typed = fragments.value
-        val transcript = transcriptLines.toList()
         viewModelScope.launch {
+            // Close the audio input and give the recognizer a moment to flush
+            // its final utterance into the transcript before merging.
+            engine.endInput()
+            withTimeoutOrNull(5_000) { listenJob?.join() }
+            stopCapture()
+            val createdAt = System.currentTimeMillis()
+            val typed = fragments.value
+            val transcript = transcriptLines.toList()
             val result = aiProcessor.merge(
                 typedFragments = typed,
                 transcript = transcript,
@@ -105,7 +158,32 @@ class CaptureViewModel @Inject constructor(
     }
 
     fun cancel() {
+        engine.endInput()
         stopCapture()
+    }
+
+    private fun refreshInputOptions() {
+        val options = buildList {
+            add(InputOption("Auto (follow system)", null))
+            engine.availableInputDevices().forEach { add(InputOption(friendlyName(it), it)) }
+        }
+        val keepIndex = _state.value.selectedInputIndex.takeIf { it < options.size } ?: 0
+        _state.value = _state.value.copy(inputOptions = options, selectedInputIndex = keepIndex)
+    }
+
+    private fun friendlyName(device: AudioDeviceInfo): String = when (device.type) {
+        AudioDeviceInfo.TYPE_BUILTIN_MIC -> "Built-in mic"
+        AudioDeviceInfo.TYPE_WIRED_HEADSET -> "Wired headset"
+        AudioDeviceInfo.TYPE_USB_DEVICE, AudioDeviceInfo.TYPE_USB_HEADSET -> "USB mic"
+        AudioDeviceInfo.TYPE_BLUETOOTH_SCO, AudioDeviceInfo.TYPE_BLE_HEADSET ->
+            device.productName.toString().ifBlank { "Bluetooth mic" }
+        else -> device.productName.toString().ifBlank { "Microphone" }
+    }.let { base ->
+        if (device.type == AudioDeviceInfo.TYPE_BUILTIN_MIC && device.address.isNotBlank()) {
+            "$base (${device.address})"
+        } else {
+            base
+        }
     }
 
     private fun stopCapture() {
@@ -113,7 +191,13 @@ class CaptureViewModel @Inject constructor(
         listenJob = null
         tickerJob?.cancel()
         tickerJob = null
-        _state.value = _state.value.copy(recording = false, livePartial = "")
+        engine.detachDeviceAudio()
+        CaptureService.stop(appContext)
+        _state.value = _state.value.copy(
+            recording = false,
+            livePartial = "",
+            deviceAudioActive = false,
+        )
     }
 
     private fun elapsedLabel(): String {
@@ -122,6 +206,7 @@ class CaptureViewModel @Inject constructor(
     }
 
     override fun onCleared() {
+        engine.endInput()
         stopCapture()
         super.onCleared()
     }

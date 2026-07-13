@@ -10,19 +10,24 @@ data architecture than the cloud product it resembles:
 
 | | TrailMix.ai (cloud) | This app |
 |---|---|---|
-| ASR | Deepgram/AssemblyAI (cloud) | Android on-device recognizer (`createOnDeviceSpeechRecognizer`) |
+| ASR | Deepgram/AssemblyAI (cloud) | ML Kit GenAI on-device speech recognition (AICore), fed by the app's own audio pipeline; system on-device recognizer as fallback |
 | LLM | OpenAI/Anthropic (cloud) | Gemini Nano via ML Kit GenAI (AICore) |
-| Audio retention | Temp cloud cache, deleted post-transcription | **Never written anywhere** — consumed in memory by the recognizer |
+| Audio retention | Temp cloud cache, deleted post-transcription | **Never written anywhere** — RAM-only PCM pipe into the recognizer |
 | Network | US-hosted AWS VPC | **No `INTERNET` permission in the manifest** |
 | Training opt-out toggle | Yes | Not needed — nothing leaves the device |
 
 ## Security posture
 
 - **No network permission.** The OS itself prevents this app from transmitting anything.
-- **Zero-retention audio.** No audio file is ever created; the on-device recognizer
-  consumes the mic stream in memory. There is nothing to delete because nothing is stored.
-- **On-device recognition only.** Uses `SpeechRecognizer.createOnDeviceSpeechRecognizer()`
-  (API 31+), never the network-capable system recognizer.
+- **Zero-retention audio.** No audio file is ever created; captured PCM flows through an
+  in-memory pipe straight into the on-device recognizer. There is nothing to delete
+  because nothing is stored.
+- **On-device recognition only.** Primary: ML Kit GenAI speech recognition via AICore.
+  Fallback: `SpeechRecognizer.createOnDeviceSpeechRecognizer()` (API 31+) — never the
+  network-capable system recognizer.
+- **Device-audio capture is consent-gated.** Capturing other apps' audio requires the
+  system screen-share dialog every session; Android structurally excludes voice-call
+  audio (e.g. the far end of Teams/Zoom) from app capture.
 - **On-device LLM only.** Merge, chat, and recipes run on Gemini Nano through AICore.
   Every AI feature has a deterministic fallback — the app works with no model present.
 - **`allowBackup="false"`** — notes don't leave the device via cloud backup.
@@ -34,7 +39,12 @@ data architecture than the cloud product it resembles:
 
 1. **Home** — notes list, one upcoming meeting (opt-in calendar), amber FAB to start capture.
 2. **Live capture** — recording status, live transcript preview, free-typing fragment area,
-   red *End & Merge* button.
+   red *End & Merge* button. A 3-dot menu (upper right) picks the input mic (built-in,
+   Bluetooth buds, USB — switchable mid-session), toggles **capture device audio**
+   (transcribe videos/media other apps play, after the system consent dialog), and jumps
+   to the system output panel. Capture runs in a silent foreground service, so it
+   survives switching to the meeting or video app. The app plays **no notification
+   sounds whatsoever** — no recognizer chimes, and its one notification channel is muted.
 3. **Note detail** — the merged note; amber tint = from your typed fragments, teal tint =
    from the transcript. *Sources shown* pill toggles provenance tinting (on by default
    after a merge).
@@ -66,7 +76,12 @@ export ANDROID_HOME="$HOME/Library/Android/sdk"
 - `data/ai/OnDeviceAiProcessor` — Gemini Nano merge/chat with word-overlap provenance
   attribution (robust even when the small model ignores tagging instructions) and a
   deterministic no-AI fallback.
-- `data/speech/OnDeviceSpeechRecognizer` — continuous on-device dictation as a Flow.
+- `data/speech/` — app-owned capture pipeline: `AudioPipeline` (mic `AudioRecord` +
+  optional `AudioPlaybackCapture` lane, mixed to 16 kHz mono PCM in an in-memory pipe),
+  `MlKitTranscriber` (ML Kit GenAI ASR over that pipe), `CaptureEngine` (backend
+  selection + routing), `OnDeviceSpeechRecognizer` (legacy fallback).
+- `service/CaptureService` — silent foreground service (`microphone|mediaProjection`)
+  keeping capture alive across app switches.
 - `data/db` — notes store provenance-tagged segments + transcript lines as JSON columns;
   chat messages per note in a second table.
 - `ui/theme/Theme.kt` — design tokens from the handoff (oklch → sRGB), light/dark with a

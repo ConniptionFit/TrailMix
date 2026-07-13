@@ -14,6 +14,12 @@
     <!-- Optional, requested at runtime only when the user taps the Home
          "Upcoming" card. Read-only. -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <!-- Keeps a capture session alive when the user switches to the meeting
+         or video app. mediaProjection covers the opt-in device-audio lane,
+         which only ever activates after the system consent dialog. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
     <application
         android:name=".TrailMixApp"
@@ -33,5 +39,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".service.CaptureService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|mediaProjection" />
     </application>
 </manifest>

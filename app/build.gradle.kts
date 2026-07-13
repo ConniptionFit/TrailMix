@@ -14,8 +14,8 @@ android {
         applicationId = "com.trailmix.app"
         minSdk = 31
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -71,6 +71,7 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.mlkit.genai.prompt)
+    implementation(libs.mlkit.genai.speech)
     implementation(libs.androidx.documentfile)
     testImplementation(libs.junit)
     testImplementation(libs.org.json)
