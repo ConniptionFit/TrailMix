@@ -71,8 +71,8 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.mlkit.genai.prompt)
-    implementation(libs.mlkit.genai.summarization)
     implementation(libs.androidx.documentfile)
-    implementation(libs.guava)
+    testImplementation(libs.junit)
+    testImplementation(libs.org.json)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

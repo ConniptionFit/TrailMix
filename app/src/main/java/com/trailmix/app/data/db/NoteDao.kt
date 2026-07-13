@@ -2,7 +2,6 @@ package com.trailmix.app.data.db
 
 import androidx.room.Dao
 import androidx.room.Insert
-import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
@@ -18,12 +17,27 @@ interface NoteDao {
     @Query("SELECT * FROM notes WHERE id = :id")
     suspend fun getById(id: Long): NoteEntity?
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert
     suspend fun insert(note: NoteEntity): Long
 
     @Update
     suspend fun update(note: NoteEntity)
 
+    @Query("UPDATE notes SET showSources = :show WHERE id = :id")
+    suspend fun setShowSources(id: Long, show: Boolean)
+
     @Query("DELETE FROM notes WHERE id = :id")
     suspend fun deleteById(id: Long)
+}
+
+@Dao
+interface ChatDao {
+    @Query("SELECT * FROM chat_messages WHERE noteId = :noteId ORDER BY createdAtEpochMs ASC, id ASC")
+    fun observeForNote(noteId: Long): Flow<List<ChatMessageEntity>>
+
+    @Insert
+    suspend fun insert(message: ChatMessageEntity): Long
+
+    @Query("DELETE FROM chat_messages WHERE noteId = :noteId")
+    suspend fun deleteForNote(noteId: Long)
 }

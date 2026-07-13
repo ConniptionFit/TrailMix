@@ -1,177 +1,193 @@
 package com.trailmix.app.ui.settings
 
-import android.content.Intent
-import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.trailmix.app.data.ai.AiAvailability
-import com.trailmix.app.ui.components.PrimaryPillButton
-import com.trailmix.app.ui.theme.TrailMixAccent
-import com.trailmix.app.ui.theme.TrailMixCard
-import com.trailmix.app.ui.theme.TrailMixSecondaryText
+import com.trailmix.app.ui.components.SectionLabel
+import com.trailmix.app.ui.theme.TrailMix
 
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
-    val state by viewModel.uiState.collectAsStateWithLifecycle()
-    val context = LocalContext.current
+    val darkOverride by viewModel.darkModeOverride.collectAsStateWithLifecycle()
+    val vaultName by viewModel.vaultName.collectAsStateWithLifecycle()
+    val c = TrailMix.colors
+    val systemDark = isSystemInDarkTheme()
+    val darkOn = darkOverride ?: systemDark
 
     val vaultPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree(),
-    ) { uri ->
-        if (uri != null) {
-            val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(uri, flags)
-            }
-            val name = DocumentsContract.getTreeDocumentId(uri)
-                .substringAfterLast(':')
-                .substringAfterLast('/')
-                .ifBlank { "Obsidian Vault" }
-            viewModel.linkVault(uri.toString(), name)
-        }
-    }
+    ) { uri -> if (uri != null) viewModel.onVaultPicked(uri) }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(c.background)
             .statusBarsPadding()
-            .navigationBarsPadding()
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 20.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
-                    contentDescription = "Back",
-                    tint = MaterialTheme.colorScheme.onBackground,
+        Text(
+            text = "Settings",
+            color = c.text,
+            fontSize = 22.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(top = 16.dp, bottom = 18.dp),
+        )
+
+        // Dark mode row, hairline-bounded
+        Hairline()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 14.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column {
+                Text(
+                    text = "Dark mode",
+                    color = c.text,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    text = if (darkOverride == null) "Matches system setting" else "Manual override",
+                    color = c.dim,
+                    fontSize = 12.5.sp,
+                    modifier = Modifier.padding(top = 2.dp),
                 )
             }
-            Text(
-                text = "Settings",
-                style = MaterialTheme.typography.headlineMedium,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
+            TrackSwitch(on = darkOn, onToggle = { viewModel.setDarkMode(!darkOn) })
         }
+        Hairline()
 
-        Spacer(modifier = Modifier.height(24.dp))
+        SectionLabel(
+            text = "Privacy & security",
+            modifier = Modifier.padding(top = 24.dp, bottom = 10.dp),
+        )
+        Text(
+            text = "Zero-retention audio — consumed in memory by the on-device recognizer, never written to disk or sent anywhere.",
+            color = c.dim,
+            fontSize = 13.5.sp,
+            lineHeight = 21.6.sp, // 1.6
+        )
+        Text(
+            text = "100% on-device — transcription and AI run locally. This app requests no network permission at all.",
+            color = c.dim,
+            fontSize = 13.5.sp,
+            lineHeight = 21.6.sp,
+            modifier = Modifier.padding(top = 10.dp),
+        )
 
-        SettingsCard(title = "On-device AI") {
-            Text(
-                text = when (val ai = state.aiAvailability) {
-                    is AiAvailability.Available -> "Gemini Nano ready on this device."
-                    is AiAvailability.Downloadable -> "Model downloadable. TrailMix will download it when needed."
-                    is AiAvailability.Downloading -> "Downloading Gemini Nano…"
-                    is AiAvailability.Unavailable -> ai.reason
-                    null -> "Checking…"
-                },
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
-            if (state.aiAvailability is AiAvailability.Downloadable) {
-                Spacer(modifier = Modifier.height(12.dp))
-                PrimaryPillButton(
-                    text = "Download model",
-                    onClick = viewModel::downloadModel,
-                    enabled = !state.isDownloading,
+        SectionLabel(
+            text = "Obsidian export",
+            modifier = Modifier.padding(top = 28.dp, bottom = 10.dp),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { vaultPicker.launch(null) }
+                .padding(vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column {
+                Text(
+                    text = if (vaultName == null) "Link a vault folder" else "Vault: $vaultName",
+                    color = c.text,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    text = if (vaultName == null) {
+                        "Optionally mirror merged notes as local Markdown files"
+                    } else {
+                        "New notes export to the TrailMix folder · tap to change"
+                    },
+                    color = c.dim,
+                    fontSize = 12.5.sp,
+                    modifier = Modifier.padding(top = 2.dp),
                 )
             }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        SettingsCard(title = "Obsidian") {
-            Text(
-                text = if (state.vaultUri != null) {
-                    "Linked vault: ${state.vaultName ?: "Selected folder"}"
-                } else {
-                    "Link your Obsidian vault folder so TrailMix can write Markdown notes."
-                },
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            PrimaryPillButton(
-                text = if (state.vaultUri == null) "Link Obsidian vault" else "Change vault",
-                onClick = { vaultPicker.launch(null) },
-            )
-            if (state.vaultUri != null) {
-                Spacer(modifier = Modifier.height(8.dp))
-                PrimaryPillButton(text = "Unlink vault", onClick = viewModel::unlinkVault)
+            if (vaultName != null) {
+                Text(
+                    text = "Unlink",
+                    color = c.dim,
+                    fontSize = 12.5.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(100.dp))
+                        .clickable { viewModel.clearVault() }
+                        .padding(8.dp),
+                )
             }
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = "Notes folder",
-                style = MaterialTheme.typography.labelLarge,
-                color = TrailMixSecondaryText,
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            OutlinedTextField(
-                value = state.notesFolder,
-                onValueChange = viewModel::updateFolder,
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = TrailMixAccent,
-                    unfocusedBorderColor = TrailMixSecondaryText.copy(alpha = 0.4f),
-                    focusedTextColor = MaterialTheme.colorScheme.onBackground,
-                    unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
-                ),
-            )
         }
     }
 }
 
 @Composable
-private fun SettingsCard(
-    title: String,
-    content: @Composable () -> Unit,
-) {
-    Column(
+private fun Hairline() {
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .background(TrailMixCard, RoundedCornerShape(16.dp))
-            .padding(16.dp),
-        verticalArrangement = Arrangement.Top,
+            .height(1.dp)
+            .background(TrailMix.colors.border),
+    )
+}
+
+/** 46×26 track, 20dp thumb animating 3dp↔23dp (design spec). */
+@Composable
+private fun TrackSwitch(on: Boolean, onToggle: () -> Unit) {
+    val c = TrailMix.colors
+    val thumbOffset by animateDpAsState(targetValue = if (on) 23.dp else 3.dp, label = "thumb")
+    Box(
+        modifier = Modifier
+            .width(46.dp)
+            .height(26.dp)
+            .clip(RoundedCornerShape(100.dp))
+            .background(if (on) c.amber else c.border)
+            .clickable(onClick = onToggle),
     ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.onBackground,
+        Box(
+            modifier = Modifier
+                .offset(x = thumbOffset)
+                .align(Alignment.CenterStart)
+                .size(20.dp)
+                .clip(CircleShape)
+                .background(Color.White),
         )
-        Spacer(modifier = Modifier.height(10.dp))
-        content()
     }
 }

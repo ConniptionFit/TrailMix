@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<style>
+  body{margin:0;background:oklch(96% 0.004 80);font-family:Roboto,-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;color:oklch(20% 0.005 80)}
+  .dv-turn{padding:44px 48px 40px}
+  .dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 22px}
+  .dv-tid{font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:oklch(20% 0.005 80);color:#fff;border-radius:4px;text-decoration:none}
+  .dv-tname{font:600 14px/1.2 inherit;color:oklch(20% 0.005 80)}
+  .dv-sub{font:400 12.5px/1.5 inherit;color:oklch(45% 0.005 80);margin:2px 0 0}
+  .dv-opts{display:flex;flex-wrap:wrap;gap:32px;align-items:flex-start}
+  .dv-opt{flex:none;display:flex;flex-direction:column;gap:10px}
+  .dv-oid{font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:oklch(90% 0.006 80);color:oklch(20% 0.005 80);border-radius:5px;text-decoration:none}
+  .dv-olabel{display:flex;align-items:baseline;gap:8px;font:400 11.5px/1.3 inherit;color:oklch(45% 0.005 80)}
+  .dv-next{margin:22px 0 0;font:12px/1.6 inherit;color:oklch(45% 0.005 80)}
+  .amber{color:oklch(58% 0.15 55)}
+  .teal{color:oklch(55% 0.11 200)}
+  .scrollbar-none::-webkit-scrollbar{display:none}
+</style>
+</helmet>
+
+<section class="dv-turn" id="t1">
+  <div class="dv-thd"><a class="dv-tid" href="#t1">1</a><div><span class="dv-tname">Android — fresh, single-column flow (same feel, mobile-native structure)</span><p class="dv-sub">Full in-call capture · transcript is its own full-screen view · notes editing is the primary surface · dark mode follows system.</p></div></div>
+  <div class="dv-opts">
+
+    <div class="dv-opt" id="1a">
+      <div class="dv-olabel"><a class="dv-oid" href="#1a">1a</a>Home</div>
+      <x-import component-from-global-scope="AndroidDevice" from="./android-frame.jsx" dark="{{ dark }}" hint-size="412,892">
+        <div style="height:100%;display:flex;flex-direction:column;background:{{ bg }}">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:20px 20px 8px">
+            <span style="font:600 22px/1 inherit;color:{{ text }}">TrailMix</span>
+            <div style="width:34px;height:34px;border-radius:50%;background:{{ cardBg }}"></div>
+          </div>
+          <div style="padding:18px 20px 8px;font:600 11px/1 inherit;letter-spacing:.04em;text-transform:uppercase;color:{{ dim }}">Upcoming — from calendar</div>
+          <div style="padding:0 20px 6px">
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px;background:{{ cardBg }};border-radius:12px">
+              <span style="font:500 14.5px/1.3 inherit;color:{{ text }}">Acme Corp — Kickoff</span>
+              <span style="font:400 12.5px/1 inherit;color:{{ dim }}">2:00 PM</span>
+            </div>
+          </div>
+          <div style="padding:20px 20px 8px;font:600 11px/1 inherit;letter-spacing:.04em;text-transform:uppercase;color:{{ dim }}">Notes</div>
+          <div style="flex:1;overflow:auto;padding:0 8px" class="scrollbar-none">
+            <div style="padding:14px 12px;border-bottom:1px solid {{ border }}">
+              <div style="font:500 15.5px/1.3 inherit;color:{{ text }};margin-bottom:3px">Acme Corp — Onboarding Kickoff</div>
+              <div style="font:400 13px/1.4 inherit;color:{{ dim }}">Client wants launch by Sept 15…</div>
+            </div>
+            <div style="padding:14px 12px;border-bottom:1px solid {{ border }}">
+              <div style="font:500 15.5px/1.3 inherit;color:{{ text }};margin-bottom:3px">1:1 — Jordan</div>
+              <div style="font:400 13px/1.4 inherit;color:{{ dim }}">Discussed Q3 goals, promo timeline…</div>
+            </div>
+            <div style="padding:14px 12px">
+              <div style="font:500 15.5px/1.3 inherit;color:{{ text }};margin-bottom:3px">Eng sync notes</div>
+              <div style="font:400 13px/1.4 inherit;color:{{ dim }}">Migration blocked on infra ticket…</div>
+            </div>
+          </div>
+          <div style="position:relative;height:0">
+            <div style="position:absolute;right:20px;bottom:24px;width:56px;height:56px;border-radius:16px;background:oklch(58% 0.15 55);display:flex;align-items:center;justify-content:center;box-shadow:0 6px 16px rgba(0,0,0,.2)">
+              <span style="color:#fff;font:400 26px/1 inherit">+</span>
+            </div>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+    <div class="dv-opt" id="1b">
+      <div class="dv-olabel"><a class="dv-oid" href="#1b">1b</a>Live capture — during the call</div>
+      <x-import component-from-global-scope="AndroidDevice" from="./android-frame.jsx" dark="{{ dark }}" keyboard="{{ true }}" hint-size="412,892">
+        <div style="height:100%;display:flex;flex-direction:column;background:{{ bg }}">
+          <div style="display:flex;align-items:center;gap:10px;padding:20px 20px 6px">
+            <span style="width:9px;height:9px;border-radius:50%;background:oklch(55% 0.18 25)"></span>
+            <span style="font:500 13px/1 inherit;color:{{ dim }}">Recording · 12:04</span>
+          </div>
+          <div style="padding:10px 20px 14px">
+            <span style="font:600 19px/1.3 inherit;color:{{ text }}">Acme Corp — Kickoff</span>
+          </div>
+          <div style="margin:0 20px 14px;padding:12px 14px;border-radius:12px;background:{{ cardBg }}">
+            <div style="font:600 10px/1 inherit;letter-spacing:.04em;text-transform:uppercase;color:{{ dim }};margin-bottom:6px">Live transcript</div>
+            <div style="font:400 13px/1.6 inherit;color:{{ dim }}">"…budget's approved through Q3 on our end…"</div>
+          </div>
+          <div style="flex:1;padding:0 20px">
+            <div style="font:600 10px/1 inherit;letter-spacing:.04em;text-transform:uppercase;color:{{ dim }};margin-bottom:8px">Your notes</div>
+            <div style="font:400 15px/1.7 inherit;color:{{ text }}">sept 15 launch — tight<br>revised timeline mon<span style="opacity:.4">|</span></div>
+          </div>
+          <div style="padding:14px 20px 16px">
+            <div style="background:oklch(55% 0.18 25);color:#fff;text-align:center;padding:14px;border-radius:14px;font:500 15px/1 inherit">End &amp; Merge</div>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+    <div class="dv-opt" id="1c">
+      <div class="dv-olabel"><a class="dv-oid" href="#1c">1c</a>Note detail — primary editing surface</div>
+      <x-import component-from-global-scope="AndroidDevice" from="./android-frame.jsx" dark="{{ dark }}" hint-size="412,892">
+        <div style="height:100%;display:flex;flex-direction:column;background:{{ bg }}">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:18px 16px 6px">
+            <span style="font:400 22px/1 inherit;color:{{ dim }}">‹</span>
+            <span onClick="{{ toggleDiff }}" style="font:500 12px/1 inherit;color:{{ dim }};border:1px solid {{ border }};border-radius:100px;padding:6px 12px">{{ diffLabel }}</span>
+          </div>
+          <div style="padding:6px 20px 14px">
+            <div style="font:400 12px/1 inherit;color:{{ dim }};margin-bottom:6px">Today · 45 min</div>
+            <div style="font:600 20px/1.3 inherit;color:{{ text }}">Acme Corp — Onboarding Kickoff</div>
+          </div>
+          <div style="flex:1;overflow:auto;padding:0 20px" class="scrollbar-none">
+            <p style="font:400 15px/1.75 inherit;margin:0 0 12px;color:{{ text }}">
+              <span style="background:{{ amberBg }};color:{{ highlightText }};border-radius:3px">Client wants launch by Sept 15</span> — tighter than discussed internally.
+              <span style="background:{{ tealBg }};color:{{ highlightText }};border-radius:3px">Budget is approved through Q3</span>, so timeline is the only open risk.
+            </p>
+            <p style="font:400 15px/1.75 inherit;margin:0;color:{{ text }}">
+              <span style="background:{{ tealBg }};color:{{ highlightText }};border-radius:3px">Priya will send SSO requirements by Friday</span>.
+              <span style="background:{{ amberBg }};color:{{ highlightText }};border-radius:3px">Send revised timeline Monday</span>.
+            </p>
+          </div>
+          <div style="display:flex;gap:1px;border-top:1px solid {{ border }}">
+            <div style="flex:1;text-align:center;padding:14px;font:500 13px/1 inherit;color:{{ dim }}">Transcript</div>
+            <div style="flex:1;text-align:center;padding:14px;font:500 13px/1 inherit;color:oklch(58% 0.15 55)">Chat &amp; Recipes</div>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+    <div class="dv-opt" id="1d">
+      <div class="dv-olabel"><a class="dv-oid" href="#1d">1d</a>Transcript — full-screen, one tap away</div>
+      <x-import component-from-global-scope="AndroidDevice" from="./android-frame.jsx" dark="{{ dark }}" hint-size="412,892">
+        <div style="height:100%;display:flex;flex-direction:column;background:{{ bg }}">
+          <div style="display:flex;align-items:center;gap:14px;padding:18px 16px 12px;border-bottom:1px solid {{ border }}">
+            <span style="font:400 22px/1 inherit;color:{{ dim }}">‹</span>
+            <span style="font:500 15px/1 inherit;color:{{ text }}">Transcript</span>
+          </div>
+          <div style="flex:1;overflow:auto;padding:16px 20px" class="scrollbar-none">
+            <p style="font:400 14px/1.7 inherit;color:{{ dim }};margin:0 0 14px"><b style="color:{{ text }}">Priya</b> — Budget's approved through Q3 on our end.</p>
+            <p style="font:400 14px/1.7 inherit;color:{{ dim }};margin:0 0 14px"><b style="color:{{ text }}">You</b> — Great, and the SSO requirements?</p>
+            <p style="font:400 14px/1.7 inherit;color:{{ dim }};margin:0 0 14px"><b style="color:{{ text }}">Priya</b> — I'll get those to you by Friday.</p>
+            <p style="font:400 14px/1.7 inherit;color:{{ dim }};margin:0"><b style="color:{{ text }}">You</b> — Perfect, and launch is targeting Sept 15?</p>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+    <div class="dv-opt" id="1e">
+      <div class="dv-olabel"><a class="dv-oid" href="#1e">1e</a>Chat &amp; Recipes</div>
+      <x-import component-from-global-scope="AndroidDevice" from="./android-frame.jsx" dark="{{ dark }}" keyboard="{{ true }}" hint-size="412,892">
+        <div style="height:100%;display:flex;flex-direction:column;background:{{ bg }}">
+          <div style="display:flex;align-items:center;gap:14px;padding:18px 16px 12px;border-bottom:1px solid {{ border }}">
+            <span style="font:400 22px/1 inherit;color:{{ dim }}">‹</span>
+            <span style="font:500 15px/1 inherit;color:{{ text }}">Chat &amp; Recipes</span>
+          </div>
+          <div style="flex:1;overflow:auto;padding:16px 20px;display:flex;flex-direction:column;gap:10px" class="scrollbar-none">
+            <div style="align-self:flex-end;background:oklch(58% 0.15 55);color:#fff;padding:10px 14px;border-radius:14px 14px 2px 14px;font:400 14px/1.4 inherit;max-width:82%">Draft the follow-up email</div>
+            <div style="background:{{ cardBg }};color:{{ text }};padding:10px 14px;border-radius:14px 14px 14px 2px;font:400 14px/1.4 inherit;max-width:88%">Hi team — great speaking today. Confirming Sept 15 launch pending final SSO details…</div>
+          </div>
+          <div style="padding:10px 16px 14px;border-top:1px solid {{ border }}">
+            <div style="display:flex;gap:6px;overflow:auto;margin-bottom:10px;padding-bottom:2px" class="scrollbar-none">
+              <span style="flex:none;font:500 12.5px/1 inherit;padding:8px 13px;border-radius:100px;border:1px solid {{ border }};color:{{ text }}">Follow-up email</span>
+              <span style="flex:none;font:500 12.5px/1 inherit;padding:8px 13px;border-radius:100px;border:1px solid {{ border }};color:{{ text }}">Create ticket</span>
+              <span style="flex:none;font:500 12.5px/1 inherit;padding:8px 13px;border-radius:100px;border:1px solid {{ border }};color:{{ text }}">Summarize</span>
+            </div>
+            <div style="border:1px solid {{ border }};border-radius:100px;padding:12px 16px;font:400 14px/1 inherit;color:{{ dim }}">Ask anything…</div>
+          </div>
+        </div>
+      </x-import>
+    </div>
+
+    <div class="dv-opt" id="1f">
+      <div class="dv-olabel"><a class="dv-oid" href="#1f">1f</a>Settings — dark mode + privacy</div>
+      <x-import component-from-global-scope="AndroidDevice" from="./android-frame.jsx" dark="{{ dark }}" hint-size="412,892">
+        <div style="height:100%;display:flex;flex-direction:column;background:{{ bg }}">
+          <div style="padding:20px 20px 10px">
+            <span style="font:600 22px/1 inherit;color:{{ text }}">Settings</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-top:1px solid {{ border }};border-bottom:1px solid {{ border }}">
+            <div>
+              <div style="font:500 15px/1.3 inherit;color:{{ text }}">Dark mode</div>
+              <div style="font:400 12.5px/1.4 inherit;color:{{ dim }}">{{ darkModeSub }}</div>
+            </div>
+            <div onClick="{{ toggleDark }}" style="width:46px;height:26px;border-radius:100px;background:{{ switchBg }};position:relative;flex:none">
+              <div style="width:20px;height:20px;border-radius:50%;background:#fff;position:absolute;top:3px;left:{{ switchPos }};box-shadow:0 1px 3px rgba(0,0,0,.2)"></div>
+            </div>
+          </div>
+          <div style="padding:22px 20px 8px;font:600 11px/1 inherit;letter-spacing:.04em;text-transform:uppercase;color:{{ dim }}">Privacy &amp; security</div>
+          <div style="padding:0 20px 4px;font:400 13.5px/1.6 inherit;color:{{ dim }}">Zero-retention audio — deleted immediately after transcription, never stored.</div>
+          <div style="padding:10px 20px 4px;font:400 13.5px/1.6 inherit;color:{{ dim }}">SOC 2 Type II certified · GDPR compliant.</div>
+        </div>
+      </x-import>
+    </div>
+
+  </div>
+  <p class="dv-next">Try next: "make <a class="dv-oid" href="#1c">1c</a> the app's default landing screen" · "add search to <a class="dv-oid" href="#1a">1a</a>" · "show the privacy toggle state when off"</p>
+</section>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { dark: false, diffOn: true, training: false };
+
+  renderVals() {
+    const s = this.state;
+    const amber = 'oklch(93% 0.05 55)';
+    const teal = 'oklch(93% 0.035 200)';
+    return {
+      dark: s.dark,
+      bg: s.dark ? 'oklch(18% 0.006 260)' : '#ffffff',
+      cardBg: s.dark ? 'oklch(24% 0.008 260)' : 'oklch(97% 0.004 80)',
+      border: s.dark ? 'oklch(30% 0.01 260)' : 'oklch(90% 0.004 80)',
+      text: s.dark ? 'oklch(92% 0.004 80)' : 'oklch(20% 0.005 80)',
+      dim: s.dark ? 'oklch(62% 0.006 260)' : 'oklch(50% 0.005 80)',
+
+      diffLabel: s.diffOn ? 'Sources shown' : 'Show sources',
+      toggleDiff: () => this.setState({ diffOn: !s.diffOn }),
+      amberBg: s.diffOn ? amber : 'transparent',
+      tealBg: s.diffOn ? teal : 'transparent',
+      highlightText: s.diffOn ? 'oklch(22% 0.01 80)' : 'inherit',
+
+      darkModeSub: 'Matches system setting',
+      toggleDark: () => this.setState({ dark: !s.dark }),
+      switchBg: s.dark ? 'oklch(58% 0.15 55)' : 'oklch(85% 0.005 80)',
+      switchPos: s.dark ? '23px' : '3px'
+    };
+  }
+}
+
+</script>
+</body>
+</html>

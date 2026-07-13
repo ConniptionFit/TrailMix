@@ -14,23 +14,31 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOf
 
-data class TranscriptUpdate(
-    val finalText: String,
+data class SpeechEvent(
+    /** A newly finalized utterance (empty when only the partial changed). */
+    val finalizedUtterance: String,
+    /** The in-flight partial hypothesis. */
     val partialText: String,
 )
 
+/**
+ * Continuous dictation on the device's own recognizer.
+ *
+ * Privacy: uses [SpeechRecognizer.createOnDeviceSpeechRecognizer] exclusively —
+ * recognition never leaves the device, and no audio is ever written to disk by
+ * this app (the recognizer consumes the mic stream in memory).
+ */
 @Singleton
 class OnDeviceSpeechRecognizer @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
-    fun isAvailable(): Boolean = SpeechRecognizer.isRecognitionAvailable(context)
+    fun isAvailable(): Boolean = SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
 
-    fun listen(): Flow<TranscriptUpdate> {
-        if (!isAvailable()) return flowOf(TranscriptUpdate("", ""))
+    fun listen(): Flow<SpeechEvent> {
+        if (!isAvailable()) return flowOf(SpeechEvent("", ""))
 
         return callbackFlow {
-            val recognizer = SpeechRecognizer.createSpeechRecognizer(context)
-            val finals = StringBuilder()
+            val recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
             var restart = true
 
             fun startListening() {
@@ -40,7 +48,6 @@ class OnDeviceSpeechRecognizer @Inject constructor(
                         RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
                     )
                     putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-                    putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
                     putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
                 }
                 recognizer.startListening(intent)
@@ -69,10 +76,9 @@ class OnDeviceSpeechRecognizer @Inject constructor(
                         ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         ?.firstOrNull()
                         .orEmpty()
+                        .trim()
                     if (text.isNotBlank()) {
-                        if (finals.isNotEmpty()) finals.append(' ')
-                        finals.append(text.trim())
-                        trySend(TranscriptUpdate(finals.toString(), ""))
+                        trySend(SpeechEvent(finalizedUtterance = text, partialText = ""))
                     }
                     if (restart) startListening()
                 }
@@ -82,7 +88,9 @@ class OnDeviceSpeechRecognizer @Inject constructor(
                         ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         ?.firstOrNull()
                         .orEmpty()
-                    trySend(TranscriptUpdate(finals.toString(), partial))
+                    if (partial.isNotBlank()) {
+                        trySend(SpeechEvent(finalizedUtterance = "", partialText = partial))
+                    }
                 }
 
                 override fun onEvent(eventType: Int, params: Bundle?) = Unit
