@@ -84,6 +84,7 @@
 
   --editor-text-user: #f0f2f5;
   --editor-text-ai: #9aa2b1;
+  --editor-md-glyph: #4b5563;
   --editor-placeholder: rgba(255, 255, 255, 0.35);
 
   /* Quiet canvas: no ambient glow gradients, no heavy card shadows. */
@@ -155,6 +156,7 @@
 
   --editor-text-user: #1a1a18;
   --editor-text-ai: #64748b;
+  --editor-md-glyph: #a8a29e;
   --editor-placeholder: rgba(26, 26, 24, 0.35);
 
   --body-gradient: none;

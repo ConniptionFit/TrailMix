@@ -2210,7 +2210,7 @@ body {
   border: none;
   background: var(--color-bg-editor);
   font-size: 16px;
-  line-height: 1.75;
+  line-height: 2;
   white-space: pre-wrap;
   word-break: break-word;
   outline: none;
@@ -2244,13 +2244,53 @@ body {
   cursor: default;
 }
 
+/* Enhanced-notes markdown (redesign 2a): muted # glyph + bold olive section
+   titles, instead of browser-default headings. Applies everywhere Enhance
+   output renders (hub Mix view + meeting notes canvas). */
+.editor-component-surface h1,
+.editor-component-surface h2 {
+  font-family: inherit;
+  color: var(--primary, #a4c639);
+  font-weight: 700;
+  line-height: 1.4;
+  margin: 18px 0 4px;
+}
+
+.editor-component-surface h1 {
+  font-size: 17px;
+}
+
+.editor-component-surface h2 {
+  font-size: 15px;
+}
+
+.editor-component-surface h1::before,
+.editor-component-surface h2::before {
+  content: '# ';
+  color: var(--editor-md-glyph, #4b5563);
+  font-weight: 600;
+}
+
+.editor-component-surface h2::before {
+  content: '## ';
+}
+
+.editor-component-surface h1:first-child,
+.editor-component-surface h2:first-child {
+  margin-top: 0;
+}
+
+.editor-component-surface .md-bullet {
+  margin: 2px 0;
+}
+
 .editor-span {
   white-space: pre-wrap;
 }
 
 .editor-span-user {
   color: var(--editor-text-user);
-  font-weight: 400;
+  font-weight: 600;
 }
 
 .editor-span-ai {
