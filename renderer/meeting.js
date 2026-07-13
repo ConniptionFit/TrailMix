@@ -17,6 +17,9 @@
   let transcriptSearchIndex = -1;
   let sessionEncryptionPassword = null;
   let encryptPasswordResolver = null;
+  let isLiveRecording = false;
+  let enhanceMode = 'enhance'; // enhance | stop-enhance | back-live | show-enhanced
+  let isEnhancingPipeline = false;
 
   const llmStreamBuffers = new Map();
   const llmStreamRenderTimers = new Map();
@@ -131,6 +134,7 @@
   const btnJumpLatest = document.getElementById('btn-jump-latest');
   const editorHost = document.getElementById('editor-component-root');
   const btnMixEnhance = document.getElementById('btn-mix-enhance');
+  const btnMixLabel = btnMixEnhance?.querySelector('.btn-mix-label');
   const editorLegend = document.getElementById('editor-legend');
   const editorSaveStatus = document.getElementById('editor-save-status');
   const editorWaveformBars = document.getElementById('editor-waveform-bars');
@@ -141,6 +145,12 @@
   const inputTranscriptSearch = document.getElementById('input-transcript-search');
   const transcriptSearchCount = document.getElementById('transcript-search-count');
   const btnChatCancel = document.getElementById('btn-chat-cancel');
+  const postMeetingPanel = document.getElementById('post-meeting-panel');
+  const postPanelActions = document.getElementById('post-panel-actions');
+  const postPanelRecap = document.getElementById('post-panel-recap');
+  const meetingTagChips = document.getElementById('meeting-tag-chips');
+  const btnAddTag = document.getElementById('btn-add-tag');
+  const chipParticipant = document.getElementById('chip-participant');
 
   function setSaveStatus(text) {
     if (!editorSaveStatus) return;
@@ -374,15 +384,133 @@
     });
   }
 
+  function hasEnhancedDocument() {
+    const doc = jotEditor?.getDocument?.() || activeSession?.editorDocument;
+    return Boolean(doc?.mode === 'mixed' && doc?.spans?.length);
+  }
+
+  function isViewingEnhanced() {
+    return hasEnhancedDocument() && jotEditor?.viewMode === 'mixed';
+  }
+
+  function setEnhanceButtonState(mode, { mixing = false } = {}) {
+    if (!btnMixEnhance) return;
+    enhanceMode = mode;
+    btnMixEnhance.classList.toggle('is-stop-enhance', mode === 'stop-enhance');
+    btnMixEnhance.classList.toggle('is-back-live', mode === 'back-live');
+    btnMixEnhance.classList.toggle('is-mixing', mixing);
+    btnMixEnhance.disabled = mixing;
+    btnMixEnhance.setAttribute('aria-busy', mixing ? 'true' : 'false');
+
+    const labels = {
+      'stop-enhance': '⏹ Stop & Enhance',
+      'back-live': '↺ Back to live',
+      'show-enhanced': 'Show enhanced',
+      enhance: 'Enhance'
+    };
+    const label = mixing ? 'Enhancing…' : (labels[mode] || 'Enhance');
+    if (btnMixLabel) btnMixLabel.textContent = label;
+    else btnMixEnhance.textContent = label;
+  }
+
+  function syncEnhanceButton() {
+    if (isEnhancingPipeline) {
+      setEnhanceButtonState(enhanceMode === 'stop-enhance' ? 'stop-enhance' : enhanceMode, { mixing: true });
+      return;
+    }
+    if (isLiveRecording) {
+      setEnhanceButtonState('stop-enhance');
+      btnRecordToggle?.classList.add('hidden');
+      return;
+    }
+    btnRecordToggle?.classList.remove('hidden');
+    if (hasEnhancedDocument() && isViewingEnhanced()) {
+      setEnhanceButtonState('back-live');
+    } else if (hasEnhancedDocument()) {
+      setEnhanceButtonState('show-enhanced');
+    } else {
+      setEnhanceButtonState('enhance');
+    }
+  }
+
+  function escapeHtmlLite(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function formatEndedMeta() {
+    const seconds = recordingSeconds || getElapsedSecondsFromTranscript(activeSession?.transcript);
+    const mins = Math.max(1, Math.round(seconds / 60));
+    let when = 'Today';
+    try {
+      const d = activeSession?.date ? new Date(activeSession.date) : new Date();
+      when = d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    } catch (_) { /* ignore */ }
+    return `Ended · ${mins} min · ${when}`;
+  }
+
+  function renderTagChips() {
+    if (!meetingTagChips) return;
+    const tags = activeSession?.tags || [];
+    meetingTagChips.innerHTML = tags.map((tag) => (
+      `<span class="meeting-chip meeting-chip-tag">#${escapeHtmlLite(tag)}</span>`
+    )).join('');
+  }
+
+  function parseActionItems(raw) {
+    if (!raw) return [];
+    if (Array.isArray(raw)) {
+      return raw.map((item) => (typeof item === 'string' ? item : (item?.text || item?.title || ''))).filter(Boolean);
+    }
+    return String(raw)
+      .split('\n')
+      .map((line) => line.replace(/^[\s\-\[\]xX*•◦]+/, '').trim())
+      .filter(Boolean);
+  }
+
+  function renderPostMeetingPanel() {
+    if (!postMeetingPanel) return;
+    const ended = !isLiveRecording && Boolean(activeSession?.transcript?.length);
+    postMeetingPanel.classList.toggle('hidden', !ended);
+    if (!ended) return;
+
+    const items = parseActionItems(activeSession.actionItems);
+    if (postPanelActions) {
+      if (!items.length) {
+        postPanelActions.innerHTML = '<p class="post-empty-hint">Action items will appear here after processing finishes.</p>';
+      } else {
+        postPanelActions.innerHTML = items.map((text) => (
+          `<div class="post-action-item"><span class="post-action-check" aria-hidden="true"></span><span>${escapeHtmlLite(text)}</span></div>`
+        )).join('');
+      }
+    }
+    if (postPanelRecap) {
+      const recap = (activeSession.summary || '').trim() || 'One-line recap will appear here after processing finishes.';
+      postPanelRecap.innerHTML = `<p class="post-recap-text">${escapeHtmlLite(recap)}</p>`;
+    }
+  }
+
+  function updateEndedStatusLine() {
+    if (isLiveRecording || !activeSession?.transcript?.length) return;
+    if (recTitle) recTitle.textContent = 'Ended';
+    const parts = formatEndedMeta().replace(/^Ended · /, '');
+    if (recTimer) recTimer.textContent = parts;
+  }
+
   async function runMixEnhance(templateKey = null) {
     if (!activeSession || !jotEditor) return;
     const currentDocument = jotEditor.getDocument();
     if (!currentDocument.plainText.trim()) {
-      notify('Add some Mix-Ins before running Mix notes.', 'info');
+      isEnhancingPipeline = false;
+      syncEnhanceButton();
+      notify('Add some notes before running Enhance.', 'info');
       return;
     }
     syncSessionFromEditorDocument(activeSession, currentDocument);
-    btnMixEnhance.disabled = true;
+    isEnhancingPipeline = true;
+    setEnhanceButtonState(isLiveRecording ? 'stop-enhance' : enhanceMode, { mixing: true });
     jotEditor.setEnhancing(true);
     try {
       const result = await window.api.mixEnhance({
@@ -395,14 +523,50 @@
       activeSession.editorDocument = result.editorDocument;
       activeSession.enhancedNotes = result.enhancedNotes;
       jotEditor.applyEnhancedDocument(result.editorDocument);
-      editorLegend.classList.remove('hidden');
+      editorLegend?.classList.remove('hidden');
       await persistSession();
     } catch (err) {
       notify(err.message, 'error');
     } finally {
+      isEnhancingPipeline = false;
       jotEditor.setEnhancing(false);
-      btnMixEnhance.disabled = false;
+      syncEnhanceButton();
+      renderPostMeetingPanel();
     }
+  }
+
+  async function stopAndEnhance() {
+    isEnhancingPipeline = true;
+    setEnhanceButtonState('stop-enhance', { mixing: true });
+    try {
+      await window.api.stopRecording();
+    } catch (err) {
+      isEnhancingPipeline = false;
+      syncEnhanceButton();
+      notify(err?.message || 'Could not stop recording.', 'error');
+      return;
+    }
+    await runMixEnhance();
+  }
+
+  async function handleEnhancePrimaryClick() {
+    if (enhanceMode === 'stop-enhance') {
+      await stopAndEnhance();
+      return;
+    }
+    if (enhanceMode === 'back-live') {
+      jotEditor?.setViewMode('mixins');
+      editorLegend?.classList.add('hidden');
+      syncEnhanceButton();
+      return;
+    }
+    if (enhanceMode === 'show-enhanced') {
+      jotEditor?.setViewMode('mixed');
+      editorLegend?.classList.remove('hidden');
+      syncEnhanceButton();
+      return;
+    }
+    await runMixEnhance();
   }
 
   if (editorHost && window.EditorComponent) {
@@ -422,7 +586,37 @@
     });
   }
 
-  btnMixEnhance?.addEventListener('click', () => runMixEnhance());
+  btnMixEnhance?.addEventListener('click', () => handleEnhancePrimaryClick());
+
+  document.getElementById('tab-post-actions')?.addEventListener('click', () => {
+    document.getElementById('tab-post-actions')?.classList.add('active');
+    document.getElementById('tab-post-recap')?.classList.remove('active');
+    document.getElementById('tab-post-actions')?.setAttribute('aria-selected', 'true');
+    document.getElementById('tab-post-recap')?.setAttribute('aria-selected', 'false');
+    postPanelActions?.classList.remove('hidden');
+    postPanelRecap?.classList.add('hidden');
+  });
+
+  document.getElementById('tab-post-recap')?.addEventListener('click', () => {
+    document.getElementById('tab-post-recap')?.classList.add('active');
+    document.getElementById('tab-post-actions')?.classList.remove('active');
+    document.getElementById('tab-post-recap')?.setAttribute('aria-selected', 'true');
+    document.getElementById('tab-post-actions')?.setAttribute('aria-selected', 'false');
+    postPanelRecap?.classList.remove('hidden');
+    postPanelActions?.classList.add('hidden');
+  });
+
+  btnAddTag?.addEventListener('click', async () => {
+    if (!activeSession) return;
+    const tag = window.prompt('Add a tag (no # needed):');
+    if (!tag) return;
+    const cleaned = tag.replace(/^#/, '').trim();
+    if (!cleaned) return;
+    if (!Array.isArray(activeSession.tags)) activeSession.tags = [];
+    if (!activeSession.tags.includes(cleaned)) activeSession.tags.push(cleaned);
+    renderTagChips();
+    await persistSession();
+  });
 
   function showConflictModal(currentSessionId) {
     conflictMessage.textContent = `Trail "${currentSessionId}" is currently recording. Stop it and start here, or open the active Trail.`;
@@ -538,13 +732,14 @@
       && status.sessionId !== activeSession?.id && status.isRecording) return;
 
     if (status.isRecording && !status.isPaused) {
+      isLiveRecording = true;
       btnRecordToggle.className = 'btn-record stop';
       btnRecordToggle.innerHTML = '<span class="btn-icon">⏹</span> Stop Trail';
       btnPauseToggle.className = 'btn-record pause';
       btnPauseToggle.innerHTML = '<span class="btn-icon">⏸</span> Pause';
       btnPauseToggle.classList.remove('hidden');
       recIndicator.className = 'rec-indicator-active';
-      recTitle.textContent = 'Transcribing…';
+      recTitle.textContent = 'On the trail';
 
       if (status.isNewSession) {
         recordingSeconds = 0;
@@ -559,10 +754,13 @@
         recTimer.textContent = formatTimerSeconds(recordingSeconds);
       }, 1000);
       editorWaveformBars?.classList.remove('hidden');
+      syncEnhanceButton();
+      renderPostMeetingPanel();
       return;
     }
 
     if (!status.isRecording && status.isPaused) {
+      isLiveRecording = true;
       btnRecordToggle.className = 'btn-record stop';
       btnRecordToggle.innerHTML = '<span class="btn-icon">⏹</span> Stop Trail';
       btnPauseToggle.className = 'btn-record start';
@@ -572,15 +770,24 @@
       recTitle.textContent = 'Paused';
       clearInterval(recordingInterval);
       editorWaveformBars?.classList.add('hidden');
+      syncEnhanceButton();
+      renderPostMeetingPanel();
       return;
     }
 
+    isLiveRecording = false;
     updateIdleRecordButton();
     btnPauseToggle.classList.add('hidden');
     recIndicator.className = 'rec-indicator-static';
-    recTitle.textContent = 'Engine Idle';
     clearInterval(recordingInterval);
     editorWaveformBars?.classList.add('hidden');
+    if (activeSession?.transcript?.length) {
+      updateEndedStatusLine();
+    } else {
+      recTitle.textContent = 'Engine Idle';
+    }
+    syncEnhanceButton();
+    renderPostMeetingPanel();
   }
 
   window.api.onRecordingStatus(applyRecordingStatus);
@@ -906,11 +1113,26 @@
     window.api.getChatRecipes().then((recipes) => {
       const container = document.getElementById('chat-recipes');
       if (!container) return;
-      recipes.forEach((recipe) => {
+      const preferred = ['action-items', 'follow-up-email', 'qa'];
+      const labelOverrides = {
+        'action-items': 'List action items',
+        'follow-up-email': 'Write follow-up email',
+        qa: 'List Q&A',
+        decisions: 'List Q&A'
+      };
+      const ordered = preferred
+        .map((id) => recipes.find((r) => r.id === id))
+        .filter(Boolean);
+      const fallback = recipes.filter((r) => !ordered.includes(r));
+      const shown = (ordered.length ? ordered : recipes).concat(
+        ordered.length < 3 ? fallback.slice(0, 3 - ordered.length) : []
+      ).slice(0, 3);
+
+      shown.forEach((recipe) => {
         const pill = document.createElement('button');
         pill.type = 'button';
         pill.className = 'chat-recipe-pill';
-        pill.textContent = `${recipe.icon || ''} ${recipe.label}`.trim();
+        pill.textContent = labelOverrides[recipe.id] || recipe.label;
         pill.addEventListener('click', () => {
           runRecipeQuery(recipe);
         });
@@ -961,13 +1183,22 @@
     updateTitleUi();
     renderTranscript(session.transcript || []);
     if (jotEditor) jotEditor.loadDocument(normalizeEditorDocument(session));
+    renderTagChips();
     updateIdleRecordButton();
+    syncEnhanceButton();
+    renderPostMeetingPanel();
+    if (session.transcript?.length) updateEndedStatusLine();
     if (focusSegmentId) {
       setTimeout(() => focusTranscriptSegment(focusSegmentId), 120);
     }
     if (session.encrypted && !sessionEncryptionPassword) {
       void ensureEncryptionPassword();
     }
+    window.api.getSettings?.().then((settings) => {
+      if (chipParticipant && settings?.userName) {
+        chipParticipant.textContent = settings.userName;
+      }
+    }).catch(() => {});
     window.api.getRecordingStatus().then((status) => {
       if (status?.sessionId === sessionId && (status.isRecording || status.isPaused)) {
         applyRecordingStatus({
@@ -986,7 +1217,7 @@
 
 // ── Quiet-canvas rail & transcript overlay (redesign 2a, 2026-07-11) ──
 // Self-contained wiring for the static controls the redesigned layout added:
-// the "View full transcript" overlay toggle and the Share Notes copy pills.
+// the "View full transcript" overlay toggle and the Share Notes pills.
 (function () {
   const drawer = document.getElementById('meeting-transcript-drawer');
   const btnView = document.getElementById('btn-view-transcript');
@@ -1004,7 +1235,7 @@
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && drawer?.classList.contains('open')) {
       const searchBar = document.getElementById('transcript-search-bar');
-      if (searchBar && !searchBar.classList.contains('hidden')) return; // search's own Esc handler runs first
+      if (searchBar && !searchBar.classList.contains('hidden')) return;
       setTranscriptOpen(false);
     }
   });
@@ -1027,14 +1258,43 @@
     }
   }
 
-  document.getElementById('btn-copy-notes')?.addEventListener('click', () => {
+  function getNotesText() {
     const root = document.getElementById('editor-component-root');
-    copyText(root ? root.innerText : '', 'Notes');
+    return root ? root.innerText : '';
+  }
+
+  function getSessionIdFromUrl() {
+    return new URLSearchParams(window.location.search).get('sessionId') || '';
+  }
+
+  document.getElementById('btn-copy-link')?.addEventListener('click', () => {
+    const id = getSessionIdFromUrl();
+    copyText(id ? `trailmix://session/${id}` : '', 'Session link');
   });
 
-  document.getElementById('btn-copy-transcript')?.addEventListener('click', () => {
-    const container = document.getElementById('transcript-container');
-    const hasLines = container?.querySelector('.transcript-line');
-    copyText(hasLines ? container.innerText : '', 'Transcript');
+  document.getElementById('btn-copy-notes')?.addEventListener('click', () => {
+    copyText(getNotesText(), 'Notes');
+  });
+
+  document.getElementById('btn-export-notes')?.addEventListener('click', async () => {
+    const id = getSessionIdFromUrl();
+    if (!id || !window.api.exportCalls) {
+      toast('Export is unavailable for this session.', 'info');
+      return;
+    }
+    try {
+      const res = await window.api.exportCalls([id]);
+      if (res?.success === false) throw new Error(res.error || 'Export failed');
+      toast(res?.filePath ? `Exported to ${res.filePath}` : 'Exported.', 'success');
+    } catch (err) {
+      toast(err?.message || 'Export failed.', 'error');
+    }
+  });
+
+  document.getElementById('btn-share-notes')?.addEventListener('click', async () => {
+    const title = document.getElementById('input-meeting-title')?.value || 'TrailMix notes';
+    const body = getNotesText().trim();
+    const payload = `${title}\n\n${body}`.trim();
+    await copyText(payload, 'Shareable notes');
   });
 })();

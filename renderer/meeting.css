@@ -104,26 +104,83 @@ html,
   flex-shrink: 0;
 }
 
-/* Header buttons: compact pills. Stop state is the red destructive control from the
-   handoff ("⏹ Stop & Enhance" language stays split across Stop Trail + Mix notes). */
+/* Header buttons: compact pills. Live stop is red; enhanced state uses cyan "Back to live". */
 .meeting-header-actions .btn-record {
   font-size: 12.5px;
   font-weight: 700;
   padding: 9px 16px;
-  border-radius: 9px;
+  border-radius: var(--radius-button, 9px);
 }
 
 .meeting-header-actions .btn-record.stop {
-  background: var(--btn-red, #ff4d4d);
+  background: var(--color-stop, #ff4d4d);
   border-color: transparent;
   color: #fff;
 }
 
-.meeting-header-actions .btn-mix {
+.meeting-header-actions .btn-mix,
+.meeting-header-actions .btn-enhance-primary {
   font-size: 12.5px;
   font-weight: 700;
   padding: 9px 16px;
-  border-radius: 9px;
+  border-radius: var(--radius-button, 9px);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  cursor: pointer;
+  background: var(--primary, #a4c639);
+  color: var(--color-on-accent, #0c0e11);
+  transform: none;
+  box-shadow: none;
+}
+
+.meeting-header-actions .btn-enhance-primary:hover:not(:disabled) {
+  background: var(--primary-hover, #b8dc43);
+  transform: none;
+}
+
+.meeting-header-actions .btn-enhance-primary.is-stop-enhance {
+  background: var(--color-stop, #ff4d4d);
+  color: #fff;
+}
+
+.meeting-header-actions .btn-enhance-primary.is-stop-enhance:hover:not(:disabled) {
+  background: #ff6666;
+}
+
+.meeting-header-actions .btn-enhance-primary.is-back-live {
+  background: var(--color-back-live-bg, rgba(57, 198, 183, 0.14));
+  color: var(--color-back-live-fg, #39c6b7);
+}
+
+.meeting-header-actions .btn-enhance-primary.is-back-live:hover:not(:disabled) {
+  background: rgba(57, 198, 183, 0.22);
+}
+
+.meeting-header-actions .btn-enhance-primary.is-mixing,
+.meeting-header-actions .btn-enhance-primary:disabled {
+  opacity: 0.85;
+  pointer-events: none;
+  animation: none;
+}
+
+.btn-mix-spinner {
+  display: none;
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: enhance-spin 0.7s linear infinite;
+}
+
+.btn-enhance-primary.is-mixing .btn-mix-spinner {
+  display: inline-block;
+}
+
+@keyframes enhance-spin {
+  to { transform: rotate(360deg); }
 }
 
 .queue-pressure-banner {
@@ -169,12 +226,12 @@ html,
   display: flex;
   align-items: center;
   gap: 5px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--surface-chip, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border-chip, rgba(255, 255, 255, 0.08));
   color: var(--text-muted, #9aa2b1);
   font-size: 11.5px;
   padding: 5px 10px;
-  border-radius: 7px;
+  border-radius: var(--radius-chip, 7px);
 }
 
 .meeting-chip-dot {
@@ -184,6 +241,31 @@ html,
   background: var(--primary, #a4c639);
 }
 
+.meeting-tag-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.meeting-chip-add {
+  background: transparent;
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.15);
+  color: var(--text-faint, #6b7280);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.meeting-chip-add:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+  color: var(--text-muted, #9aa2b1);
+}
+
+.meeting-chip-tag {
+  color: var(--primary, #a4c639);
+}
+
 .meeting-notes-col .editor-component-host {
   flex: 1;
   min-height: 160px;
@@ -191,10 +273,93 @@ html,
 
 /* Quiet canvas: strip any card chrome the editor host inherits. */
 .meeting-notes-col .editor-component-host,
-.meeting-notes-col .editor-component-host .editor-surface {
+.meeting-notes-col .editor-component-host .editor-surface,
+.meeting-notes-col .editor-component-surface {
   background: transparent;
   border: none;
   box-shadow: none;
+}
+
+/* Header owns Enhance — hide the in-editor Mix toolbar chrome for a sparse canvas. */
+.meeting-notes-col .editor-overlay-toolbar {
+  display: none;
+}
+
+/* ── Post-meeting extras (3a) ── */
+.post-meeting-panel {
+  flex-shrink: 0;
+  margin-top: 18px;
+  max-width: 520px;
+}
+
+.post-meeting-panel.hidden {
+  display: none;
+}
+
+.post-meeting-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--radius-button, 9px);
+  padding: 3px;
+  width: fit-content;
+}
+
+.post-meeting-tab {
+  background: transparent;
+  border: none;
+  color: var(--text-muted, #9aa2b1);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  padding: 7px 14px;
+  border-radius: var(--radius-chip, 7px);
+  cursor: pointer;
+}
+
+.post-meeting-tab.active {
+  background: var(--primary, #a4c639);
+  color: var(--color-on-accent, #0c0e11);
+}
+
+.post-meeting-panel-body.hidden {
+  display: none;
+}
+
+.post-action-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 10px;
+  margin-bottom: 8px;
+  font-size: 13.5px;
+  color: var(--text-secondary, #e5e7eb);
+}
+
+.post-action-check {
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  border: 1.5px solid var(--text-muted, #9aa2b1);
+  border-radius: 4px;
+  background: transparent;
+}
+
+.post-recap-text {
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--text-muted, #9aa2b1);
+  margin: 0;
+}
+
+.post-empty-hint {
+  font-size: 12.5px;
+  color: var(--text-faint, #6b7280);
+  margin: 0;
 }
 
 .mix-stage-footer {
@@ -260,19 +425,30 @@ html,
 }
 
 .rail-pill {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  color: #e5e7eb;
+  background: var(--surface-chip, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border-chip, rgba(255, 255, 255, 0.08));
+  color: var(--text-secondary, #e5e7eb);
   font-size: 11.5px;
   font-family: inherit;
   padding: 8px 6px;
-  border-radius: 8px;
+  border-radius: var(--radius-pill, 8px);
   text-align: center;
   cursor: pointer;
 }
 
 .rail-pill:hover {
   background: rgba(255, 255, 255, 0.07);
+}
+
+.rail-pill-primary {
+  background: var(--primary, #a4c639);
+  border-color: transparent;
+  color: var(--color-on-accent, #0c0e11);
+  font-weight: 600;
+}
+
+.rail-pill-primary:hover {
+  background: var(--primary-hover, #b8dc43);
 }
 
 /* Recipe suggestions render as stacked pills (markup comes from meeting.js). */

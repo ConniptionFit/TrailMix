@@ -648,24 +648,34 @@ if (isMiniMode) {
 
   function renderHistoryTagFilters(tags) {
     if (!historyTagFilters || !historyTagPills) return;
+    const tagFilterSelect = document.getElementById('select-history-tag-filter');
+    if (tagFilterSelect) {
+      const current = tagFilterSelect.value;
+      tagFilterSelect.innerHTML = '<option value="">Filter: All tags</option>';
+      tags.forEach((tag) => {
+        const opt = document.createElement('option');
+        opt.value = tag;
+        opt.textContent = `#${tag}`;
+        if (selectedHistoryTags.has(tag) || current === tag) opt.selected = true;
+        tagFilterSelect.appendChild(opt);
+      });
+    }
+    // Keep pill row as a secondary multi-select surface when tags exist
     if (!tags.length) {
       historyTagFilters.classList.add('hidden');
       historyTagPills.innerHTML = '';
       return;
     }
-    historyTagFilters.classList.remove('hidden');
+    historyTagFilters.classList.add('hidden');
     historyTagPills.innerHTML = '';
-    tags.forEach((tag) => {
-      const pill = document.createElement('button');
-      pill.type = 'button';
-      pill.className = `history-tag-pill ${selectedHistoryTags.has(tag) ? 'active' : ''}`;
-      pill.textContent = `#${tag}`;
-      pill.addEventListener('click', () => {
-        if (selectedHistoryTags.has(tag)) selectedHistoryTags.delete(tag);
-        else selectedHistoryTags.add(tag);
-        loadHistoryList();
-      });
-      historyTagPills.appendChild(pill);
+  }
+
+  const selectHistoryTagFilter = document.getElementById('select-history-tag-filter');
+  if (selectHistoryTagFilter) {
+    selectHistoryTagFilter.addEventListener('change', () => {
+      selectedHistoryTags.clear();
+      if (selectHistoryTagFilter.value) selectedHistoryTags.add(selectHistoryTagFilter.value);
+      loadHistoryList();
     });
   }
 
@@ -1090,7 +1100,9 @@ if (isMiniMode) {
         const historyFragment = document.createDocumentFragment();
         filteredCalls.slice(0, HISTORY_CARD_CAP).forEach((call) => {
           const card = document.createElement('div');
-          card.className = 'history-card glassmorphic';
+          const isSelected = openedSessionId === call.id;
+          card.className = `history-card${isSelected ? ' selected' : ''}`;
+          card.setAttribute('data-callid', call.id);
           card.innerHTML = `
             <div class="history-card-header">
               <h3>${escapeHtml(call.title || 'Meeting Session')}</h3>
@@ -1100,7 +1112,9 @@ if (isMiniMode) {
             <p class="history-card-desc">${escapeHtml(call.encrypted ? 'Encrypted session' : (call.summary || 'No summary available.'))}</p>
           `;
           card.addEventListener('click', () => {
-            activateTab({ nav: navHome, pane: tabHubHome });
+            openedSessionId = call.id;
+            historyGrid.querySelectorAll('.history-card.selected').forEach((el) => el.classList.remove('selected'));
+            card.classList.add('selected');
             openMeetingForCall(call);
           });
           historyFragment.appendChild(card);

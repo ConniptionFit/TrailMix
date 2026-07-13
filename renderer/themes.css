@@ -7,8 +7,14 @@
   --sidebar-width: 240px;
   --sidebar-collapsed-width: 56px;
   --main-stage-max-width: 800px;
+  --meeting-rail-width: 250px;
   --font-family: 'Plus Jakarta Sans', 'Outfit', system-ui, -apple-system, sans-serif;
   --font-family-display: 'Roboto Slab', 'Rockwell', 'Georgia', serif;
+  --radius-chip: 7px;
+  --radius-pill: 8px;
+  --radius-button: 9px;
+  --radius-card: 12px;
+  --radius-panel: 16px;
 }
 
 /* ── Dark mode (preserve existing palette) ── */
@@ -29,8 +35,17 @@
   --accent-blue: #3d8bff;
   --text-main: #f0f2f5;
   --text-muted: #9aa2b1;
+  --text-faint: #6b7280;
+  --text-secondary: #e5e7eb;
+  --heading-hash: #4b5563;
   --btn-red: #ff4d4d;
   --btn-green: #2ecc71;
+  --surface-chip: rgba(255, 255, 255, 0.04);
+  --border-chip: rgba(255, 255, 255, 0.08);
+  --hairline: rgba(164, 198, 57, 0.08);
+  --titlebar-bg: #232629;
+  --titlebar-border: #1b1e20;
+  --titlebar-text: #eff0f1;
 
   --color-bg-app: var(--bg-base);
   --color-bg-panel: rgba(10, 12, 16, 0.92);
@@ -38,8 +53,8 @@
   --color-bg-hover: rgba(255, 255, 255, 0.04);
   --color-bg-card: var(--bg-surface);
   --color-text-primary: var(--text-main);
-  --color-text-secondary: #9aa2b1;
-  --color-text-muted: var(--text-muted);
+  --color-text-secondary: var(--text-muted);
+  --color-text-muted: var(--text-faint);
   --color-accent: var(--primary);
   --color-accent-hover: var(--primary-hover);
   --color-accent-soft: rgba(164, 198, 57, 0.08);
@@ -48,6 +63,10 @@
   --color-border-focus: rgba(164, 198, 57, 0.35);
   --color-scrollbar: rgba(255, 255, 255, 0.1);
   --color-scrollbar-hover: rgba(164, 198, 57, 0.3);
+  --color-on-accent: #0c0e11;
+  --color-stop: var(--btn-red);
+  --color-back-live-bg: rgba(57, 198, 183, 0.14);
+  --color-back-live-fg: var(--accent-cyan);
 
   --sidebar-bg: rgba(255, 255, 255, 0.02);
   --sidebar-border: rgba(164, 198, 57, 0.1);
@@ -87,8 +106,17 @@
   --accent-blue: #3d6bff;
   --text-main: #1a1a18;
   --text-muted: #78716c;
+  --text-faint: #a8a29e;
+  --text-secondary: #44403c;
+  --heading-hash: #a8a29e;
   --btn-red: #dc2626;
   --btn-green: #16a34a;
+  --surface-chip: rgba(26, 26, 24, 0.04);
+  --border-chip: rgba(26, 26, 24, 0.08);
+  --hairline: rgba(91, 140, 90, 0.12);
+  --titlebar-bg: #e7e5e0;
+  --titlebar-border: #d6d3d1;
+  --titlebar-text: #1a1a18;
 
   --color-bg-app: #faf8f5;
   --color-bg-panel: #ffffff;
@@ -106,6 +134,10 @@
   --color-border-focus: rgba(91, 140, 90, 0.35);
   --color-scrollbar: rgba(26, 26, 24, 0.12);
   --color-scrollbar-hover: rgba(91, 140, 90, 0.35);
+  --color-on-accent: #ffffff;
+  --color-stop: var(--btn-red);
+  --color-back-live-bg: rgba(42, 157, 143, 0.14);
+  --color-back-live-fg: var(--accent-cyan);
 
   --sidebar-bg: #faf8f5;
   --sidebar-border: rgba(26, 26, 24, 0.06);

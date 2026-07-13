@@ -11,7 +11,7 @@
   </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Roboto+Slab:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Roboto+Slab:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="themes.css">
   <link rel="stylesheet" href="index.css">
   <link rel="stylesheet" href="meeting.css">
@@ -37,16 +37,21 @@
         <button id="btn-record-toggle" class="btn-record start" type="button" aria-label="Start or stop transcription">
           <span class="btn-icon">⏺</span> Start Trail
         </button>
-        <button id="btn-mix-enhance" class="btn-mix" type="button">🥣 Mix notes</button>
+        <button id="btn-mix-enhance" class="btn-mix btn-enhance-primary" type="button" aria-busy="false">
+          <span class="btn-mix-label">Enhance</span>
+          <span class="btn-mix-spinner" aria-hidden="true"></span>
+        </button>
       </div>
     </header>
     <div id="queue-pressure-banner" class="queue-pressure-banner hidden" role="status" aria-live="polite"></div>
 
     <div class="meeting-body-row">
       <section class="meeting-notes-col">
-        <div class="meeting-chip-row" aria-hidden="true">
-          <span class="meeting-chip">📅 Today</span>
-          <span class="meeting-chip"><span class="meeting-chip-dot"></span>You</span>
+        <div class="meeting-chip-row" id="meeting-chip-row">
+          <span class="meeting-chip" id="chip-today">📅 Today</span>
+          <span class="meeting-chip"><span class="meeting-chip-dot"></span><span id="chip-participant">You</span></span>
+          <div id="meeting-tag-chips" class="meeting-tag-chips"></div>
+          <button id="btn-add-tag" class="meeting-chip meeting-chip-add" type="button">+ Add tag</button>
         </div>
         <div id="editor-component-root" class="editor-component-host"></div>
         <div id="editor-waveform-bars" class="editor-waveform-bars hidden" aria-hidden="true">
@@ -55,6 +60,17 @@
           <div class="waveform-bar"></div><div class="waveform-bar"></div><div class="waveform-bar"></div>
           <div class="waveform-bar"></div><div class="waveform-bar"></div><div class="waveform-bar"></div>
         </div>
+
+        <!-- Post-meeting extras (3a): Action Items / One-line recap -->
+        <div id="post-meeting-panel" class="post-meeting-panel hidden">
+          <div class="post-meeting-tabs" role="tablist" aria-label="Meeting extras">
+            <button id="tab-post-actions" class="post-meeting-tab active" type="button" role="tab" aria-selected="true">Action Items</button>
+            <button id="tab-post-recap" class="post-meeting-tab" type="button" role="tab" aria-selected="false">One-line recap</button>
+          </div>
+          <div id="post-panel-actions" class="post-meeting-panel-body" role="tabpanel"></div>
+          <div id="post-panel-recap" class="post-meeting-panel-body hidden" role="tabpanel"></div>
+        </div>
+
         <footer class="mix-stage-footer">
           <div class="mix-stage-footer-left">
             <p id="editor-save-status" class="editor-save-status" aria-live="polite"></p>
@@ -70,8 +86,10 @@
       <aside id="meeting-chat-widget" class="meeting-rail">
         <div class="rail-label">Share Notes</div>
         <div class="rail-share-grid">
-          <button id="btn-copy-notes" class="rail-pill" type="button">⧉ Copy notes</button>
-          <button id="btn-copy-transcript" class="rail-pill" type="button">⧉ Copy transcript</button>
+          <button id="btn-copy-link" class="rail-pill" type="button">🔗 Copy link</button>
+          <button id="btn-copy-notes" class="rail-pill" type="button">⧉ Copy text</button>
+          <button id="btn-export-notes" class="rail-pill" type="button">📤 Export</button>
+          <button id="btn-share-notes" class="rail-pill rail-pill-primary" type="button">Share</button>
         </div>
 
         <div class="rail-label">Ask Mix-Master</div>

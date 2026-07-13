@@ -147,8 +147,7 @@
     <aside id="sidebar" class="sidebar">
       <div class="sidebar-header">
         <button id="btn-trail-toggle" class="btn-trail-toggle" title="Toggle The Trail" aria-label="Toggle The Trail">≡</button>
-        <img src="../assets/logo.png" alt="TrailMix Logo" class="app-logo">
-        <h2 class="sidebar-brand">TrailMix</h2>
+        <h2 class="sidebar-brand">Trail<span class="sidebar-brand-accent">Mix</span></h2>
       </div>
       
       <div class="sidebar-space sidebar-space-workspace">
@@ -177,7 +176,7 @@
 
       <div class="sidebar-space sidebar-space-notes">
         <h3 class="sidebar-space-label">My notes</h3>
-        <div class="sidebar-folders-section">
+        <div class="sidebar-folders-section hidden" aria-hidden="true">
           <div class="sidebar-folders-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; padding: 0 4px;">
             <h4 class="sidebar-subsection-label">Folders</h4>
             <button id="btn-add-folder" class="icon-btn-toggle" title="Add Folder" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 14px; font-weight: bold; padding: 0 4px;">+</button>
@@ -325,6 +324,10 @@
         </div>
         <div class="trail-toolbar">
           <input type="text" id="input-history-search" class="input-text trail-search-input" placeholder="Search notes, transcript, #tag…" aria-label="Search The Trail">
+          <label class="sr-only" for="select-history-tag-filter">Filter by tags</label>
+          <select id="select-history-tag-filter" class="input-select trail-sort-select" aria-label="Filter by tags">
+            <option value="">Filter: All tags</option>
+          </select>
           <label class="sr-only" for="select-history-sort">Sort sessions</label>
           <select id="select-history-sort" class="input-select trail-sort-select">
             <option value="date-newest">Sort: Newest</option>

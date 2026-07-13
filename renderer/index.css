@@ -135,13 +135,18 @@ body {
 .sidebar-header h2,
 .sidebar-brand {
   font-family: var(--font-family-display);
-  font-size: 20px;
+  font-size: 14px;
   font-weight: 700;
-  letter-spacing: -0.5px;
-  background: linear-gradient(135deg, var(--text-main) 30%, var(--primary) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  letter-spacing: -0.2px;
+  color: var(--text-main, #f0f2f5);
+  background: none;
+  -webkit-background-clip: unset;
+  -webkit-text-fill-color: unset;
   transition: opacity var(--motion-fast);
+}
+
+.sidebar-brand-accent {
+  color: var(--primary, #a4c639);
 }
 
 .sidebar-menu {
@@ -779,9 +784,15 @@ body {
 
 [data-theme="light"] .sidebar-header h2,
 [data-theme="light"] .sidebar-brand {
-  background: linear-gradient(135deg, var(--color-text-primary) 30%, var(--color-accent) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  background: none;
+  -webkit-background-clip: unset;
+  -webkit-text-fill-color: unset;
+  color: var(--color-text-primary);
+}
+
+[data-theme="light"] .settings-card {
+  background: var(--bg-surface, #ffffff);
+  border-color: var(--color-border-subtle, rgba(26, 26, 24, 0.08));
 }
 
 /* Settings Tab Styles */
@@ -814,6 +825,12 @@ body {
 }
 
 .settings-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius-card, 12px);
+  padding: 18px;
+  box-shadow: none;
+  backdrop-filter: none;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -821,11 +838,11 @@ body {
 
 .settings-card h2 {
   font-family: var(--font-family-display);
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 600;
-  border-bottom: 1px solid var(--color-border-subtle);
-  padding-bottom: 10px;
-  margin-bottom: 8px;
+  border-bottom: none;
+  padding-bottom: 0;
+  margin: 0 0 4px;
 }
 
 .hardware-info-list {
@@ -987,19 +1004,27 @@ body {
 }
 
 .history-card {
-  padding: 20px;
-  border-radius: 12px;
+  padding: 14px;
+  border-radius: var(--radius-card, 12px);
   cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: background var(--motion-fast), border-color var(--motion-fast);
   display: flex;
   flex-direction: column;
   gap: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .history-card:hover {
-  transform: translateY(-4px);
+  transform: none;
+  border-color: rgba(164, 198, 57, 0.2);
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: none;
+}
+
+.history-card.selected {
+  background: rgba(164, 198, 57, 0.1);
   border-color: rgba(164, 198, 57, 0.3);
-  box-shadow: 0 12px 24px rgba(0,0,0,0.3);
 }
 
 .history-card-header {
@@ -2381,13 +2406,14 @@ body {
 }
 
 .theme-toggle-btn.active {
-  background: var(--color-bg-panel);
-  color: var(--color-accent);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  background: var(--primary, #a4c639);
+  color: var(--color-on-accent, #0c0e11);
+  box-shadow: none;
+  font-weight: 600;
 }
 
 [data-theme="dark"] .theme-toggle-btn.active {
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  box-shadow: none;
 }
 
 /* Analysis pane — lighter chrome for Mix tab */
@@ -2893,8 +2919,9 @@ body {
 }
 
 .trail-view-btn.active {
-  background: var(--color-accent-soft, rgba(164, 198, 57, 0.12));
-  color: var(--color-accent, #a4c639);
+  background: var(--primary, #a4c639);
+  color: var(--color-on-accent, #0c0e11);
+  font-weight: 600;
 }
 
 /* List view: compact rows instead of cards. */
