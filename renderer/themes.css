@@ -173,6 +173,92 @@
   border: 0;
 }
 
+/* Lucide inline icons */
+.tm-icon {
+  display: inline-block;
+  flex-shrink: 0;
+  vertical-align: -0.125em;
+}
+
+svg.tm-icon {
+  width: 1em;
+  height: 1em;
+}
+
+.tm-icon-nav {
+  width: 16px !important;
+  height: 16px !important;
+}
+
+.tm-icon-label {
+  line-height: 1.2;
+}
+
+.tm-icon-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+}
+
+.sidebar-btn .icon,
+.chat-icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  font-size: 0;
+  line-height: 0;
+}
+
+.bulk-btn,
+.icon-btn-toggle,
+.trail-view-btn,
+.global-ask-icon,
+.btn-icon-ghost,
+.call-lock-btn,
+.btn-chat-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dropdown-item,
+.context-menu-item,
+.view-btn,
+.rail-pill,
+.btn-record,
+.btn-mix,
+.meeting-chip,
+.lock-badge,
+.btn-mini-stop,
+.btn-mini-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.md-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.md-check {
+  width: 12px;
+  height: 12px;
+  margin-top: 3px;
+  border: 1.5px solid currentColor;
+  border-radius: 3px;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.md-checkbox.checked .md-check {
+  background: currentColor;
+  opacity: 0.85;
+}
+
 @media (prefers-reduced-motion: reduce) {
   :root {
     --motion-fast: 0ms;

@@ -135,8 +135,8 @@
       </div>
     </div>
     <div class="mini-controls">
-      <button id="mini-toggle" class="btn-mini-stop">⏹ Stop</button>
-      <button id="mini-relaunch" class="btn-mini-open">↗ Open</button>
+      <button id="mini-toggle" class="btn-mini-stop" data-icon="square" data-icon-size="14" data-icon-prepend="1">Stop</button>
+      <button id="mini-relaunch" class="btn-mini-open" data-icon="external-link" data-icon-size="14" data-icon-prepend="1">Open</button>
     </div>
   </div>
 
@@ -146,7 +146,7 @@
     <!-- The Trail (sidebar) -->
     <aside id="sidebar" class="sidebar">
       <div class="sidebar-header">
-        <button id="btn-trail-toggle" class="btn-trail-toggle" title="Toggle The Trail" aria-label="Toggle The Trail">≡</button>
+        <button id="btn-trail-toggle" class="btn-trail-toggle" title="Toggle The Trail" aria-label="Toggle The Trail" data-icon="menu" data-icon-size="18"></button>
         <h2 class="sidebar-brand">Trail<span class="sidebar-brand-accent">Mix</span></h2>
       </div>
       
@@ -154,22 +154,22 @@
         <h3 class="sidebar-space-label">Workspace</h3>
         <div class="sidebar-menu">
           <button id="nav-home" class="sidebar-btn active">
-            <span class="icon">🏠</span><span class="sidebar-label">Home</span>
+            <span class="icon" data-icon="home" data-icon-size="16"></span><span class="sidebar-label">Home</span>
           </button>
           <button id="btn-new-meeting" class="sidebar-btn sidebar-btn-primary">
-            <span class="icon">➕</span><span class="sidebar-label">New Meeting</span>
+            <span class="icon" data-icon="plus" data-icon-size="16"></span><span class="sidebar-label">New Meeting</span>
           </button>
           <button id="nav-calendar" class="sidebar-btn">
-            <span class="icon">📅</span><span class="sidebar-label">Calendar</span>
+            <span class="icon" data-icon="calendar" data-icon-size="16"></span><span class="sidebar-label">Calendar</span>
           </button>
           <button id="nav-action-items" class="sidebar-btn">
-            <span class="icon">📋</span><span class="sidebar-label">Action Items</span>
+            <span class="icon" data-icon="clipboard-list" data-icon-size="16"></span><span class="sidebar-label">Action Items</span>
           </button>
           <button id="nav-history" class="sidebar-btn">
-            <span class="icon">📜</span><span class="sidebar-label">Full Trail</span>
+            <span class="icon" data-icon="route" data-icon-size="16"></span><span class="sidebar-label">Full Trail</span>
           </button>
           <button id="nav-settings" class="sidebar-btn sidebar-btn-settings">
-            <span class="icon">⚙️</span><span class="sidebar-label">Nuts and Bolts</span>
+            <span class="icon" data-icon="settings" data-icon-size="16"></span><span class="sidebar-label">Nuts and Bolts</span>
           </button>
         </div>
       </div>
@@ -179,7 +179,7 @@
         <div class="sidebar-folders-section hidden" aria-hidden="true">
           <div class="sidebar-folders-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; padding: 0 4px;">
             <h4 class="sidebar-subsection-label">Folders</h4>
-            <button id="btn-add-folder" class="icon-btn-toggle" title="Add Folder" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 14px; font-weight: bold; padding: 0 4px;">+</button>
+            <button id="btn-add-folder" class="icon-btn-toggle" title="Add Folder" data-icon="plus" data-icon-size="14"></button>
           </div>
           <div id="sidebar-folders-list" class="folders-list" style="display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; max-height: 120px; overflow-y: auto; padding: 2px;">
             <!-- Folders populated dynamically -->
@@ -189,17 +189,17 @@
         <div class="sidebar-history-section sidebar-trail-body">
           <div class="sidebar-history-header" style="position: relative;">
             <h4 class="sidebar-subsection-label">Session history</h4>
-            <button id="btn-history-menu" class="icon-btn-toggle" title="History Menu">☰</button>
+            <button id="btn-history-menu" class="icon-btn-toggle" title="History Menu" data-icon="menu" data-icon-size="16"></button>
           
           <!-- History Menu Dropdown -->
           <div id="history-menu-dropdown" class="history-dropdown hidden">
-            <button id="menu-opt-multiselect" class="dropdown-item">☑️ Select Multiple</button>
+            <button id="menu-opt-multiselect" class="dropdown-item" data-icon="check-square" data-icon-size="14" data-icon-prepend="1">Select Multiple</button>
             <div class="dropdown-divider"></div>
             <div class="dropdown-header">Sort By</div>
-            <button id="menu-opt-sort-newest" class="dropdown-item active-sort">📅 Date: Newest First</button>
-            <button id="menu-opt-sort-oldest" class="dropdown-item">📅 Date: Oldest First</button>
-            <button id="menu-opt-sort-title-asc" class="dropdown-item">🔤 Title: A-Z</button>
-            <button id="menu-opt-sort-title-desc" class="dropdown-item">🔤 Title: Z-A</button>
+            <button id="menu-opt-sort-newest" class="dropdown-item active-sort" data-icon="calendar" data-icon-size="14" data-icon-prepend="1">Date: Newest First</button>
+            <button id="menu-opt-sort-oldest" class="dropdown-item" data-icon="calendar" data-icon-size="14" data-icon-prepend="1">Date: Oldest First</button>
+            <button id="menu-opt-sort-title-asc" class="dropdown-item" data-icon="type" data-icon-size="14" data-icon-prepend="1">Title: A-Z</button>
+            <button id="menu-opt-sort-title-desc" class="dropdown-item" data-icon="type" data-icon-size="14" data-icon-prepend="1">Title: Z-A</button>
           </div>
         </div>
         <div class="sidebar-search-container" style="margin-bottom: 12px; padding: 0 4px;">
@@ -208,11 +208,11 @@
         <div id="sidebar-bulk-actions" class="bulk-actions-bar hidden">
           <span id="bulk-select-count">0 selected</span>
           <div class="bulk-buttons">
-            <button id="btn-bulk-decrypt" class="bulk-btn" title="Unlock selected encrypted notes" aria-label="Unlock selected encrypted notes">🔓</button>
-            <button id="btn-bulk-merge" class="bulk-btn" title="Merge Selected" aria-label="Merge selected">🔗</button>
-            <button id="btn-bulk-export" class="bulk-btn" title="Export Selected" aria-label="Export selected">📤</button>
-            <button id="btn-bulk-delete" class="bulk-btn delete" title="Delete Selected" aria-label="Delete selected">🗑️</button>
-            <button id="btn-bulk-cancel" class="bulk-btn" title="Cancel" aria-label="Cancel multi-select">❌</button>
+            <button id="btn-bulk-decrypt" class="bulk-btn" title="Unlock selected encrypted notes" aria-label="Unlock selected encrypted notes" data-icon="unlock" data-icon-size="15"></button>
+            <button id="btn-bulk-merge" class="bulk-btn" title="Merge Selected" aria-label="Merge selected" data-icon="link" data-icon-size="15"></button>
+            <button id="btn-bulk-export" class="bulk-btn" title="Export Selected" aria-label="Export selected" data-icon="upload" data-icon-size="15"></button>
+            <button id="btn-bulk-delete" class="bulk-btn delete" title="Delete Selected" aria-label="Delete selected" data-icon="trash-2" data-icon-size="15"></button>
+            <button id="btn-bulk-cancel" class="bulk-btn" title="Cancel" aria-label="Cancel multi-select" data-icon="x" data-icon-size="15"></button>
           </div>
         </div>
         <div id="sidebar-calls-list" class="calls-list">
@@ -240,8 +240,8 @@
           <p>Your meeting history lives here. Start a new meeting from the sidebar or continue a recent session below.</p>
         </div>
         <div class="hub-home-actions">
-          <button id="btn-hub-new-meeting" class="btn-primary" type="button">➕ New Meeting</button>
-          <button id="btn-hub-browse-trail" class="btn-secondary" type="button">📜 Full Trail</button>
+          <button id="btn-hub-new-meeting" class="btn-primary" type="button" data-icon="plus" data-icon-size="15" data-icon-prepend="1">New Meeting</button>
+          <button id="btn-hub-browse-trail" class="btn-secondary" type="button" data-icon="route" data-icon-size="15" data-icon-prepend="1">Full Trail</button>
         </div>
         <div id="hub-recent-sessions" class="hub-recent-sessions" aria-live="polite"></div>
       </section>
@@ -255,9 +255,9 @@
         
         <div class="calendar-controls-bar">
           <div class="view-selectors">
-            <button id="btn-calendar-grid-view" class="view-btn active">📅 Calendar View</button>
-            <button id="btn-calendar-list-view" class="view-btn">📋 List View</button>
-            <button id="btn-calendar-omitted-view" class="view-btn">🙈 Omitted Deadlines</button>
+            <button id="btn-calendar-grid-view" class="view-btn active" data-icon="calendar" data-icon-size="14" data-icon-prepend="1">Calendar View</button>
+            <button id="btn-calendar-list-view" class="view-btn" data-icon="clipboard-list" data-icon-size="14" data-icon-prepend="1">List View</button>
+            <button id="btn-calendar-omitted-view" class="view-btn" data-icon="eye-off" data-icon-size="14" data-icon-prepend="1">Omitted Deadlines</button>
           </div>
           
           <div id="calendar-sort-controls" class="sort-controls hidden">
@@ -308,7 +308,7 @@
         </div>
         <div class="action-items-container">
           <div class="card glassmorphic action-items-card">
-            <h2>📋 Extracted Action Items</h2>
+            <h2 class="tm-icon-inline" data-icon="clipboard-list" data-icon-size="16" data-icon-prepend="1">Extracted Action Items</h2>
             <div id="action-items-list" class="action-checklist-wrapper">
               <!-- Dynamically populated -->
             </div>
@@ -336,8 +336,8 @@
             <option value="title-desc">Sort: Title Z–A</option>
           </select>
           <div class="trail-view-toggle" role="group" aria-label="Trail layout">
-            <button id="btn-trail-grid" class="trail-view-btn active" type="button" title="Grid view" aria-label="Grid view">▦</button>
-            <button id="btn-trail-list" class="trail-view-btn" type="button" title="List view" aria-label="List view">☰</button>
+            <button id="btn-trail-grid" class="trail-view-btn active" type="button" title="Grid view" aria-label="Grid view" data-icon="layout-grid" data-icon-size="14"></button>
+            <button id="btn-trail-list" class="trail-view-btn" type="button" title="List view" aria-label="List view" data-icon="list" data-icon-size="14"></button>
           </div>
         </div>
         <div id="history-tag-filters" class="history-tag-filters hidden">
@@ -589,13 +589,13 @@
     <div id="chat-agent-widget" class="chat-widget closed">
       <div id="chat-header" class="chat-header">
         <div class="chat-title">
-          <span class="chat-icon">💬</span>
+          <span class="chat-icon" data-icon="message-circle" data-icon-size="18"></span>
           <div>
             <h4>Mix-Master</h4>
             <span>Your offline meeting AI</span>
           </div>
         </div>
-        <button id="btn-chat-toggle" class="chat-toggle-btn">▲</button>
+        <button id="btn-chat-toggle" class="chat-toggle-btn" data-icon="chevron-up" data-icon-size="16" aria-label="Toggle chat"></button>
       </div>
 
       <div class="chat-body">
@@ -618,7 +618,7 @@
 
     <!-- Fixed bottom Ask bar (Ctrl+J) -->
     <div id="global-ask-bar" class="global-ask-bar">
-      <button id="btn-global-ask-open" type="button" class="global-ask-icon" title="Open AI chat (Ctrl+J)">💬</button>
+      <button id="btn-global-ask-open" type="button" class="global-ask-icon" title="Open AI chat (Ctrl+J)" aria-label="Open AI chat" data-icon="message-circle" data-icon-size="18"></button>
       <input type="text" id="input-global-ask" placeholder="Ask Mix-Master across your meeting history…" class="global-ask-input">
       <span class="global-ask-hint">Ctrl+J</span>
     </div>
@@ -650,8 +650,9 @@
         <input type="text" id="folder-modal-name" class="input-text" placeholder="Folder name">
       </div>
       <div class="modal-field">
-        <label for="folder-modal-icon">Icon (emoji)</label>
-        <input type="text" id="folder-modal-icon" class="input-text" placeholder="📁" maxlength="4">
+        <label for="folder-modal-icon">Icon name</label>
+        <input type="text" id="folder-modal-icon" class="input-text" placeholder="folder" maxlength="32">
+        <p class="field-desc">Lucide icon id (e.g. folder, briefcase, star). Defaults to folder.</p>
       </div>
       <div class="modal-field">
         <label for="folder-modal-description">Description</label>
@@ -687,24 +688,25 @@
 
   <!-- Custom Context Menu for Call items -->
   <div id="calls-context-menu" class="custom-context-menu hidden">
-    <div class="context-menu-item" id="ctx-open-file">📂 Open File Location</div>
-    <div class="context-menu-item" id="ctx-find-related">🔍 Find Related Transcripts</div>
-    <div class="context-menu-item" id="ctx-select-mode">☑️ Select (Multi-Select)</div>
+    <div class="context-menu-item" id="ctx-open-file" data-icon="folder-open" data-icon-size="14" data-icon-prepend="1">Open File Location</div>
+    <div class="context-menu-item" id="ctx-find-related" data-icon="search" data-icon-size="14" data-icon-prepend="1">Find Related Transcripts</div>
+    <div class="context-menu-item" id="ctx-select-mode" data-icon="check-square" data-icon-size="14" data-icon-prepend="1">Select (Multi-Select)</div>
     <div class="context-menu-divider"></div>
-    <div class="context-menu-item delete" id="ctx-delete-call">🗑️ Delete Transcript</div>
+    <div class="context-menu-item delete" id="ctx-delete-call" data-icon="trash-2" data-icon-size="14" data-icon-prepend="1">Delete Transcript</div>
   </div>
 
   <!-- Custom Context Menu for Deadline items -->
   <div id="deadlines-context-menu" class="custom-context-menu hidden">
-    <div class="context-menu-item" id="ctx-hide-deadline">🙈 Hide from Calendar</div>
-    <div class="context-menu-item" id="ctx-show-deadline">👁️ Restore to Calendar</div>
+    <div class="context-menu-item" id="ctx-hide-deadline" data-icon="eye-off" data-icon-size="14" data-icon-prepend="1">Hide from Calendar</div>
+    <div class="context-menu-item" id="ctx-show-deadline" data-icon="eye" data-icon-size="14" data-icon-prepend="1">Restore to Calendar</div>
     <div class="context-menu-divider"></div>
-    <div class="context-menu-item delete" id="ctx-delete-deadline">🗑️ Delete Action Item</div>
+    <div class="context-menu-item delete" id="ctx-delete-deadline" data-icon="trash-2" data-icon-size="14" data-icon-prepend="1">Delete Action Item</div>
   </div>
 
   <!-- Global Tooltip Element -->
   <div id="global-tooltip" class="global-tooltip-el hidden"></div>
 
+  <script src="shared/icons.js"></script>
   <script src="shared/ipc-client.js"></script>
   <script src="shared/toast.js"></script>
   <script src="shared/confirm.js"></script>

@@ -22,6 +22,16 @@ let globalTooltip = null;
 const mainApp = document.getElementById('main-app');
 const miniWidget = document.getElementById('mini-widget');
 
+function tmIcon(name, size = 14) {
+  return window.TrailMixIcons ? window.TrailMixIcons.icon(name, { size }) : '';
+}
+
+function tmIconText(name, text, size = 14) {
+  return window.TrailMixIcons
+    ? window.TrailMixIcons.withText(name, text, { size })
+    : text;
+}
+
 if (isMiniMode) {
   // Setup Mini mode
   mainApp.classList.add('hidden');
@@ -270,7 +280,7 @@ if (isMiniMode) {
       card.innerHTML = `
         <div class="history-card-header">
           <h3>${escapeHtml(call.title || 'Meeting Session')}</h3>
-          ${call.encrypted ? '<span class="lock-badge">🔒</span>' : ''}
+          ${call.encrypted ? `<span class="lock-badge">${tmIcon('lock', 12)}</span>` : ''}
         </div>
         <div class="history-card-date">${escapeHtml(call.date || '')}</div>
         <p class="history-card-desc">${escapeHtml(summary)}</p>
@@ -709,7 +719,7 @@ if (isMiniMode) {
     const tagline = escapeHtml(call.title || 'Meeting Session');
     const ftsSnippet = trailVirtual.snippetById.get(call.id);
     const descriptionRaw = call.encrypted && !call.unlocked
-      ? '🔒 Encrypted — click to unlock'
+      ? `${tmIcon('lock', 12)} Encrypted — click to unlock`
       : (ftsSnippet
         ? ftsSnippet.replace(/\[\[/g, '').replace(/\]\]/g, '')
         : (call.encrypted ? 'Encrypted session' : (call.description || 'No description available.')));
@@ -746,7 +756,7 @@ if (isMiniMode) {
     item.innerHTML = `
       ${checkboxHtml}
       <div class="call-item-details">
-        <div class="call-item-title">${call.encrypted && !call.unlocked ? '<button type="button" class="call-lock-btn" title="Unlock">🔒</button> ' : (call.encrypted ? '🔒 ' : '')}${tagline}</div>
+        <div class="call-item-title">${call.encrypted && !call.unlocked ? `<button type="button" class="call-lock-btn" title="Unlock">${tmIcon('lock', 12)}</button> ` : (call.encrypted ? `${tmIcon('lock', 12)} ` : '')}${tagline}</div>
         <div class="call-item-date">${escapeHtml(call.date || '')}</div>
         <div class="call-item-desc">${description}</div>
         ${tagsHtml}
@@ -818,7 +828,7 @@ if (isMiniMode) {
     const tagline = call.title || 'Meeting Session';
     const ftsSnippet = trailVirtual.snippetById.get(call.id);
     const description = call.encrypted && !call.unlocked
-      ? '🔒 Encrypted — click to unlock'
+      ? `${tmIcon('lock', 12)} Encrypted — click to unlock`
       : (ftsSnippet
         ? ftsSnippet.replace(/\[\[/g, '').replace(/\]\]/g, '')
         : (call.encrypted ? 'Encrypted session' : (call.description || 'No description available.')));
@@ -1106,7 +1116,7 @@ if (isMiniMode) {
           card.innerHTML = `
             <div class="history-card-header">
               <h3>${escapeHtml(call.title || 'Meeting Session')}</h3>
-              ${call.encrypted ? '<span class="lock-badge">🔒 Locked</span>' : ''}
+              ${call.encrypted ? `<span class="lock-badge">${tmIcon('lock', 12)} Locked</span>` : ''}
             </div>
             <div class="history-card-date">${escapeHtml(call.date || '')}</div>
             <p class="history-card-desc">${escapeHtml(call.encrypted ? 'Encrypted session' : (call.summary || 'No summary available.'))}</p>
@@ -1183,7 +1193,7 @@ if (isMiniMode) {
       }`;
       allItem.innerHTML = `
         <div class="flex items-center gap-2">
-          <span>📂</span>
+          <span>${tmIcon('folder-open', 14)}</span>
           <span>All notes</span>
         </div>
       `;
@@ -1205,21 +1215,24 @@ if (isMiniMode) {
             : 'text-slate-400 border border-transparent hover:bg-slate-800/30 hover:text-slate-200'
         }`;
         
+        const folderIconName = (folder.icon && window.TrailMixIcons?.paths?.[folder.icon])
+          ? folder.icon
+          : 'folder';
         item.innerHTML = `
           <div class="folder-item-main flex items-center gap-2 flex-grow truncate" title="${folder.description || ''}">
-            <span class="folder-icon">${folder.icon || '📁'}</span>
+            <span class="folder-icon">${tmIcon(folderIconName, 14)}</span>
             <div class="folder-text truncate">
               <span class="truncate">${folder.name}</span>
               ${folder.description ? `<span class="folder-description">${folder.description}</span>` : ''}
             </div>
           </div>
           <div class="flex items-center gap-1.5 folder-actions opacity-60 hover:opacity-100 transition">
-            ${canManage ? '<button class="btn-folder-edit p-0.5 text-slate-400 hover:text-trail-400 transition" title="Rename folder" data-folderid="' + folder.id + '">✏️</button>' : ''}
-            ${canManage ? '<button class="btn-folder-export p-0.5 text-slate-400 hover:text-trail-400 transition" title="Export Folder to Obsidian" data-folderid="' + folder.id + '">📤</button>' : ''}
-            ${canManage ? '<button class="btn-folder-delete p-0.5 text-slate-400 hover:text-red-400 transition" title="Delete Folder" data-folderid="' + folder.id + '">🗑️</button>' : ''}
+            ${canManage ? '<button class="btn-folder-edit p-0.5 text-slate-400 hover:text-trail-400 transition" title="Rename folder" data-folderid="' + folder.id + '">' + tmIcon('pencil', 12) + '</button>' : ''}
+            ${canManage ? '<button class="btn-folder-export p-0.5 text-slate-400 hover:text-trail-400 transition" title="Export Folder to Obsidian" data-folderid="' + folder.id + '">' + tmIcon('upload', 12) + '</button>' : ''}
+            ${canManage ? '<button class="btn-folder-delete p-0.5 text-slate-400 hover:text-red-400 transition" title="Delete Folder" data-folderid="' + folder.id + '">' + tmIcon('trash-2', 12) + '</button>' : ''}
           </div>
         `;
-        
+       
         item.addEventListener('click', (e) => {
           if (e.target.closest('.folder-actions')) return;
           selectFolder(folder.id);
@@ -1295,7 +1308,7 @@ if (isMiniMode) {
     folderModalTargetId = folder?.id || null;
     folderModalTitle.textContent = mode === 'edit' ? 'Edit Folder' : 'New Folder';
     folderModalName.value = folder?.name || '';
-    folderModalIcon.value = folder?.icon || '📁';
+    folderModalIcon.value = folder?.icon || 'folder';
     folderModalDescription.value = folder?.description || '';
     folderModal.classList.remove('hidden');
     folderModalName.focus();
@@ -1310,7 +1323,7 @@ if (isMiniMode) {
   function saveFolderModal() {
     const name = folderModalName?.value.trim();
     if (!name) return;
-    const icon = folderModalIcon?.value.trim() || '📁';
+    const icon = folderModalIcon?.value.trim() || 'folder';
     const description = folderModalDescription?.value.trim() || '';
 
     if (folderModalMode === 'edit' && folderModalTargetId) {
@@ -2008,7 +2021,7 @@ if (isMiniMode) {
         const pill = document.createElement('button');
         pill.type = 'button';
         pill.className = 'chat-recipe-pill';
-        pill.textContent = `${recipe.icon || ''} ${recipe.label}`.trim();
+        pill.textContent = recipe.label;
         pill.addEventListener('click', () => {
           toggleChatSidebar(true);
           runRecipeQuery(recipe);
@@ -2019,7 +2032,7 @@ if (isMiniMode) {
   }
 
   function runRecipeQuery(recipe) {
-    appendChatMessage('user', `${recipe.icon || ''} ${recipe.label}`.trim());
+    appendChatMessage('user', recipe.label);
     const loadingId = appendChatMessage('assistant', 'Running recipe locally…');
 
     window.api.chatQuery({
@@ -2604,7 +2617,7 @@ if (isMiniMode) {
         const block = document.createElement('div');
         block.className = `action-item-block ${task.completed ? 'completed' : ''}`;
         
-        const dueDateHtml = task.dueDate ? `<span class="task-date" style="margin-left: 10px; font-size: 11px;">📅 Due: ${task.dueDate}</span>` : '';
+        const dueDateHtml = task.dueDate ? `<span class="task-date tm-icon-inline" style="margin-left: 10px; font-size: 11px;">${tmIcon('calendar', 12)} Due: ${task.dueDate}</span>` : '';
         const assigneeHtml = `<span class="assignee-badge" style="background: rgba(164,198,57,0.12); border: 1px solid rgba(164,198,57,0.25); color: var(--primary); padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; margin-right: 8px;">${task.assignee || 'Unassigned'}</span>`;
         
         let contextRowHtml = '';
@@ -2626,7 +2639,7 @@ if (isMiniMode) {
               </label>
               <h3 class="action-headline" style="font-size: 14px; color: var(--text-main); margin: 0; display: flex; align-items: center;">${assigneeHtml} ${task.text} ${dueDateHtml}</h3>
             </div>
-            <span class="action-expand-icon">▼</span>
+            <span class="action-expand-icon">${tmIcon('chevron-down', 12)}</span>
           </div>
           <div class="action-item-content" style="padding: 0 12px 12px 34px; border-top: 1px solid rgba(255, 255, 255, 0.05); font-size: 12.5px; color: var(--text-muted); display: none;">
             <p style="margin: 0 0 8px 0; opacity: 0.8;">Action item extracted from call context.</p>

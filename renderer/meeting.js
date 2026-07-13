@@ -366,7 +366,7 @@
     if (!transcript?.length) {
       const empty = document.createElement('div');
       empty.className = 'transcript-empty-state';
-      empty.innerHTML = '<span class="empty-icon">🎧</span><p>Start the Trail to begin live transcription.</p>';
+      empty.innerHTML = `<span class="empty-icon">${iconHtml('headphones', 28)}</span><p>Start the Trail to begin live transcription.</p>`;
       transcriptContainer.appendChild(empty);
       return;
     }
@@ -393,6 +393,15 @@
     return hasEnhancedDocument() && jotEditor?.viewMode === 'mixed';
   }
 
+  function iconHtml(name, size = 14) {
+    return window.TrailMixIcons ? window.TrailMixIcons.icon(name, { size }) : '';
+  }
+
+  function setButtonWithIcon(button, iconName, label) {
+    if (!button) return;
+    button.innerHTML = `<span class="btn-icon">${iconHtml(iconName, 14)}</span> ${label}`;
+  }
+
   function setEnhanceButtonState(mode, { mixing = false } = {}) {
     if (!btnMixEnhance) return;
     enhanceMode = mode;
@@ -403,14 +412,14 @@
     btnMixEnhance.setAttribute('aria-busy', mixing ? 'true' : 'false');
 
     const labels = {
-      'stop-enhance': '⏹ Stop & Enhance',
-      'back-live': '↺ Back to live',
-      'show-enhanced': 'Show enhanced',
-      enhance: 'Enhance'
+      'stop-enhance': { icon: 'square', text: 'Stop & Enhance' },
+      'back-live': { icon: 'undo-2', text: 'Back to live' },
+      'show-enhanced': { icon: 'sparkles', text: 'Show enhanced' },
+      enhance: { icon: 'sparkles', text: 'Enhance' }
     };
-    const label = mixing ? 'Enhancing…' : (labels[mode] || 'Enhance');
-    if (btnMixLabel) btnMixLabel.textContent = label;
-    else btnMixEnhance.textContent = label;
+    const conf = labels[mode] || labels.enhance;
+    const label = mixing ? 'Enhancing…' : conf.text;
+    btnMixEnhance.innerHTML = `${iconHtml(conf.icon, 14)}<span class="btn-mix-label">${label}</span><span class="btn-mix-spinner" aria-hidden="true"></span>`;
   }
 
   function syncEnhanceButton() {
@@ -652,10 +661,10 @@
     if (!btnRecordToggle) return;
     if (canResumeSession()) {
       btnRecordToggle.className = 'btn-record start';
-      btnRecordToggle.innerHTML = '<span class="btn-icon">⏯</span> Resume Trail';
+      setButtonWithIcon(btnRecordToggle, 'play', 'Resume Trail');
     } else {
       btnRecordToggle.className = 'btn-record start';
-      btnRecordToggle.innerHTML = '<span class="btn-icon">⏺</span> Start Trail';
+      setButtonWithIcon(btnRecordToggle, 'circle', 'Start Trail');
     }
   }
 
@@ -703,7 +712,8 @@
   });
 
   btnPauseToggle?.addEventListener('click', () => {
-    if (btnPauseToggle.textContent.includes('Pause')) window.api.pauseRecording();
+    const label = btnPauseToggle.textContent || '';
+    if (label.includes('Pause')) window.api.pauseRecording();
     else window.api.resumeRecording();
   });
 
@@ -734,9 +744,9 @@
     if (status.isRecording && !status.isPaused) {
       isLiveRecording = true;
       btnRecordToggle.className = 'btn-record stop';
-      btnRecordToggle.innerHTML = '<span class="btn-icon">⏹</span> Stop Trail';
+      setButtonWithIcon(btnRecordToggle, 'square', 'Stop Trail');
       btnPauseToggle.className = 'btn-record pause';
-      btnPauseToggle.innerHTML = '<span class="btn-icon">⏸</span> Pause';
+      setButtonWithIcon(btnPauseToggle, 'pause', 'Pause');
       btnPauseToggle.classList.remove('hidden');
       recIndicator.className = 'rec-indicator-active';
       recTitle.textContent = 'On the trail';
@@ -762,9 +772,9 @@
     if (!status.isRecording && status.isPaused) {
       isLiveRecording = true;
       btnRecordToggle.className = 'btn-record stop';
-      btnRecordToggle.innerHTML = '<span class="btn-icon">⏹</span> Stop Trail';
+      setButtonWithIcon(btnRecordToggle, 'square', 'Stop Trail');
       btnPauseToggle.className = 'btn-record start';
-      btnPauseToggle.innerHTML = '<span class="btn-icon">▶</span> Resume';
+      setButtonWithIcon(btnPauseToggle, 'play', 'Resume');
       btnPauseToggle.classList.remove('hidden');
       recIndicator.className = 'rec-indicator-static';
       recTitle.textContent = 'Paused';
@@ -1042,7 +1052,7 @@
   }
 
   async function runRecipeQuery(recipe) {
-    appendChatMessage('user', `${recipe.icon || ''} ${recipe.label}`.trim());
+    appendChatMessage('user', recipe.label);
     const loadingId = appendChatMessage('assistant', 'Running recipe locally…');
     const transcriptText = buildTranscriptTextForChat();
 

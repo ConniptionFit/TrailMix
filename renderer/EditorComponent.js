@@ -45,7 +45,7 @@ class EditorComponent {
     this.toolbarEl.className = 'editor-overlay-toolbar';
     this.toolbarEl.innerHTML = `
       <div class="editor-toolbar-left">
-        <button type="button" class="editor-toolbar-btn" data-action="mix-menu" title="Blend Mix-Ins with transcript">🥣 Mix notes</button>
+        <button type="button" class="editor-toolbar-btn" data-action="mix-menu" title="Blend Mix-Ins with transcript">${window.TrailMixIcons ? window.TrailMixIcons.withText('sparkles', 'Mix notes', { size: 14 }) : 'Mix notes'}</button>
         <div class="editor-view-switch" role="group" aria-label="Note view">
           <button type="button" class="editor-view-btn active" data-view="mixins">Mix-Ins</button>
           <button type="button" class="editor-view-btn" data-view="raw">Raw AI</button>
@@ -64,7 +64,7 @@ class EditorComponent {
       <button type="button" class="editor-template-option" data-template="minutes">Meeting Minutes</button>
       <button type="button" class="editor-template-option" data-template="custom">Custom Recipe</button>
       <div class="editor-template-menu-divider"></div>
-      <button type="button" class="editor-template-option editor-template-regenerate" data-action="regenerate">🔁 Re-mix</button>
+      <button type="button" class="editor-template-option editor-template-regenerate" data-action="regenerate">${window.TrailMixIcons ? window.TrailMixIcons.withText('refresh-cw', 'Re-mix', { size: 13 }) : 'Re-mix'}</button>
     `;
 
     this.surface = document.createElement('div');
@@ -326,8 +326,8 @@ class EditorComponent {
       .replace(/^# (.+)$/gm, '<h1>$1</h1>')
       .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
       .replace(/\*(.+?)\*/g, '<em>$1</em>')
-      .replace(/^- \[x\] (.+)$/gim, '<div class="md-checkbox checked">☑ $1</div>')
-      .replace(/^- \[ \] (.+)$/gim, '<div class="md-checkbox">☐ $1</div>')
+      .replace(/^- \[x\] (.+)$/gim, '<div class="md-checkbox checked"><span class="md-check" aria-hidden="true"></span>$1</div>')
+      .replace(/^- \[ \] (.+)$/gim, '<div class="md-checkbox"><span class="md-check" aria-hidden="true"></span>$1</div>')
       .replace(/^- (.+)$/gm, '<div class="md-bullet">• $1</div>')
       .replace(/\n/g, '<br>');
   }
@@ -360,7 +360,9 @@ class EditorComponent {
         traceBtn.className = 'editor-trace-btn';
         traceBtn.title = 'Jump to transcript source';
         traceBtn.setAttribute('aria-label', 'Trace to transcript');
-        traceBtn.textContent = '🔍';
+        traceBtn.innerHTML = window.TrailMixIcons ? window.TrailMixIcons.icon('search', { size: 12 }) : '';
+        traceBtn.setAttribute('aria-label', 'Trace in transcript');
+        traceBtn.title = 'Trace in transcript';
         traceBtn.addEventListener('click', (event) => {
           event.preventDefault();
           event.stopPropagation();
