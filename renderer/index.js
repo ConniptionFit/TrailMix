@@ -4,7 +4,6 @@ const isMiniMode = urlParams.get('mode') === 'mini';
 
 // Active Session Cache
 let activeSession = null;
-let activeFolderId = 'all';
 let recordingInterval = null;
 let recordingSeconds = 0;
 
@@ -670,14 +669,27 @@ if (isMiniMode) {
         tagFilterSelect.appendChild(opt);
       });
     }
-    // Keep pill row as a secondary multi-select surface when tags exist
+    // Pill row is a genuine multi-select surface, shown whenever tags exist —
+    // tags are the only organizational primitive now that folders are gone.
     if (!tags.length) {
       historyTagFilters.classList.add('hidden');
       historyTagPills.innerHTML = '';
       return;
     }
-    historyTagFilters.classList.add('hidden');
+    historyTagFilters.classList.remove('hidden');
     historyTagPills.innerHTML = '';
+    tags.forEach((tag) => {
+      const pill = document.createElement('button');
+      pill.type = 'button';
+      pill.className = `history-tag-pill${selectedHistoryTags.has(tag) ? ' active' : ''}`;
+      pill.textContent = `#${tag}`;
+      pill.addEventListener('click', () => {
+        if (selectedHistoryTags.has(tag)) selectedHistoryTags.delete(tag);
+        else selectedHistoryTags.add(tag);
+        loadHistoryList();
+      });
+      historyTagPills.appendChild(pill);
+    });
   }
 
   const selectHistoryTagFilter = document.getElementById('select-history-tag-filter');
@@ -1030,17 +1042,6 @@ if (isMiniMode) {
         });
       }
 
-      // Filter by active folder (filesystem-backed)
-      if (activeFolderId && activeFolderId !== 'all') {
-        filteredCalls = filteredCalls.filter((c) => {
-          const folderId = c.folder_id || 'fs:';
-          if (activeFolderId === 'fs:') {
-            return !folderId || folderId === 'fs:' || folderId === 'work';
-          }
-          return folderId === activeFolderId;
-        });
-      }
-
       // Collect tags for history filter UI
       const tagSet = new Set();
       calls.forEach((c) => {
@@ -1155,211 +1156,7 @@ if (isMiniMode) {
     historyRefreshTimer = setTimeout(() => loadHistoryList(), delayMs);
   }
 
-  // Folders Rendering and Management (v0.2)
-  function selectFolder(folderId) {
-    if (activeFolderId === folderId) {
-      loadHistoryList();
-      return;
-    }
-    activeFolderId = folderId;
-    const folderList = document.getElementById('sidebar-folders-list');
-    if (folderList) {
-      folderList.querySelectorAll('.folder-list-item').forEach((el) => {
-        const id = el.getAttribute('data-folderid') || 'all';
-        const selected = id === folderId;
-        el.className = `folder-list-item flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer transition text-xs ${
-          selected
-            ? 'bg-trail-500/10 text-trail-400 font-semibold border border-trail-500/20'
-            : 'text-slate-400 border border-transparent hover:bg-slate-800/30 hover:text-slate-200'
-        }`;
-      });
-    }
-    loadHistoryList();
-  }
-
-  function renderFolders() {
-    window.api.getFolders().then((folders) => {
-      const folderList = document.getElementById('sidebar-folders-list');
-      if (!folderList) return;
-      folderList.innerHTML = '';
-
-      // All Preserves default item
-      const allItem = document.createElement('div');
-      allItem.setAttribute('data-folderid', 'all');
-      allItem.className = `folder-list-item flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer transition text-xs ${
-        activeFolderId === 'all' 
-          ? 'bg-trail-500/10 text-trail-400 font-semibold border border-trail-500/20' 
-          : 'text-slate-400 border border-transparent hover:bg-slate-800/30 hover:text-slate-200'
-      }`;
-      allItem.innerHTML = `
-        <div class="flex items-center gap-2">
-          <span>${tmIcon('folder-open', 14)}</span>
-          <span>All notes</span>
-        </div>
-      `;
-      allItem.addEventListener('click', () => {
-        selectFolder('all');
-      });
-      folderList.appendChild(allItem);
-
-      // Render filesystem folders from save location
-      folders.forEach(folder => {
-        const item = document.createElement('div');
-        item.setAttribute('data-folderid', folder.id);
-        const isSelected = activeFolderId === folder.id;
-        const isRootTrail = folder.id === 'fs:';
-        const canManage = folder.id.startsWith('fs:') && !isRootTrail;
-        item.className = `folder-list-item flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer transition text-xs ${
-          isSelected 
-            ? 'bg-trail-500/10 text-trail-400 font-semibold border border-trail-500/20' 
-            : 'text-slate-400 border border-transparent hover:bg-slate-800/30 hover:text-slate-200'
-        }`;
-        
-        const folderIconName = (folder.icon && window.TrailMixIcons?.paths?.[folder.icon])
-          ? folder.icon
-          : 'folder';
-        item.innerHTML = `
-          <div class="folder-item-main flex items-center gap-2 flex-grow truncate" title="${folder.description || ''}">
-            <span class="folder-icon">${tmIcon(folderIconName, 14)}</span>
-            <div class="folder-text truncate">
-              <span class="truncate">${folder.name}</span>
-              ${folder.description ? `<span class="folder-description">${folder.description}</span>` : ''}
-            </div>
-          </div>
-          <div class="flex items-center gap-1.5 folder-actions opacity-60 hover:opacity-100 transition">
-            ${canManage ? '<button class="btn-folder-edit p-0.5 text-slate-400 hover:text-trail-400 transition" title="Rename folder" data-folderid="' + folder.id + '">' + tmIcon('pencil', 12) + '</button>' : ''}
-            ${canManage ? '<button class="btn-folder-export p-0.5 text-slate-400 hover:text-trail-400 transition" title="Export Folder to Obsidian" data-folderid="' + folder.id + '">' + tmIcon('upload', 12) + '</button>' : ''}
-            ${canManage ? '<button class="btn-folder-delete p-0.5 text-slate-400 hover:text-red-400 transition" title="Delete Folder" data-folderid="' + folder.id + '">' + tmIcon('trash-2', 12) + '</button>' : ''}
-          </div>
-        `;
-       
-        item.addEventListener('click', (e) => {
-          if (e.target.closest('.folder-actions')) return;
-          selectFolder(folder.id);
-        });
-
-        const editBtn = item.querySelector('.btn-folder-edit');
-        if (editBtn) {
-          editBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            openFolderModal({ mode: 'edit', folder });
-          });
-        }
-
-        const deleteBtn = item.querySelector('.btn-folder-delete');
-        if (deleteBtn) {
-          deleteBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const ask = window.TrailMixConfirm?.ask
-              ? window.TrailMixConfirm.ask(`Delete folder "${folder.name}"? It must be empty first.`, { confirmLabel: 'Delete' })
-              : Promise.resolve(false);
-            ask.then((ok) => {
-              if (!ok) return;
-              window.api.deleteFolder(folder.id).then((res) => {
-                if (res?.success === false) {
-                  showToast(res.error || 'Could not delete folder', 'error');
-                  return;
-                }
-                if (activeFolderId === folder.id) activeFolderId = 'all';
-                renderFolders();
-                loadHistoryList();
-              });
-            });
-          });
-        }
-
-        const exportBtn = item.querySelector('.btn-folder-export');
-        if (exportBtn) {
-          exportBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            window.api.selectDirectory().then(dir => {
-              if (dir) {
-                window.api.exportObsidian(folder.id, dir).then(res => {
-                  if (res.success) {
-                    showToast(`Successfully exported ${res.count} notes to your Obsidian vault at: ${dir}`, 'info');
-                  } else {
-                    showToast(`Export failed: ${res.error}`, 'error');
-                  }
-                });
-              }
-            });
-          });
-        }
-
-        folderList.appendChild(item);
-      });
-    });
-  }
-
-  // Folder modal (Electron does not support prompt())
-  const folderModal = document.getElementById('folder-modal');
-  const folderModalTitle = document.getElementById('folder-modal-title');
-  const folderModalName = document.getElementById('folder-modal-name');
-  const folderModalIcon = document.getElementById('folder-modal-icon');
-  const folderModalDescription = document.getElementById('folder-modal-description');
-  const btnFolderModalCancel = document.getElementById('btn-folder-modal-cancel');
-  const btnFolderModalSave = document.getElementById('btn-folder-modal-save');
-  let folderModalMode = 'create';
-  let folderModalTargetId = null;
-
-  function openFolderModal({ mode = 'create', folder = null } = {}) {
-    if (!folderModal) return;
-    folderModalMode = mode;
-    folderModalTargetId = folder?.id || null;
-    folderModalTitle.textContent = mode === 'edit' ? 'Edit Folder' : 'New Folder';
-    folderModalName.value = folder?.name || '';
-    folderModalIcon.value = folder?.icon || 'folder';
-    folderModalDescription.value = folder?.description || '';
-    folderModal.classList.remove('hidden');
-    folderModalName.focus();
-  }
-
-  function closeFolderModal() {
-    if (!folderModal) return;
-    folderModal.classList.add('hidden');
-    folderModalTargetId = null;
-  }
-
-  function saveFolderModal() {
-    const name = folderModalName?.value.trim();
-    if (!name) return;
-    const icon = folderModalIcon?.value.trim() || 'folder';
-    const description = folderModalDescription?.value.trim() || '';
-
-    if (folderModalMode === 'edit' && folderModalTargetId) {
-      window.api.updateFolder({ id: folderModalTargetId, name, icon, description }).then((res) => {
-        if (res.success) {
-          closeFolderModal();
-          renderFolders();
-        }
-      });
-      return;
-    }
-
-    window.api.createFolder({ name, icon, description }).then((res) => {
-      if (res.success) {
-        closeFolderModal();
-        renderFolders();
-      } else {
-        showToast('Error creating folder: ' + res.error, 'error');
-      }
-    });
-  }
-
-  btnFolderModalCancel?.addEventListener('click', closeFolderModal);
-  btnFolderModalSave?.addEventListener('click', saveFolderModal);
-  folderModalName?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') saveFolderModal();
-  });
-
-  // Add Folder Button
-  const btnAddFolder = document.getElementById('btn-add-folder');
-  if (btnAddFolder) {
-    btnAddFolder.addEventListener('click', () => openFolderModal({ mode: 'create' }));
-  }
-
   // Initial load
-  renderFolders();
   loadHistoryList();
   renderCalendar();
   renderActionItems();
@@ -2066,7 +1863,6 @@ if (isMiniMode) {
       bulkDecryptModal?.classList.add('hidden');
       callsContextMenu?.classList.add('hidden');
       historyMenuDropdown?.classList.add('hidden');
-      document.getElementById('folder-modal')?.classList.add('hidden');
       return;
     }
 
@@ -2752,4 +2548,18 @@ if (isMiniMode) {
   btnGrid?.addEventListener('click', () => applyTrailView('grid'));
   btnList?.addEventListener('click', () => applyTrailView('list'));
   applyTrailView(localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'grid');
+
+  const btnExportObsidian = document.getElementById('btn-export-obsidian');
+  btnExportObsidian?.addEventListener('click', () => {
+    window.api.selectDirectory().then((dir) => {
+      if (!dir) return;
+      window.api.exportObsidian('all', dir).then((res) => {
+        if (res.success) {
+          window.TrailMixToast?.show(`Exported ${res.count} notes to your Obsidian vault at: ${dir}`, { type: 'info' });
+        } else {
+          window.TrailMixToast?.show(`Export failed: ${res.error}`, { type: 'error' });
+        }
+      });
+    });
+  });
 })();

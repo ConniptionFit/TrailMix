@@ -41,8 +41,6 @@ const {
   ROOT_FOLDER_ID,
   UNCATEGORIZED_FOLDER_ID,
   scanStorageLayout,
-  ensureFolderDir,
-  moveSessionFile,
   moveStorageContents,
   resolveSessionFilePath,
   relativePathFromFolderId,
@@ -660,46 +658,74 @@ async function ensureFolderRecord(folderId, { name, icon, description } = {}) {
   if (!folderId) return null;
   await dbRun(
     'INSERT OR IGNORE INTO folders (id, name, icon, description) VALUES (?, ?, ?, ?)',
-    [folderId, name || folderId, icon || '📁', description || '']
+    [folderId, name || folderId, icon || 'folder', description || '']
   );
   return folderId;
 }
 
-async function syncFilesystemFoldersToDb() {
+// One-time (idempotent) migration: folders were removed in favor of tags-only
+// organization in The Trail. Any session still living in a real on-disk
+// subfolder gets moved back to the calls dir root, tagged with the folder's
+// name, and reassigned to the uncategorized folder id. Once no subfolders
+// remain this is a fast no-op on every subsequent boot.
+async function flattenFolderStorage() {
   const callsDir = getCallsDir();
   const { folders } = scanStorageLayout(callsDir);
   for (const folder of folders) {
-    if (folder.id === ROOT_FOLDER_ID) continue;
-    await ensureFolderRecord(folder.id, {
-      name: folder.name,
-      icon: folder.icon,
-      description: folder.description
-    });
-  }
-  const legacyFolders = [
-    { id: 'work', name: 'Work', icon: '💼', description: 'Professional meetings' },
-    { id: 'personal', name: 'Personal', icon: '🏠', description: 'Personal notes' },
-    { id: 'drafts', name: 'Drafts', icon: '📝', description: 'Draft notes' }
-  ];
-  for (const folder of legacyFolders) {
-    await ensureFolderRecord(folder.id, folder);
+    if (folder.id === ROOT_FOLDER_ID || folder.id === UNCATEGORIZED_FOLDER_ID || !folder.fsPath) continue;
+    try {
+      const tag = folder.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const entries = fs.existsSync(folder.fsPath)
+        ? fs.readdirSync(folder.fsPath).filter((name) => isTrailFile(name))
+        : [];
+
+      for (const entryName of entries) {
+        const sessionId = entryName.replace(/\.trail\.bak$/, '').replace(/\.trail$/, '');
+        const srcPath = path.join(folder.fsPath, entryName);
+        let destPath = path.join(callsDir, entryName);
+        let suffix = 1;
+        while (fs.existsSync(destPath)) {
+          destPath = path.join(callsDir, entryName.replace(/(\.trail\.bak|\.trail)$/, `-${suffix}$1`));
+          suffix += 1;
+        }
+        fs.renameSync(srcPath, destPath);
+
+        const row = await dbGet('SELECT tags FROM sessions WHERE id = ?', [sessionId]);
+        let tags = [];
+        try {
+          tags = JSON.parse(row?.tags || '[]');
+        } catch {
+          tags = [];
+        }
+        if (tag && !tags.includes(tag)) tags.push(tag);
+        await dbRun('UPDATE sessions SET folder_id = ?, tags = ? WHERE id = ?', [
+          UNCATEGORIZED_FOLDER_ID,
+          JSON.stringify(tags),
+          sessionId
+        ]);
+      }
+
+      if (fs.existsSync(folder.fsPath) && fs.readdirSync(folder.fsPath).length === 0) {
+        fs.rmdirSync(folder.fsPath);
+      }
+      await dbRun('DELETE FROM folders WHERE id = ?', [folder.id]);
+    } catch (err) {
+      console.error(`Failed to flatten folder ${folder.id}:`, err);
+    }
   }
 }
 
 const ensuredFolderIds = new Set();
 
-async function normalizeFolderIdForSave(folderId, { syncFilesystem = false } = {}) {
+async function normalizeFolderIdForSave(folderId) {
   const normalized = folderId || UNCATEGORIZED_FOLDER_ID;
-  if (syncFilesystem) {
-    await syncFilesystemFoldersToDb();
-  }
   if (!ensuredFolderIds.has(normalized)) {
     const displayName = normalized === UNCATEGORIZED_FOLDER_ID
       ? 'Trail (root)'
       : normalized.replace(/^fs:/, '') || normalized;
     await ensureFolderRecord(normalized, {
       name: displayName,
-      icon: normalized === UNCATEGORIZED_FOLDER_ID ? '🥣' : '📁',
+      icon: 'folder',
       description: ''
     });
     ensuredFolderIds.add(normalized);
@@ -721,16 +747,8 @@ async function migrateFolderColumns() {
 
 async function migrateOldData() {
   try {
-    // 1. Setup default folders if empty
-    const existingFolders = await dbAll("SELECT * FROM folders");
-    if (existingFolders.length === 0) {
-      await dbRun("INSERT INTO folders (id, name, icon, description) VALUES (?, ?, ?, ?)", ["work", "Work", "💼", "Professional meetings and work sessions"]);
-      await dbRun("INSERT INTO folders (id, name, icon, description) VALUES (?, ?, ?, ?)", ["personal", "Personal", "🏠", "Private personal notes"]);
-      await dbRun("INSERT INTO folders (id, name, icon, description) VALUES (?, ?, ?, ?)", ["drafts", "Drafts", "📝", "In-progress and unsorted notes"]);
-    }
-
     await migrateFolderColumns();
-    await syncFilesystemFoldersToDb();
+    await flattenFolderStorage();
 
     // 2. Tasks migration
     const TASKS_FILE = path.join(DATA_DIR, 'tasks.json');
@@ -917,7 +935,6 @@ async function upsertSessionFromTrailFile({ sessionId, filePath, folderId }) {
 
 async function syncDatabaseWithFiles() {
   try {
-    await syncFilesystemFoldersToDb();
     const callsDir = getCallsDir();
     const { trailFiles } = scanStorageLayout(callsDir);
     const existingIds = new Set(trailFiles.map((file) => file.sessionId));
@@ -1147,9 +1164,7 @@ async function saveSessionToDbPromise(session, options = {}) {
   const tagsStr = JSON.stringify(session.tags || []);
   const suggestedTagsStr = JSON.stringify(session.suggestedTags || []);
   const mtimeMs = Date.now();
-  const folderId = await normalizeFolderIdForSave(session.folder_id, {
-    syncFilesystem: Boolean(options.syncFilesystem)
-  });
+  const folderId = await normalizeFolderIdForSave(session.folder_id);
   session.folder_id = folderId;
 
   try {
@@ -1969,7 +1984,6 @@ const runtime = {
   getHardwareSpecs,
   initDatabase,
   migrateOldData,
-  syncFilesystemFoldersToDb,
   saveSettings,
   broadcastProcessingProgress,
   runSessionEnrichment,
@@ -1987,8 +2001,6 @@ const runtime = {
   ROOT_FOLDER_ID,
   UNCATEGORIZED_FOLDER_ID,
   scanStorageLayout,
-  ensureFolderDir,
-  moveSessionFile,
   moveStorageContents,
   resolveSessionFilePath,
   relativePathFromFolderId,

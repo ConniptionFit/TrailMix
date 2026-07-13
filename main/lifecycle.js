@@ -8,7 +8,6 @@ function registerLifecycle(rt, ctx) {
     createHubWindow,
     initDatabase,
     migrateOldData,
-    syncFilesystemFoldersToDb,
     sessionProcessingService,
     updateService,
     setupTray,
@@ -27,7 +26,6 @@ function registerLifecycle(rt, ctx) {
     cleanupStaleLoopbackModules();
     await initDatabase();
     await migrateOldData();
-    await syncFilesystemFoldersToDb();
     await sessionProcessingService.initSchema();
     await sessionProcessingService.recoverInterruptedJobs();
     createHubWindow();

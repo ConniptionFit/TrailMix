@@ -8,7 +8,6 @@ const meetings = require('./meetings');
 const calls = require('./calls');
 const chat = require('./chat');
 const tasks = require('./tasks');
-const folders = require('./folders');
 const processing = require('./processing');
 const updates = require('./updates');
 const models = require('./models');
@@ -24,7 +23,6 @@ const BUILTIN_MODULES = [
   calls,
   chat,
   tasks,
-  folders,
   processing,
   models,
   updates,

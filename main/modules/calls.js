@@ -2,7 +2,7 @@
 module.exports = {
   id: 'calls',
   version: '1.0.0',
-  dependencies: ['sessions', 'folders'],
+  dependencies: ['sessions'],
   channels: [
     'calls:get-list',
     'calls:save',
@@ -18,7 +18,6 @@ module.exports = {
     'calls:find-related',
     'calls:open-file-location',
     'calls:resume-transcription',
-    'calls:move-to-folder',
     'calls:list-updated',
     'calls:session-summary-ready'
   ],

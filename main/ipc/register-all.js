@@ -17,11 +17,10 @@ function registerIpcHandlers(rt) {
     getCallsDir, watchCallsDirectory, openMeetingWindow, saveSettings,
     getHardwareSpecs, runSessionEnrichment, extractTasksFromActionItems,
     CHAT_RECIPES, buildRecipePrompt, llmService, sessionProcessingService,
-    enhanceNotesService, updateService, normalizeFolderIdForSave,
+    enhanceNotesService, updateService,
     getTasksListFromDb, saveTaskToDb, upsertSessionFromTrailFile,
-    ensureFolderRecord, parseDeadlineDate, appEventBus, ROOT_FOLDER_ID,
-    UNCATEGORIZED_FOLDER_ID, scanStorageLayout, ensureFolderDir, moveSessionFile,
-    moveStorageContents, resolveSessionFilePath, relativePathFromFolderId,
+    parseDeadlineDate, appEventBus,
+    UNCATEGORIZED_FOLDER_ID, moveStorageContents, resolveSessionFilePath,
     secureShredFile, formatTaskRow, formatTimestamp, documentFromSession,
     splitTranscriptIntoBlocks, PROCESSING_STATUS, decryptionKeys,
     activeRecordingSessionId, isRecording, isPaused, activeSession, windowManager,
@@ -887,112 +886,6 @@ ipcMain.handle(IPC.CALLS_EXPORT_OBSIDIAN, async (event, folderId, exportDir) => 
       }
     }
     return { success: true, count };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-});
-
-// Folders Management — filesystem-backed under save location
-ipcMain.handle(IPC.FOLDERS_GET, async () => {
-  try {
-    await syncDatabaseWithFiles();
-    const { folders } = scanStorageLayout(getCallsDir());
-    return folders.filter((folder) => folder.id !== ROOT_FOLDER_ID);
-  } catch (err) {
-    console.error(err);
-    return [];
-  }
-});
-
-ipcMain.handle(IPC.FOLDERS_CREATE, async (event, payload) => {
-  try {
-    const name = typeof payload === 'string' ? payload : payload?.name;
-    const folder = ensureFolderDir(getCallsDir(), name);
-    await ensureFolderRecord(folder.id, {
-      name: folder.name,
-      icon: payload?.icon || '📁',
-      description: payload?.description || ''
-    });
-    return { success: true, folder };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-});
-
-ipcMain.handle(IPC.FOLDERS_UPDATE, async (event, folder) => {
-  try {
-    if (!folder?.id?.startsWith('fs:') || folder.id === UNCATEGORIZED_FOLDER_ID) {
-      return { success: true };
-    }
-    const relative = relativePathFromFolderId(folder.id);
-    const oldPath = path.join(getCallsDir(), relative);
-    const newName = (folder.name || relative).trim().replace(/[\\/]/g, '_');
-    const newPath = path.join(getCallsDir(), newName);
-    if (oldPath !== newPath && fs.existsSync(oldPath)) {
-      fs.renameSync(oldPath, newPath);
-      const sessions = await dbAll('SELECT id FROM sessions WHERE folder_id = ?', [folder.id]);
-      const newFolderId = `fs:${newName}`;
-      for (const session of sessions) {
-        await dbRun('UPDATE sessions SET folder_id = ? WHERE id = ?', [newFolderId, session.id]);
-        const file = resolveSessionFilePath(getCallsDir(), session.id, folder.id);
-        const dest = resolveSessionFilePath(getCallsDir(), session.id, newFolderId);
-        if (fs.existsSync(file)) {
-          fs.mkdirSync(path.dirname(dest), { recursive: true });
-          fs.renameSync(file, dest);
-        }
-      }
-    }
-    return { success: true };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-});
-
-ipcMain.handle(IPC.FOLDERS_DELETE, async (event, id) => {
-  try {
-    if (!id?.startsWith('fs:') || id === UNCATEGORIZED_FOLDER_ID) {
-      return { success: false, error: 'Cannot delete this folder' };
-    }
-    const relative = relativePathFromFolderId(id);
-    const folderPath = path.join(getCallsDir(), relative);
-    if (fs.existsSync(folderPath)) {
-      const remaining = fs.readdirSync(folderPath);
-      if (remaining.length > 0) {
-        return { success: false, error: 'Folder is not empty. Move or delete notes first.' };
-      }
-      fs.rmdirSync(folderPath);
-    }
-    await dbRun('UPDATE sessions SET folder_id = ? WHERE folder_id = ?', [UNCATEGORIZED_FOLDER_ID, id]);
-    return { success: true };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-});
-
-ipcMain.handle(IPC.CALLS_MOVE_TO_FOLDER, async (event, sessionId, folderId) => {
-  try {
-    const normalizedFolderId = folderId || UNCATEGORIZED_FOLDER_ID;
-    const row = await dbGet('SELECT folder_id FROM sessions WHERE id = ?', [sessionId]);
-    const fromFolderId = row?.folder_id || UNCATEGORIZED_FOLDER_ID;
-    const moveResult = moveSessionFile(getCallsDir(), sessionId, fromFolderId, normalizedFolderId);
-    if (!moveResult.success) {
-      return moveResult;
-    }
-    await dbRun('UPDATE sessions SET folder_id = ? WHERE id = ?', [normalizedFolderId, sessionId]);
-    if (getHubWindow()) getHubWindow().webContents.send(IPC.CALLS_LIST_UPDATED);
-
-    if (normalizedFolderId && normalizedFolderId !== UNCATEGORIZED_FOLDER_ID) {
-      const folderName = relativePathFromFolderId(normalizedFolderId);
-      const session = await dbGet('SELECT title FROM sessions WHERE id = ?', [sessionId]);
-      void appEventBus.emitWorkflowEvent('note:added-to-folder', {
-        sessionId,
-        folderId: normalizedFolderId,
-        folderName,
-        sessionTitle: session?.title || null
-      });
-    }
-
-    return { success: true };
   } catch (err) {
     return { success: false, error: err.message };
   }

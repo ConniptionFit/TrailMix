@@ -77,7 +77,6 @@ body {
 .sidebar.collapsed .sidebar-brand,
 .sidebar.collapsed .sidebar-label,
 .sidebar.collapsed .sidebar-trail-body,
-.sidebar.collapsed .sidebar-folders-section,
 .sidebar.collapsed .sidebar-footer span:last-child {
   opacity: 0;
   pointer-events: none;
@@ -2473,16 +2472,6 @@ body {
   pointer-events: none;
 }
 
-.folder-description {
-  display: block;
-  font-size: 10px;
-  color: var(--text-muted);
-  line-height: 1.3;
-  margin-top: 2px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 
 /* Transcript dual-channel bubbles */
 .transcript-bubble.bubble-system {
@@ -2922,6 +2911,12 @@ body {
   padding: 6px 9px;
   border-radius: 6px;
   cursor: pointer;
+}
+
+.trail-export-btn {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  font-size: 12px;
 }
 
 .trail-view-btn.active {

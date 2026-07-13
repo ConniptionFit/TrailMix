@@ -166,12 +166,7 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener(IPC.SESSION_NEEDS_ENCRYPTION_PASSWORD, subscription);
   },
 
-  // Folders & Obsidian Export (v0.3)
-  getFolders: () => ipcRenderer.invoke(IPC.FOLDERS_GET),
-  createFolder: (payload) => ipcRenderer.invoke(IPC.FOLDERS_CREATE, payload),
-  updateFolder: (folder) => ipcRenderer.invoke(IPC.FOLDERS_UPDATE, folder),
-  deleteFolder: (id) => ipcRenderer.invoke(IPC.FOLDERS_DELETE, id),
-  moveToFolder: (sessionId, folderId) => ipcRenderer.invoke(IPC.CALLS_MOVE_TO_FOLDER, sessionId, folderId),
+  // Obsidian Export (v0.3)
   exportObsidian: (folderId, exportDir) => ipcRenderer.invoke(IPC.CALLS_EXPORT_OBSIDIAN, folderId, exportDir),
 
   registerWorkflowTrigger: (eventName, trigger) => ipcRenderer.invoke(IPC.WORKFLOW_REGISTER, eventName, trigger)
