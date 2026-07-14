@@ -43,6 +43,16 @@ object Pcm {
         }
     }
 
+    /** Peak absolute amplitude of the first [count] samples. */
+    fun peak(samples: ShortArray, count: Int): Int {
+        var max = 0
+        for (i in 0 until count) {
+            val a = if (samples[i] >= 0) samples[i].toInt() else -samples[i].toInt()
+            if (a > max) max = a
+        }
+        return max
+    }
+
     /** Serialize the first [count] samples as little-endian 16-bit PCM bytes. */
     fun toLittleEndianBytes(samples: ShortArray, count: Int): ByteArray {
         val out = ByteArray(count * 2)

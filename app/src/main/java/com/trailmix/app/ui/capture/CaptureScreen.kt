@@ -7,8 +7,12 @@ import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -25,6 +29,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -50,6 +55,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -103,6 +109,68 @@ fun CaptureScreen(
             viewModel.onProjectionGranted(result.resultCode, data)
         }
     }
+    val launchProjectionConsent = {
+        val mpm = context.getSystemService(MediaProjectionManager::class.java)
+        projectionLauncher.launch(mpm.createScreenCaptureIntent())
+    }
+
+    // Device audio is on by default: fire the system consent as the session
+    // starts, with a one-time explainer the first time (Android's dialog talks
+    // about the screen; TrailMix only takes the audio stream from it).
+    LaunchedEffect(state.deviceAudioPrompt) {
+        if (state.deviceAudioPrompt == DeviceAudioPrompt.ASK) {
+            viewModel.consumeDeviceAudioPrompt()
+            launchProjectionConsent()
+        }
+    }
+    if (state.deviceAudioPrompt == DeviceAudioPrompt.EXPLAIN_THEN_ASK) {
+        AlertDialog(
+            onDismissRequest = { viewModel.consumeDeviceAudioPrompt() },
+            containerColor = c.card,
+            title = { Text("Hear what your phone plays", color = c.text, fontSize = 17.sp) },
+            text = {
+                Text(
+                    "To transcribe meetings and videos, TrailMix can listen to the audio " +
+                        "other apps play.\n\nAndroid only grants that through its screen-share " +
+                        "permission, so the next dialog will mention your screen — but TrailMix " +
+                        "only receives the audio stream. It never records, stores, or even sees " +
+                        "your screen.\n\nNote: Android blocks every app from hearing protected " +
+                        "voice-call audio, and some apps opt out of capture entirely.",
+                    color = c.dim,
+                    fontSize = 13.5.sp,
+                    lineHeight = 19.sp,
+                )
+            },
+            confirmButton = {
+                Text(
+                    text = "Continue",
+                    color = c.amber,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .clickable {
+                            viewModel.markExplainerShown()
+                            viewModel.consumeDeviceAudioPrompt()
+                            launchProjectionConsent()
+                        }
+                        .padding(8.dp),
+                )
+            },
+            dismissButton = {
+                Text(
+                    text = "Not now",
+                    color = c.dim,
+                    fontSize = 14.sp,
+                    modifier = Modifier
+                        .clickable {
+                            viewModel.markExplainerShown()
+                            viewModel.consumeDeviceAudioPrompt()
+                        }
+                        .padding(8.dp),
+                )
+            },
+        )
+    }
 
     Column(
         modifier = Modifier
@@ -146,52 +214,134 @@ fun CaptureScreen(
                 state = state,
                 deviceAudioSupported = viewModel.deviceAudioSupported,
                 onSelectInput = viewModel::selectInput,
-                onEnableDeviceAudio = {
-                    val mpm = context.getSystemService(MediaProjectionManager::class.java)
-                    projectionLauncher.launch(mpm.createScreenCaptureIntent())
-                },
+                onEnableDeviceAudio = launchProjectionConsent,
                 onDisableDeviceAudio = viewModel::disableDeviceAudio,
             )
         }
 
         Text(
-            text = "New note",
+            text = state.meetingTitle ?: "New note",
             color = c.text,
             fontSize = 19.sp,
             fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(top = 12.dp),
         )
+        if (state.meetingTitle != null) {
+            Text(
+                text = "Capturing during this meeting",
+                color = c.dim,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
 
-        // Live transcript preview card
+        // Live transcript card — tap to expand into the recent transcript
+        var transcriptExpanded by remember { mutableStateOf(false) }
+        val liveLines by viewModel.liveLines.collectAsStateWithLifecycle()
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 14.dp)
                 .clip(RoundedCornerShape(12.dp))
                 .background(c.card)
+                .clickable { transcriptExpanded = !transcriptExpanded }
+                .animateContentSize()
                 .padding(horizontal = 14.dp, vertical = 12.dp),
         ) {
-            Text(
-                text = "LIVE TRANSCRIPT",
-                color = c.dim,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = 0.4.sp,
-            )
-            val liveLine = when {
-                !state.speechAvailable ->
-                    "On-device speech recognition isn't available on this device."
-                state.livePartial.isNotBlank() -> "“…${state.livePartial}”"
-                state.lastFinalLine.isNotBlank() -> "“…${state.lastFinalLine}”"
-                else -> "Listening…"
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "LIVE TRANSCRIPT",
+                    color = c.dim,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 0.4.sp,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = if (transcriptExpanded) "collapse" else "tap to expand",
+                    color = c.dim,
+                    fontSize = 10.sp,
+                )
             }
-            Text(
-                text = liveLine,
-                color = c.dim,
-                fontSize = 13.sp,
-                modifier = Modifier.padding(top = 6.dp),
-                maxLines = 2,
-            )
+            if (transcriptExpanded) {
+                val listState = rememberLazyListState()
+                LaunchedEffect(liveLines.size, state.livePartial) {
+                    val last = liveLines.size + (if (state.livePartial.isNotBlank()) 1 else 0) - 1
+                    if (last >= 0) listState.animateScrollToItem(last)
+                }
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(240.dp)
+                        .padding(top = 8.dp),
+                ) {
+                    if (liveLines.isEmpty() && state.livePartial.isBlank()) {
+                        item {
+                            Text(
+                                text = "Nothing transcribed yet.",
+                                color = c.dim,
+                                fontSize = 13.sp,
+                            )
+                        }
+                    }
+                    items(liveLines.size) { i ->
+                        val line = liveLines[i]
+                        Row(modifier = Modifier.padding(bottom = 8.dp)) {
+                            Text(
+                                text = line.label,
+                                color = c.teal,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(end = 8.dp, top = 1.dp),
+                            )
+                            Text(
+                                text = line.text,
+                                color = c.text,
+                                fontSize = 13.5.sp,
+                                lineHeight = 19.sp,
+                            )
+                        }
+                    }
+                    if (state.livePartial.isNotBlank()) {
+                        item {
+                            Text(
+                                text = "…${state.livePartial}",
+                                color = c.dim,
+                                fontSize = 13.5.sp,
+                                lineHeight = 19.sp,
+                            )
+                        }
+                    }
+                }
+            } else {
+                val liveLine = when {
+                    !state.speechAvailable ->
+                        "On-device speech recognition isn't available on this device."
+                    state.livePartial.isNotBlank() -> "“…${state.livePartial}”"
+                    state.lastFinalLine.isNotBlank() -> "“…${state.lastFinalLine}”"
+                    else -> "Listening…"
+                }
+                Text(
+                    text = liveLine,
+                    color = c.dim,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(top = 6.dp),
+                    maxLines = 2,
+                )
+            }
+            if (state.deviceAudioActive && state.deviceAudioSilent) {
+                Text(
+                    text = "No device audio detected — the playing app may not allow " +
+                        "capture (calls never do). The mic is still listening.",
+                    color = c.amber,
+                    fontSize = 11.5.sp,
+                    lineHeight = 15.sp,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
         }
 
         Text(
@@ -309,7 +459,7 @@ private fun CaptureMenu(
                         Text("Capture device audio", fontSize = 14.sp, color = c.text)
                         Text(
                             text = if (deviceAudioSupported) {
-                                "Videos & media from other apps"
+                                "Audio only — your screen is never recorded"
                             } else {
                                 "Needs the on-device recognizer model"
                             },

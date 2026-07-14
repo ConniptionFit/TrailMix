@@ -23,9 +23,27 @@ class SettingsRepository @Inject constructor(
     private val vaultUriKey = stringPreferencesKey("obsidian_vault_uri")
     private val vaultNameKey = stringPreferencesKey("obsidian_vault_name")
     private val folderKey = stringPreferencesKey("obsidian_folder")
+    private val deviceAudioByDefaultKey = booleanPreferencesKey("device_audio_by_default")
+    private val projectionExplainerShownKey = booleanPreferencesKey("projection_explainer_shown")
 
     /** null = follow the system setting (design default). */
     val darkModeOverride: Flow<Boolean?> = context.dataStore.data.map { it[darkModeOverrideKey] }
+
+    /** Ask for device-audio capture automatically when a capture starts (default on). */
+    val deviceAudioByDefault: Flow<Boolean> =
+        context.dataStore.data.map { it[deviceAudioByDefaultKey] ?: true }
+
+    /** Whether the one-time "audio only, not your screen" explainer has been shown. */
+    val projectionExplainerShown: Flow<Boolean> =
+        context.dataStore.data.map { it[projectionExplainerShownKey] ?: false }
+
+    suspend fun setDeviceAudioByDefault(value: Boolean) {
+        context.dataStore.edit { it[deviceAudioByDefaultKey] = value }
+    }
+
+    suspend fun markProjectionExplainerShown() {
+        context.dataStore.edit { it[projectionExplainerShownKey] = true }
+    }
 
     val vaultUri: Flow<String?> = context.dataStore.data.map { it[vaultUriKey] }
     val vaultName: Flow<String?> = context.dataStore.data.map { it[vaultNameKey] }

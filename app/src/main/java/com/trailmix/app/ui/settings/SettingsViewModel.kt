@@ -26,8 +26,15 @@ class SettingsViewModel @Inject constructor(
     val vaultName: StateFlow<String?> = settingsRepository.vaultName
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
+    val deviceAudioByDefault: StateFlow<Boolean> = settingsRepository.deviceAudioByDefault
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), true)
+
     fun setDarkMode(enabled: Boolean) {
         viewModelScope.launch { settingsRepository.setDarkModeOverride(enabled) }
+    }
+
+    fun setDeviceAudioByDefault(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setDeviceAudioByDefault(enabled) }
     }
 
     fun onVaultPicked(uri: Uri) {

@@ -26,6 +26,13 @@ class PcmTest {
     }
 
     @Test
+    fun `peak reports max absolute amplitude including negative extremes`() {
+        assertEquals(0, Pcm.peak(shortArrayOf(), 0))
+        assertEquals(5, Pcm.peak(shortArrayOf(1, -5, 3), 3))
+        assertEquals(32768, Pcm.peak(shortArrayOf(Short.MIN_VALUE, 100), 2))
+    }
+
+    @Test
     fun `little endian serialization is byte exact`() {
         val bytes = Pcm.toLittleEndianBytes(shortArrayOf(0x1234, -2), 2)
         assertArrayEquals(

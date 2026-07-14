@@ -83,8 +83,14 @@ fun NoteDetailScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp),
         ) {
+            val meta = buildList {
+                add(relativeDay(current.createdAtEpochMs))
+                add(durationLabel(current.durationMs))
+                current.meetingTitle?.let { add(it) }
+                if (current.capturedInCall) add("in-call")
+            }.joinToString(" · ")
             Text(
-                text = "${relativeDay(current.createdAtEpochMs)} · ${durationLabel(current.durationMs)}",
+                text = meta,
                 color = c.dim,
                 fontSize = 12.sp,
             )

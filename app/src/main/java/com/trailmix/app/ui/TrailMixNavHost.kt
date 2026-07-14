@@ -1,5 +1,6 @@
 package com.trailmix.app.ui
 
+import android.net.Uri
 import androidx.compose.runtime.Composable
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -10,18 +11,22 @@ import androidx.navigation.navArgument
 import com.trailmix.app.ui.capture.CaptureScreen
 import com.trailmix.app.ui.chat.ChatScreen
 import com.trailmix.app.ui.home.HomeScreen
+import com.trailmix.app.ui.meetings.MeetingsScreen
 import com.trailmix.app.ui.note.NoteDetailScreen
 import com.trailmix.app.ui.settings.SettingsScreen
 import com.trailmix.app.ui.transcript.TranscriptScreen
 
 object Routes {
     const val HOME = "home"
-    const val CAPTURE = "capture"
+    const val CAPTURE = "capture?title={title}"
     const val NOTE = "note/{noteId}"
     const val TRANSCRIPT = "transcript/{noteId}"
     const val CHAT = "chat/{noteId}"
     const val SETTINGS = "settings"
+    const val MEETINGS = "meetings"
 
+    fun capture(title: String? = null) =
+        if (title.isNullOrBlank()) "capture" else "capture?title=${Uri.encode(title)}"
     fun note(id: Long) = "note/$id"
     fun transcript(id: Long) = "transcript/$id"
     fun chat(id: Long) = "chat/$id"
@@ -32,12 +37,33 @@ fun TrailMixNavHost(navController: NavHostController = rememberNavController()) 
     NavHost(navController = navController, startDestination = Routes.HOME) {
         composable(Routes.HOME) {
             HomeScreen(
-                onNewCapture = { navController.navigate(Routes.CAPTURE) },
+                onNewCapture = { navController.navigate(Routes.capture()) },
+                onCaptureMeeting = { title -> navController.navigate(Routes.capture(title)) },
+                onOpenMeetings = { navController.navigate(Routes.MEETINGS) },
                 onOpenNote = { id -> navController.navigate(Routes.note(id)) },
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
             )
         }
-        composable(Routes.CAPTURE) {
+        composable(Routes.MEETINGS) {
+            MeetingsScreen(
+                onBack = { navController.popBackStack() },
+                onStartCapture = { title ->
+                    navController.navigate(Routes.capture(title)) {
+                        popUpTo(Routes.HOME)
+                    }
+                },
+            )
+        }
+        composable(
+            Routes.CAPTURE,
+            arguments = listOf(
+                navArgument("title") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+            ),
+        ) {
             CaptureScreen(
                 onMerged = { noteId ->
                     navController.navigate(Routes.note(noteId)) {

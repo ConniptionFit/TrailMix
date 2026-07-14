@@ -42,6 +42,19 @@ class AudioPipeline {
     private var writeSide: ParcelFileDescriptor? = null
 
     /**
+     * Peak |amplitude| seen on the device-audio lane since the last read;
+     * -1 when the lane isn't attached. Lets the UI tell the user when the
+     * playing app is delivering silence (opted out of capture / voice call).
+     */
+    @Volatile private var playbackPeak = -1
+
+    fun readAndResetPlaybackPeak(): Int {
+        val v = playbackPeak
+        if (v >= 0) playbackPeak = 0
+        return v
+    }
+
+    /**
      * Starts the mic pump and returns the read end of the PCM pipe.
      * The caller must hold RECORD_AUDIO.
      */
@@ -133,7 +146,15 @@ class AudioPipeline {
             return false
         }
         playbackRecord = record
-        record.startRecording()
+        try {
+            record.startRecording()
+        } catch (e: Exception) {
+            Log.w(TAG, "playback capture start failed: $e")
+            playbackRecord = null
+            record.release()
+            return false
+        }
+        playbackPeak = 0
         playbackThread = thread(name = "trailmix-playback-pump") {
             // 100 ms of 48 kHz stereo per read.
             val raw = ShortArray(Pcm.PLAYBACK_SAMPLE_RATE / 10 * 2)
@@ -147,6 +168,8 @@ class AudioPipeline {
                     }
                     val mono = Pcm.downmixStereoToMono(raw, n)
                     val at16k = Pcm.decimate3(mono, mono.size)
+                    val peak = Pcm.peak(at16k, at16k.size)
+                    if (peak > playbackPeak) playbackPeak = peak
                     playbackRing.push(at16k, at16k.size)
                 }
             } catch (e: Exception) {
@@ -163,6 +186,7 @@ class AudioPipeline {
     fun detachPlayback() {
         val record = playbackRecord ?: return
         playbackRecord = null
+        playbackPeak = -1
         runCatching { record.stop() } // pump thread sees the swap and releases
         playbackThread = null
     }

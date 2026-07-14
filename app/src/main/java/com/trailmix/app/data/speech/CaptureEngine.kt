@@ -118,6 +118,9 @@ class CaptureEngine @Inject constructor(
     val deviceAudioSupported: Boolean
         get() = pipeline != null
 
+    /** Peak device-audio amplitude since last poll; -1 when lane detached. */
+    fun readAndResetPlaybackPeak(): Int = pipeline?.readAndResetPlaybackPeak() ?: -1
+
     /**
      * Attach device-audio capture from a fresh MediaProjection consent result.
      * Must only be called while the capture foreground service is running with

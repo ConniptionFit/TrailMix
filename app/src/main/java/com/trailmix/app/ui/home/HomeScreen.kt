@@ -22,10 +22,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -37,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.trailmix.app.data.calendar.UpcomingMeeting
 import com.trailmix.app.data.db.NoteEntity
 import com.trailmix.app.ui.components.SectionLabel
 import com.trailmix.app.ui.theme.TrailMix
@@ -44,6 +49,8 @@ import com.trailmix.app.ui.theme.TrailMix
 @Composable
 fun HomeScreen(
     onNewCapture: () -> Unit,
+    onCaptureMeeting: (String) -> Unit,
+    onOpenMeetings: () -> Unit,
     onOpenNote: (Long) -> Unit,
     onOpenSettings: () -> Unit,
     viewModel: HomeViewModel = hiltViewModel(),
@@ -57,6 +64,20 @@ fun HomeScreen(
     ) { viewModel.refreshUpcoming() }
 
     val c = TrailMix.colors
+
+    // Tapping the next meeting: imminent (≤5 min) or ongoing starts capture
+    // immediately; further out asks first.
+    var pendingStart by remember { mutableStateOf<UpcomingMeeting?>(null) }
+    pendingStart?.let { meeting ->
+        StartCaptureDialog(
+            meeting = meeting,
+            onConfirm = {
+                pendingStart = null
+                onCaptureMeeting(meeting.title)
+            },
+            onDismiss = { pendingStart = null },
+        )
+    }
 
     Box(
         modifier = Modifier
@@ -92,13 +113,30 @@ fun HomeScreen(
                 item {
                     SectionLabel(
                         text = "Upcoming — from calendar",
-                        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 10.dp),
+                        modifier = Modifier
+                            .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 10.dp)
+                            .clickable {
+                                if (calendarGranted) {
+                                    onOpenMeetings()
+                                } else {
+                                    permissionLauncher.launch(Manifest.permission.READ_CALENDAR)
+                                }
+                            },
                     )
                     UpcomingCard(
                         granted = calendarGranted,
                         title = upcoming?.title,
                         time = upcoming?.timeLabel,
                         onEnable = { permissionLauncher.launch(Manifest.permission.READ_CALENDAR) },
+                        onTapMeeting = upcoming?.let { meeting ->
+                            {
+                                if (meeting.minutesUntilStart > 5) {
+                                    pendingStart = meeting
+                                } else {
+                                    onCaptureMeeting(meeting.title)
+                                }
+                            }
+                        },
                     )
                     SectionLabel(
                         text = "Notes",
@@ -144,12 +182,62 @@ fun HomeScreen(
     }
 }
 
+/**
+ * Confirmation for starting a capture ahead of a not-yet-imminent meeting
+ * (>5 minutes out). Shared by Home and the meetings list.
+ */
+@Composable
+fun StartCaptureDialog(
+    meeting: UpcomingMeeting,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val c = TrailMix.colors
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = c.card,
+        title = { Text(meeting.title, color = c.text, fontSize = 17.sp) },
+        text = {
+            Text(
+                text = "This meeting doesn't start for another " +
+                    "${meeting.minutesUntilStart} minutes (${meeting.timeLabel}). " +
+                    "Start capturing now anyway?",
+                color = c.dim,
+                fontSize = 13.5.sp,
+                lineHeight = 19.sp,
+            )
+        },
+        confirmButton = {
+            Text(
+                text = "Start now",
+                color = c.amber,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .clickable(onClick = onConfirm)
+                    .padding(8.dp),
+            )
+        },
+        dismissButton = {
+            Text(
+                text = "Wait",
+                color = c.dim,
+                fontSize = 14.sp,
+                modifier = Modifier
+                    .clickable(onClick = onDismiss)
+                    .padding(8.dp),
+            )
+        },
+    )
+}
+
 @Composable
 private fun UpcomingCard(
     granted: Boolean,
     title: String?,
     time: String?,
     onEnable: () -> Unit,
+    onTapMeeting: (() -> Unit)?,
 ) {
     val c = TrailMix.colors
     Row(
@@ -158,7 +246,13 @@ private fun UpcomingCard(
             .padding(horizontal = 20.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(c.card)
-            .let { if (!granted) it.clickable(onClick = onEnable) else it }
+            .let {
+                when {
+                    !granted -> it.clickable(onClick = onEnable)
+                    onTapMeeting != null -> it.clickable(onClick = onTapMeeting)
+                    else -> it
+                }
+            }
             .padding(horizontal = 16.dp, vertical = 14.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,

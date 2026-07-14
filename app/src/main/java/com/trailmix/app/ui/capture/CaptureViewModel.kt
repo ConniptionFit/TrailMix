@@ -3,11 +3,15 @@ package com.trailmix.app.ui.capture
 import android.content.Context
 import android.content.Intent
 import android.media.AudioDeviceInfo
+import android.media.AudioManager
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.trailmix.app.data.ai.OnDeviceAiProcessor
+import com.trailmix.app.data.calendar.UpcomingMeetingSource
 import com.trailmix.app.data.db.NotesRepository
 import com.trailmix.app.data.model.TranscriptLine
+import com.trailmix.app.data.settings.SettingsRepository
 import com.trailmix.app.data.speech.CaptureEngine
 import com.trailmix.app.data.speech.EngineKind
 import com.trailmix.app.service.CaptureService
@@ -20,12 +24,16 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 /** A selectable input in the capture menu; null device = automatic routing. */
 data class InputOption(val label: String, val device: AudioDeviceInfo?)
+
+/** What the screen should do about the device-audio consent right now. */
+enum class DeviceAudioPrompt { NONE, EXPLAIN_THEN_ASK, ASK }
 
 data class CaptureUiState(
     val recording: Boolean = false,
@@ -36,36 +44,54 @@ data class CaptureUiState(
     val speechAvailable: Boolean = true,
     val engineKind: EngineKind = EngineKind.NONE,
     val deviceAudioActive: Boolean = false,
+    /** Device audio attached but delivering pure silence for a while. */
+    val deviceAudioSilent: Boolean = false,
     val inputOptions: List<InputOption> = emptyList(),
     val selectedInputIndex: Int = 0,
+    val deviceAudioPrompt: DeviceAudioPrompt = DeviceAudioPrompt.NONE,
+    /** Calendar event this capture is for (from the Home card or detected live). */
+    val meetingTitle: String? = null,
 )
 
 @HiltViewModel
 class CaptureViewModel @Inject constructor(
     @ApplicationContext private val appContext: Context,
+    savedStateHandle: SavedStateHandle,
     private val engine: CaptureEngine,
     private val aiProcessor: OnDeviceAiProcessor,
     private val notesRepository: NotesRepository,
+    private val settingsRepository: SettingsRepository,
+    private val meetingSource: UpcomingMeetingSource,
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(CaptureUiState())
+    private val _state = MutableStateFlow(
+        CaptureUiState(meetingTitle = savedStateHandle.get<String>("title")?.takeIf { it.isNotBlank() }),
+    )
     val state: StateFlow<CaptureUiState> = _state.asStateFlow()
 
     /** The user's own typed fragments — a live textarea buffer. */
     val fragments = MutableStateFlow("")
 
+    /** Finalized transcript so far — drives the expanded live-transcript view. */
+    private val _liveLines = MutableStateFlow<List<TranscriptLine>>(emptyList())
+    val liveLines: StateFlow<List<TranscriptLine>> = _liveLines.asStateFlow()
+
     private val transcriptLines = mutableListOf<TranscriptLine>()
     private var startedAtMs = 0L
     private var listenJob: Job? = null
     private var tickerJob: Job? = null
+    private var capturedInCall = false
+    private var silentSeconds = 0
 
     fun startRecording() {
         if (_state.value.recording || _state.value.merging) return
         startedAtMs = System.currentTimeMillis()
         transcriptLines.clear()
+        _liveLines.value = emptyList()
         refreshInputOptions()
         _state.value = _state.value.copy(recording = true)
         CaptureService.start(appContext)
+        detectMeetingContext()
         listenJob = viewModelScope.launch {
             val selected = _state.value.inputOptions
                 .getOrNull(_state.value.selectedInputIndex)?.device
@@ -74,12 +100,14 @@ class CaptureViewModel @Inject constructor(
                 engineKind = engine.kind.value,
                 speechAvailable = engine.kind.value != EngineKind.NONE,
             )
+            maybePromptDeviceAudio()
             events.collect { event ->
                 if (event.finalizedUtterance.isNotBlank()) {
                     transcriptLines += TranscriptLine(
                         label = elapsedLabel(),
                         text = event.finalizedUtterance,
                     )
+                    _liveLines.value = transcriptLines.toList()
                     _state.value = _state.value.copy(
                         lastFinalLine = event.finalizedUtterance,
                         livePartial = "",
@@ -91,11 +119,56 @@ class CaptureViewModel @Inject constructor(
         }
         tickerJob = viewModelScope.launch {
             while (isActive) {
+                val peak = engine.readAndResetPlaybackPeak()
+                silentSeconds = when {
+                    peak < 0 -> 0                       // lane not attached
+                    peak < SILENCE_PEAK -> silentSeconds + 1
+                    else -> 0
+                }
                 _state.value = _state.value.copy(
                     elapsedLabel = elapsedLabel(),
                     deviceAudioActive = engine.deviceAudioActive.value,
+                    deviceAudioSilent = silentSeconds >= SILENT_HINT_AFTER_S,
                 )
                 delay(1_000)
+            }
+        }
+    }
+
+    /**
+     * Device audio is on by default: right after the pipeline starts, ask the
+     * screen to fire the system consent — with a one-time explainer first,
+     * since Android's dialog talks about "recording your screen" when all
+     * TrailMix takes from it is the audio stream.
+     */
+    private suspend fun maybePromptDeviceAudio() {
+        if (engine.kind.value != EngineKind.MLKIT) return
+        if (!settingsRepository.deviceAudioByDefault.first()) return
+        val explained = settingsRepository.projectionExplainerShown.first()
+        _state.value = _state.value.copy(
+            deviceAudioPrompt = if (explained) DeviceAudioPrompt.ASK else DeviceAudioPrompt.EXPLAIN_THEN_ASK,
+        )
+    }
+
+    fun consumeDeviceAudioPrompt() {
+        _state.value = _state.value.copy(deviceAudioPrompt = DeviceAudioPrompt.NONE)
+    }
+
+    fun markExplainerShown() {
+        viewModelScope.launch { settingsRepository.markProjectionExplainerShown() }
+    }
+
+    /** Tag the capture with the meeting context it started in (metadata only). */
+    private fun detectMeetingContext() {
+        val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        capturedInCall = audioManager.mode == AudioManager.MODE_IN_CALL ||
+            audioManager.mode == AudioManager.MODE_IN_COMMUNICATION
+        if (_state.value.meetingTitle == null) {
+            viewModelScope.launch {
+                val current = meetingSource.currentEvent()
+                if (current != null && _state.value.recording) {
+                    _state.value = _state.value.copy(meetingTitle = current.title)
+                }
             }
         }
     }
@@ -119,7 +192,8 @@ class CaptureViewModel @Inject constructor(
 
     fun disableDeviceAudio() {
         engine.detachDeviceAudio()
-        _state.value = _state.value.copy(deviceAudioActive = false)
+        silentSeconds = 0
+        _state.value = _state.value.copy(deviceAudioActive = false, deviceAudioSilent = false)
     }
 
     val deviceAudioSupported: Boolean
@@ -151,6 +225,8 @@ class CaptureViewModel @Inject constructor(
                 durationMs = durationMs,
                 createdAtEpochMs = createdAt,
                 mergedWithAi = result.usedOnDeviceAi,
+                meetingTitle = _state.value.meetingTitle,
+                capturedInCall = capturedInCall,
             )
             _state.value = _state.value.copy(merging = false)
             onDone(id)
@@ -193,10 +269,12 @@ class CaptureViewModel @Inject constructor(
         tickerJob = null
         engine.detachDeviceAudio()
         CaptureService.stop(appContext)
+        silentSeconds = 0
         _state.value = _state.value.copy(
             recording = false,
             livePartial = "",
             deviceAudioActive = false,
+            deviceAudioSilent = false,
         )
     }
 
@@ -209,5 +287,11 @@ class CaptureViewModel @Inject constructor(
         engine.endInput()
         stopCapture()
         super.onCleared()
+    }
+
+    private companion object {
+        /** 16-bit peaks below this are indistinguishable from digital silence. */
+        const val SILENCE_PEAK = 64
+        const val SILENT_HINT_AFTER_S = 5
     }
 }

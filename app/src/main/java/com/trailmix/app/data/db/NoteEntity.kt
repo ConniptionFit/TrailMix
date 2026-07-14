@@ -22,6 +22,10 @@ data class NoteEntity(
     /** Source tinting visible — defaults to true right after a merge. */
     val showSources: Boolean = true,
     val mergedWithAi: Boolean = false,
+    /** Calendar event this capture happened during (or was started from), if any. */
+    val meetingTitle: String? = null,
+    /** True when the device was in a call/VoIP session when capture started. */
+    val capturedInCall: Boolean = false,
 ) {
     val segments: List<NoteSegment> get() = SegmentsJson.decode(segmentsJson)
     val transcript: List<TranscriptLine> get() = TranscriptJson.decode(transcriptJson)

@@ -29,6 +29,8 @@ class NotesRepository @Inject constructor(
         durationMs: Long,
         createdAtEpochMs: Long,
         mergedWithAi: Boolean,
+        meetingTitle: String? = null,
+        capturedInCall: Boolean = false,
     ): Long {
         val id = noteDao.insert(
             NoteEntity(
@@ -40,6 +42,8 @@ class NotesRepository @Inject constructor(
                 createdAtEpochMs = createdAtEpochMs,
                 showSources = true,
                 mergedWithAi = mergedWithAi,
+                meetingTitle = meetingTitle,
+                capturedInCall = capturedInCall,
             ),
         )
         exportIfConfigured(noteDao.getById(id)!!)
