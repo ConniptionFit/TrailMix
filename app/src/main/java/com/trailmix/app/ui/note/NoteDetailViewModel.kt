@@ -30,6 +30,14 @@ class NoteDetailViewModel @Inject constructor(
         }
     }
 
+    /** Persist a hand-edited title/body (UX-01). */
+    fun saveEdits(title: String, body: String, onDone: () -> Unit) {
+        viewModelScope.launch {
+            notesRepository.updateNoteContent(noteId, title.trim(), body)
+            onDone()
+        }
+    }
+
     fun deleteNote(onDeleted: () -> Unit) {
         viewModelScope.launch {
             notesRepository.delete(noteId)

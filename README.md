@@ -41,24 +41,30 @@ data architecture than the cloud product it resembles:
 2. **Live capture** — recording status, live transcript preview, free-typing fragment area,
    red *End & Merge* button. Tap the live-transcript card to **expand** it into a
    scrolling view of recent lines. A 3-dot menu (upper right) picks the input mic
-   (built-in, Bluetooth buds, USB — switchable mid-session), toggles **capture device
+   (built-in, Bluetooth buds, USB — switchable mid-session), turns on **Capture system
    audio**, and jumps to the system output panel. Capture runs in a silent foreground
    service, so it survives switching to the meeting or video app. The app plays **no
    notification sounds whatsoever** — no recognizer chimes, and its one notification
-   channel is muted.
+   channel is muted. **Back never throws away a live recording:** on the expanded
+   transcript it just collapses the view, and while recording it asks before discarding —
+   a transcript keeps recording until you *End & Merge* or explicitly discard.
 
-   **Device audio is on by default** (a one-time explainer clarifies that Android's
-   screen-share prompt grants TrailMix the audio stream only — never your screen).
-   Important limits, both enforced by Android and not fixable in-app: **voice-call audio
-   is never capturable** (the far end of a Teams/Zoom call), and apps that opt out of
-   capture — **YouTube and most DRM/streaming apps set this flag** — can't be captured
-   either. For those, put the call/video on speakerphone and let the mic hear it. The
-   device-audio lane works for games, many browsers, and podcast apps that permit
-   capture; a hint appears in-app when it's attached but hearing silence.
+   **Capture is mic-only by default.** Device (system) audio is opt-in: turn it on from the
+   3-dot menu, and a one-time explainer clarifies that Android's screen-share prompt grants
+   TrailMix the audio stream only — never your screen. Important limits, both enforced by
+   Android and not fixable in-app: **voice-call audio is never capturable** (the far end of
+   a Teams/Zoom call), and apps that opt out of capture — **YouTube and most DRM/streaming
+   apps set this flag** — can't be captured either. For those, put the call/video on
+   speakerphone and let the mic hear it. The device-audio lane works for games, many
+   browsers, and podcast apps that permit capture; a hint appears in-app when it's attached
+   but hearing silence.
 3. **Note detail** — the merged note; amber tint = from your typed fragments, teal tint =
    from the transcript. *Sources shown* pill toggles provenance tinting (on by default
    after a merge). The meta line shows the meeting name and an in-call tag when the
-   capture ran during a calendar event or phone call.
+   capture ran during a calendar event or phone call. **Edit** the title and body inline
+   (a hand-edited note becomes plain text — provenance tinting no longer applies — and is
+   marked *edited*). **Resume** reopens capture seeded with this note's transcript and
+   fragments, and re-merges back into the same note when you finish.
    - **Upcoming meetings** — tap the calendar label on Home to see the next 7 days; tap a
      meeting to capture it (a meeting more than 5 minutes out asks first).
 4. **Transcript** — full-screen, timestamp-labeled lines (no speaker diarization on-device yet).

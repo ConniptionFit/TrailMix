@@ -18,7 +18,7 @@ import com.trailmix.app.ui.transcript.TranscriptScreen
 
 object Routes {
     const val HOME = "home"
-    const val CAPTURE = "capture?title={title}"
+    const val CAPTURE = "capture?title={title}&resumeNoteId={resumeNoteId}"
     const val NOTE = "note/{noteId}"
     const val TRANSCRIPT = "transcript/{noteId}"
     const val CHAT = "chat/{noteId}"
@@ -27,6 +27,9 @@ object Routes {
 
     fun capture(title: String? = null) =
         if (title.isNullOrBlank()) "capture" else "capture?title=${Uri.encode(title)}"
+
+    /** Continue adding to an existing note (re-merges into it on End & Merge). */
+    fun resumeCapture(noteId: Long) = "capture?resumeNoteId=$noteId"
     fun note(id: Long) = "note/$id"
     fun transcript(id: Long) = "transcript/$id"
     fun chat(id: Long) = "chat/$id"
@@ -62,6 +65,10 @@ fun TrailMixNavHost(navController: NavHostController = rememberNavController()) 
                     nullable = true
                     defaultValue = null
                 },
+                navArgument("resumeNoteId") {
+                    type = NavType.LongType
+                    defaultValue = -1L
+                },
             ),
         ) {
             CaptureScreen(
@@ -82,6 +89,11 @@ fun TrailMixNavHost(navController: NavHostController = rememberNavController()) 
                 onBack = { navController.popBackStack() },
                 onOpenTranscript = { navController.navigate(Routes.transcript(noteId)) },
                 onOpenChat = { navController.navigate(Routes.chat(noteId)) },
+                onResume = {
+                    navController.navigate(Routes.resumeCapture(noteId)) {
+                        popUpTo(Routes.HOME)
+                    }
+                },
             )
         }
         composable(

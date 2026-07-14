@@ -64,6 +64,10 @@ class CaptureViewModel @Inject constructor(
     private val meetingSource: UpcomingMeetingSource,
 ) : ViewModel() {
 
+    /** > 0 when this session resumes an existing note (re-merges into it). */
+    private val resumeNoteId: Long =
+        savedStateHandle.get<Long>("resumeNoteId")?.takeIf { it > 0 } ?: -1L
+
     private val _state = MutableStateFlow(
         CaptureUiState(meetingTitle = savedStateHandle.get<String>("title")?.takeIf { it.isNotBlank() }),
     )
@@ -82,6 +86,11 @@ class CaptureViewModel @Inject constructor(
     private var tickerJob: Job? = null
     private var capturedInCall = false
     private var silentSeconds = 0
+    /** Duration already accumulated in the note being resumed (ms); 0 for a fresh note. */
+    private var priorDurationMs = 0L
+    /** Original creation timestamp to preserve when resuming; 0 for a fresh note. */
+    private var resumeCreatedAt = 0L
+    private var seeded = false
 
     fun startRecording() {
         if (_state.value.recording || _state.value.merging) return
@@ -91,8 +100,10 @@ class CaptureViewModel @Inject constructor(
         refreshInputOptions()
         _state.value = _state.value.copy(recording = true)
         CaptureService.start(appContext)
-        detectMeetingContext()
         listenJob = viewModelScope.launch {
+            if (resumeNoteId > 0 && !seeded) applyResume()
+            seeded = true
+            detectMeetingContext()
             val selected = _state.value.inputOptions
                 .getOrNull(_state.value.selectedInputIndex)?.device
             val events = engine.begin(selected)
@@ -100,7 +111,6 @@ class CaptureViewModel @Inject constructor(
                 engineKind = engine.kind.value,
                 speechAvailable = engine.kind.value != EngineKind.NONE,
             )
-            maybePromptDeviceAudio()
             events.collect { event ->
                 if (event.finalizedUtterance.isNotBlank()) {
                     transcriptLines += TranscriptLine(
@@ -136,17 +146,37 @@ class CaptureViewModel @Inject constructor(
     }
 
     /**
-     * Device audio is on by default: right after the pipeline starts, ask the
-     * screen to fire the system consent — with a one-time explainer first,
-     * since Android's dialog talks about "recording your screen" when all
-     * TrailMix takes from it is the audio stream.
+     * User opted into device-audio capture from the in-call menu. Capture is
+     * mic-only by default (Android can't reliably capture calls/YouTube — see
+     * the silence hint), so this is an explicit action. Fires the one-time
+     * explainer the first time, since Android's system dialog talks about
+     * "recording your screen" when all TrailMix takes from it is the audio.
      */
-    private suspend fun maybePromptDeviceAudio() {
+    fun requestDeviceAudio() {
         if (engine.kind.value != EngineKind.MLKIT) return
-        if (!settingsRepository.deviceAudioByDefault.first()) return
-        val explained = settingsRepository.projectionExplainerShown.first()
+        if (_state.value.deviceAudioActive) return
+        viewModelScope.launch {
+            val explained = settingsRepository.projectionExplainerShown.first()
+            _state.value = _state.value.copy(
+                deviceAudioPrompt =
+                    if (explained) DeviceAudioPrompt.ASK else DeviceAudioPrompt.EXPLAIN_THEN_ASK,
+            )
+        }
+    }
+
+    /** Seed the session from the note being resumed (transcript, fragments, metadata). */
+    private suspend fun applyResume() {
+        val note = notesRepository.getNote(resumeNoteId) ?: return
+        transcriptLines.clear()
+        transcriptLines.addAll(note.transcript)
+        _liveLines.value = transcriptLines.toList()
+        fragments.value = note.typedFragments
+        priorDurationMs = note.durationMs
+        resumeCreatedAt = note.createdAtEpochMs
+        capturedInCall = note.capturedInCall
         _state.value = _state.value.copy(
-            deviceAudioPrompt = if (explained) DeviceAudioPrompt.ASK else DeviceAudioPrompt.EXPLAIN_THEN_ASK,
+            meetingTitle = note.meetingTitle ?: _state.value.meetingTitle,
+            lastFinalLine = transcriptLines.lastOrNull()?.text ?: "",
         )
     }
 
@@ -161,7 +191,9 @@ class CaptureViewModel @Inject constructor(
     /** Tag the capture with the meeting context it started in (metadata only). */
     private fun detectMeetingContext() {
         val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        capturedInCall = audioManager.mode == AudioManager.MODE_IN_CALL ||
+        // Sticky across a resume: keep an earlier in-call flag even if we're not in a call now.
+        capturedInCall = capturedInCall ||
+            audioManager.mode == AudioManager.MODE_IN_CALL ||
             audioManager.mode == AudioManager.MODE_IN_COMMUNICATION
         if (_state.value.meetingTitle == null) {
             viewModelScope.launch {
@@ -202,14 +234,15 @@ class CaptureViewModel @Inject constructor(
     fun endAndMerge(onDone: (Long) -> Unit) {
         if (_state.value.merging) return
         _state.value = _state.value.copy(merging = true, recording = false)
-        val durationMs = System.currentTimeMillis() - startedAtMs
+        val durationMs = priorDurationMs + (System.currentTimeMillis() - startedAtMs)
         viewModelScope.launch {
             // Close the audio input and give the recognizer a moment to flush
             // its final utterance into the transcript before merging.
             engine.endInput()
             withTimeoutOrNull(5_000) { listenJob?.join() }
             stopCapture()
-            val createdAt = System.currentTimeMillis()
+            val resuming = resumeNoteId > 0
+            val createdAt = if (resuming) resumeCreatedAt else System.currentTimeMillis()
             val typed = fragments.value
             val transcript = transcriptLines.toList()
             val result = aiProcessor.merge(
@@ -217,17 +250,33 @@ class CaptureViewModel @Inject constructor(
                 transcript = transcript,
                 createdAtEpochMs = createdAt,
             )
-            val id = notesRepository.saveMergedNote(
-                title = result.title,
-                segments = result.segments,
-                transcript = transcript,
-                typedFragments = typed,
-                durationMs = durationMs,
-                createdAtEpochMs = createdAt,
-                mergedWithAi = result.usedOnDeviceAi,
-                meetingTitle = _state.value.meetingTitle,
-                capturedInCall = capturedInCall,
-            )
+            val id = if (resuming) {
+                notesRepository.updateMergedNote(
+                    id = resumeNoteId,
+                    title = result.title,
+                    segments = result.segments,
+                    transcript = transcript,
+                    typedFragments = typed,
+                    durationMs = durationMs,
+                    createdAtEpochMs = createdAt,
+                    mergedWithAi = result.usedOnDeviceAi,
+                    meetingTitle = _state.value.meetingTitle,
+                    capturedInCall = capturedInCall,
+                )
+                resumeNoteId
+            } else {
+                notesRepository.saveMergedNote(
+                    title = result.title,
+                    segments = result.segments,
+                    transcript = transcript,
+                    typedFragments = typed,
+                    durationMs = durationMs,
+                    createdAtEpochMs = createdAt,
+                    mergedWithAi = result.usedOnDeviceAi,
+                    meetingTitle = _state.value.meetingTitle,
+                    capturedInCall = capturedInCall,
+                )
+            }
             _state.value = _state.value.copy(merging = false)
             onDone(id)
         }
@@ -279,7 +328,8 @@ class CaptureViewModel @Inject constructor(
     }
 
     private fun elapsedLabel(): String {
-        val sec = ((System.currentTimeMillis() - startedAtMs) / 1000).coerceAtLeast(0)
+        val elapsed = priorDurationMs + (System.currentTimeMillis() - startedAtMs)
+        val sec = (elapsed / 1000).coerceAtLeast(0)
         return String.format(Locale.ROOT, "%d:%02d", sec / 60, sec % 60)
     }
 

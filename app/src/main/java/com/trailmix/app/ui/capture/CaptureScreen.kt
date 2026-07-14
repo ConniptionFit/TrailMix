@@ -96,9 +96,59 @@ fun CaptureScreen(
         }
     }
 
-    BackHandler(enabled = !state.merging) {
-        viewModel.cancel()
-        onCancel()
+    // Live-transcript expand state is hoisted here so Back can collapse it
+    // without ever touching the recording.
+    var transcriptExpanded by remember { mutableStateOf(false) }
+    var confirmDiscard by remember { mutableStateOf(false) }
+
+    // Back while the transcript is expanded just collapses it — the recording
+    // keeps running (it only stops on End & Merge or an explicit Discard).
+    BackHandler(enabled = transcriptExpanded) { transcriptExpanded = false }
+    // Otherwise Back asks before discarding an in-progress recording.
+    BackHandler(enabled = !state.merging && !transcriptExpanded) {
+        if (state.recording) confirmDiscard = true else { viewModel.cancel(); onCancel() }
+    }
+
+    if (confirmDiscard) {
+        AlertDialog(
+            onDismissRequest = { confirmDiscard = false },
+            containerColor = c.card,
+            title = { Text("Discard this recording?", color = c.text, fontSize = 17.sp) },
+            text = {
+                Text(
+                    "You're still recording. Discarding throws away the transcript so far. " +
+                        "To keep it, tap End & Merge instead.",
+                    color = c.dim,
+                    fontSize = 13.5.sp,
+                    lineHeight = 19.sp,
+                )
+            },
+            confirmButton = {
+                Text(
+                    text = "Discard",
+                    color = c.recordingRed,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .clickable {
+                            confirmDiscard = false
+                            viewModel.cancel()
+                            onCancel()
+                        }
+                        .padding(8.dp),
+                )
+            },
+            dismissButton = {
+                Text(
+                    text = "Keep recording",
+                    color = c.dim,
+                    fontSize = 14.sp,
+                    modifier = Modifier
+                        .clickable { confirmDiscard = false }
+                        .padding(8.dp),
+                )
+            },
+        )
     }
 
     val projectionLauncher = rememberLauncherForActivityResult(
@@ -114,9 +164,10 @@ fun CaptureScreen(
         projectionLauncher.launch(mpm.createScreenCaptureIntent())
     }
 
-    // Device audio is on by default: fire the system consent as the session
-    // starts, with a one-time explainer the first time (Android's dialog talks
-    // about the screen; TrailMix only takes the audio stream from it).
+    // Device audio is opt-in from the in-call menu (capture is mic-only by
+    // default). When the user asks for it, fire the system consent — with a
+    // one-time explainer first (Android's dialog talks about the screen;
+    // TrailMix only takes the audio stream from it).
     LaunchedEffect(state.deviceAudioPrompt) {
         if (state.deviceAudioPrompt == DeviceAudioPrompt.ASK) {
             viewModel.consumeDeviceAudioPrompt()
@@ -214,7 +265,7 @@ fun CaptureScreen(
                 state = state,
                 deviceAudioSupported = viewModel.deviceAudioSupported,
                 onSelectInput = viewModel::selectInput,
-                onEnableDeviceAudio = launchProjectionConsent,
+                onEnableDeviceAudio = viewModel::requestDeviceAudio,
                 onDisableDeviceAudio = viewModel::disableDeviceAudio,
             )
         }
@@ -238,7 +289,6 @@ fun CaptureScreen(
         }
 
         // Live transcript card — tap to expand into the recent transcript
-        var transcriptExpanded by remember { mutableStateOf(false) }
         val liveLines by viewModel.liveLines.collectAsStateWithLifecycle()
         Column(
             modifier = Modifier
@@ -456,7 +506,7 @@ private fun CaptureMenu(
             DropdownMenuItem(
                 text = {
                     Column {
-                        Text("Capture device audio", fontSize = 14.sp, color = c.text)
+                        Text("Capture system audio", fontSize = 14.sp, color = c.text)
                         Text(
                             text = if (deviceAudioSupported) {
                                 "Audio only — your screen is never recorded"

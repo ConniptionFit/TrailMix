@@ -26,11 +26,23 @@ data class NoteEntity(
     val meetingTitle: String? = null,
     /** True when the device was in a call/VoIP session when capture started. */
     val capturedInCall: Boolean = false,
+    /**
+     * User-edited plain-text body. Null until the note is edited by hand; when
+     * set it replaces the merged [segments] for display/export (provenance
+     * tinting no longer applies to a hand-authored body). Re-merging (resume)
+     * clears it back to null.
+     */
+    val bodyOverride: String? = null,
 ) {
     val segments: List<NoteSegment> get() = SegmentsJson.decode(segmentsJson)
     val transcript: List<TranscriptLine> get() = TranscriptJson.decode(transcriptJson)
+
+    /** The text shown as the note body: the hand-edited override if present, else the merged segments. */
+    val displayBody: String
+        get() = bodyOverride ?: segments.joinToString(" ") { it.text }
+
     val preview: String
-        get() = segments.joinToString(" ") { it.text }.replace('\n', ' ').take(120)
+        get() = displayBody.replace('\n', ' ').take(120)
 }
 
 @Entity(tableName = "chat_messages")

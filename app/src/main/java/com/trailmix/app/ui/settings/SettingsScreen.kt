@@ -96,40 +96,6 @@ fun SettingsScreen(
         Hairline()
 
         SectionLabel(
-            text = "Capture",
-            modifier = Modifier.padding(top = 24.dp, bottom = 10.dp),
-        )
-        val deviceAudioDefault by viewModel.deviceAudioByDefault.collectAsStateWithLifecycle()
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Capture device audio by default",
-                    color = c.text,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium,
-                )
-                Text(
-                    text = "Asks for Android's screen-share permission when a capture " +
-                        "starts. TrailMix takes audio only — your screen is never recorded.",
-                    color = c.dim,
-                    fontSize = 12.5.sp,
-                    modifier = Modifier.padding(top = 2.dp, end = 12.dp),
-                )
-            }
-            TrackSwitch(
-                on = deviceAudioDefault,
-                onToggle = { viewModel.setDeviceAudioByDefault(!deviceAudioDefault) },
-            )
-        }
-        Hairline()
-
-        SectionLabel(
             text = "Privacy & security",
             modifier = Modifier.padding(top = 24.dp, bottom = 10.dp),
         )

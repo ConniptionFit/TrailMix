@@ -29,11 +29,18 @@ object AppModule {
         }
     }
 
+    /** v1.3.0: hand-edited note bodies (UX-01). Nullable — null means "show the merged segments". */
+    private val MIGRATION_3_4 = object : Migration(3, 4) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE notes ADD COLUMN bodyOverride TEXT")
+        }
+    }
+
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): TrailMixDatabase =
         Room.databaseBuilder(context, TrailMixDatabase::class.java, "trailmix.db")
-            .addMigrations(MIGRATION_2_3)
+            .addMigrations(MIGRATION_2_3, MIGRATION_3_4)
             .build()
 
     @Provides
