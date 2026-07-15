@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.trailmix.app.data.model.SummaryTemplate
+import com.trailmix.app.data.speech.AsrLocales
 import com.trailmix.app.ui.components.SectionLabel
 import com.trailmix.app.ui.theme.TrailMix
 
@@ -54,8 +55,10 @@ fun SettingsScreen(
 ) {
     val darkOverride by viewModel.darkModeOverride.collectAsStateWithLifecycle()
     val vaultName by viewModel.vaultName.collectAsStateWithLifecycle()
+    val driveFolderName by viewModel.driveFolderName.collectAsStateWithLifecycle()
     val nameVariants by viewModel.nameVariants.collectAsStateWithLifecycle()
     val defaultTemplate by viewModel.defaultTemplate.collectAsStateWithLifecycle()
+    val asrLocaleTag by viewModel.asrLocaleTag.collectAsStateWithLifecycle()
     val c = TrailMix.colors
     val systemDark = isSystemInDarkTheme()
     val darkOn = darkOverride ?: systemDark
@@ -63,6 +66,10 @@ fun SettingsScreen(
     val vaultPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree(),
     ) { uri -> if (uri != null) viewModel.onVaultPicked(uri) }
+
+    val drivePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { uri -> if (uri != null) viewModel.onDrivePicked(uri) }
 
     Column(
         modifier = Modifier
@@ -124,6 +131,43 @@ fun SettingsScreen(
             lineHeight = 21.6.sp,
             modifier = Modifier.padding(top = 10.dp),
         )
+        Text(
+            text = "One opt-in exception: if you link a Google Drive folder below, that note's " +
+                "Markdown leaves the device — written through Android's standard folder-sharing " +
+                "picker, not by this app talking to the internet directly.",
+            color = c.dim,
+            fontSize = 13.5.sp,
+            lineHeight = 21.6.sp,
+            modifier = Modifier.padding(top = 10.dp),
+        )
+
+        SectionLabel(
+            text = "Speech recognition language",
+            modifier = Modifier.padding(top = 28.dp, bottom = 10.dp),
+        )
+        Text(
+            text = "Language the on-device recognizer listens for (AI-02).",
+            color = c.dim,
+            fontSize = 12.5.sp,
+            modifier = Modifier.padding(bottom = 10.dp),
+        )
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(AsrLocales.options.size) { i ->
+                val option = AsrLocales.options[i]
+                val selected = option.tag == (asrLocaleTag ?: AsrLocales.default.tag)
+                Text(
+                    text = option.label,
+                    color = if (selected) Color.White else c.dim,
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(100.dp))
+                        .background(if (selected) c.amber else c.card)
+                        .clickable { viewModel.setAsrLocale(option.tag) }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+            }
+        }
 
         SectionLabel(
             text = "Obsidian export",
@@ -163,6 +207,60 @@ fun SettingsScreen(
                     modifier = Modifier
                         .clip(RoundedCornerShape(100.dp))
                         .clickable { viewModel.clearVault() }
+                        .padding(8.dp),
+                )
+            }
+        }
+
+        // Google Drive sync (INT-01) — same SAF-only architecture and folder-picker pattern
+        // as the Obsidian export above; the Drive app/provider does whatever network I/O
+        // actually moves the bytes, TrailMix itself still has no INTERNET permission.
+        SectionLabel(
+            text = "Google Drive sync",
+            modifier = Modifier.padding(top = 28.dp, bottom = 10.dp),
+        )
+        Text(
+            text = "Note content leaves this device once you link a folder here — see " +
+                "Privacy & security above. Everything else in TrailMix stays local.",
+            color = c.dim,
+            fontSize = 12.5.sp,
+            lineHeight = 18.sp,
+            modifier = Modifier.padding(bottom = 10.dp),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { drivePicker.launch(null) }
+                .padding(vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column {
+                Text(
+                    text = if (driveFolderName == null) "Link a Drive folder" else "Drive: $driveFolderName",
+                    color = c.text,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    text = if (driveFolderName == null) {
+                        "Optionally mirror merged notes into a folder in Google Drive"
+                    } else {
+                        "New notes sync to the TrailMix folder · tap to change"
+                    },
+                    color = c.dim,
+                    fontSize = 12.5.sp,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            if (driveFolderName != null) {
+                Text(
+                    text = "Unlink",
+                    color = c.dim,
+                    fontSize = 12.5.sp,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(100.dp))
+                        .clickable { viewModel.clearDrive() }
                         .padding(8.dp),
                 )
             }

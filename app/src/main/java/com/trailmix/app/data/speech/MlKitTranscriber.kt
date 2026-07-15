@@ -9,10 +9,11 @@ import com.google.mlkit.genai.speechrecognition.SpeechRecognition
 import com.google.mlkit.genai.speechrecognition.SpeechRecognizerResponse
 import com.google.mlkit.genai.speechrecognition.speechRecognizerOptions
 import com.google.mlkit.genai.speechrecognition.speechRecognizerRequest
-import java.util.Locale
+import com.trailmix.app.data.settings.SettingsRepository
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 
 /**
@@ -26,11 +27,17 @@ import kotlinx.coroutines.flow.flow
  * unavailable or still downloading.
  */
 @Singleton
-class MlKitTranscriber @Inject constructor() {
+class MlKitTranscriber @Inject constructor(
+    private val settingsRepository: SettingsRepository,
+) {
 
-    private fun newClient() = SpeechRecognition.getClient(
-        speechRecognizerOptions { locale = Locale.US },
-    )
+    /** AI-02: the user-picked ASR locale (Settings), defaulting to the prior hardcoded en-US. */
+    private suspend fun currentLocale() =
+        AsrLocales.toLocale(AsrLocales.fromTag(settingsRepository.asrLocaleTag.first()))
+
+    private suspend fun newClient() = currentLocale().let { locale ->
+        SpeechRecognition.getClient(speechRecognizerOptions { this.locale = locale })
+    }
 
     suspend fun status(): Int = try {
         newClient().use { it.checkStatus() }

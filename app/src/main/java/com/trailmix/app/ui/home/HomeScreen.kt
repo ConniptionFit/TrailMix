@@ -1,10 +1,14 @@
 package com.trailmix.app.ui.home
 
 import android.Manifest
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,27 +28,37 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.trailmix.app.data.calendar.UpcomingMeeting
 import com.trailmix.app.data.db.NoteEntity
+import com.trailmix.app.data.db.toMarkdown
+import com.trailmix.app.data.export.ExportTarget
 import com.trailmix.app.ui.components.SectionLabel
 import com.trailmix.app.ui.theme.TrailMix
+import kotlinx.coroutines.launch
 
 @Composable
 fun HomeScreen(
@@ -61,12 +75,37 @@ fun HomeScreen(
     val upcoming by viewModel.upcoming.collectAsStateWithLifecycle()
     val calendarGranted by viewModel.calendarGranted.collectAsStateWithLifecycle()
     val activeCapture by viewModel.activeCapture.collectAsStateWithLifecycle()
+    val exportTargetsConfigured by viewModel.exportTargetsConfigured.collectAsStateWithLifecycle()
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { viewModel.refreshUpcoming() }
 
     val c = TrailMix.colors
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(Unit) {
+        viewModel.snackbarMessage.collect { message ->
+            snackbarHostState.showSnackbar(message)
+        }
+    }
+
+    // Long-press context menu state (CAP-05): which note's menu is open, and any pending
+    // "Move" re-export awaiting a freshly SAF-picked destination folder.
+    var contextMenuNote by remember { mutableStateOf<NoteEntity?>(null) }
+    var pendingMove by remember { mutableStateOf<Pair<Long, ExportTarget>?>(null) }
+
+    val moveFolderPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { uri ->
+        val move = pendingMove
+        pendingMove = null
+        if (uri != null && move != null) {
+            viewModel.moveExport(move.first, move.second, uri)
+        }
+    }
 
     // Tapping the next meeting: imminent (≤5 min) or ongoing starts capture
     // immediately; further out asks first.
@@ -190,7 +229,11 @@ fun HomeScreen(
                     }
                 }
                 items(notes, key = { it.id }) { note ->
-                    NoteRow(note = note, onClick = { onOpenNote(note.id) })
+                    NoteRow(
+                        note = note,
+                        onClick = { onOpenNote(note.id) },
+                        onLongClick = { contextMenuNote = note },
+                    )
                 }
                 item { Spacer(Modifier.height(96.dp)) }
             }
@@ -214,6 +257,245 @@ fun HomeScreen(
                 tint = Color.White,
                 modifier = Modifier.size(26.dp),
             )
+        }
+
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 96.dp),
+        ) { data -> Snackbar(snackbarData = data) }
+    }
+
+    // Long-press context menu (CAP-05): Delete / Share / Open file location / Move.
+    contextMenuNote?.let { note ->
+        NoteContextMenu(
+            note = note,
+            exportConfigured = exportTargetsConfigured,
+            onDismiss = { contextMenuNote = null },
+            onDelete = {
+                contextMenuNote = null
+                viewModel.deleteNote(note.id)
+            },
+            onShare = {
+                contextMenuNote = null
+                val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(Intent.EXTRA_SUBJECT, note.title)
+                    putExtra(Intent.EXTRA_TEXT, note.toMarkdown())
+                }
+                context.startActivity(Intent.createChooser(sendIntent, "Share note"))
+            },
+            onOpenLocation = { target ->
+                contextMenuNote = null
+                val uriString = if (target == ExportTarget.OBSIDIAN) note.obsidianFileUri else note.driveFileUri
+                uriString?.let { uriStr ->
+                    runCatching {
+                        val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(Uri.parse(uriStr), "text/markdown")
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        context.startActivity(viewIntent)
+                    }.onFailure {
+                        scope.launch { snackbarHostState.showSnackbar("No app available to open this file") }
+                    }
+                }
+            },
+            onMove = { target ->
+                contextMenuNote = null
+                pendingMove = note.id to target
+                moveFolderPicker.launch(null)
+            },
+        )
+    }
+}
+
+/**
+ * Long-press context menu on a Home note row (CAP-05 Part 1): Delete (with confirm, cascades
+ * to any tracked export file), Share (reuses the UX-03 ACTION_SEND flow), Open file location
+ * (ACTION_VIEW on the tracked export URI — disabled until the note has been exported at least
+ * once), and Move ("re-export to a newly SAF-picked folder, replacing the tracked URI" — see
+ * `UI and Design.md` for why this interpretation was chosen over an in-app folder concept).
+ * When both Obsidian and Drive are tracked/configured, Open-location/Move ask which target
+ * first via a small sub-dialog.
+ */
+@Composable
+private fun NoteContextMenu(
+    note: NoteEntity,
+    exportConfigured: ExportTargetsConfigured,
+    onDismiss: () -> Unit,
+    onDelete: () -> Unit,
+    onShare: () -> Unit,
+    onOpenLocation: (ExportTarget) -> Unit,
+    onMove: (ExportTarget) -> Unit,
+) {
+    val c = TrailMix.colors
+    var confirmDelete by remember { mutableStateOf(false) }
+    var chooseOpenTarget by remember { mutableStateOf(false) }
+    var chooseMoveTarget by remember { mutableStateOf(false) }
+
+    val hasObsidianFile = note.obsidianFileUri != null
+    val hasDriveFile = note.driveFileUri != null
+    val hasAnyFile = hasObsidianFile || hasDriveFile
+
+    if (!confirmDelete && !chooseOpenTarget && !chooseMoveTarget) {
+        Dialog(onDismissRequest = onDismiss) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(c.card)
+                    .padding(vertical = 8.dp),
+            ) {
+                Text(
+                    text = note.title,
+                    color = c.dim,
+                    fontSize = 12.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                )
+                Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(c.border))
+                ContextMenuRow(label = "Delete", destructive = true) { confirmDelete = true }
+                ContextMenuRow(label = "Share") { onShare() }
+                ContextMenuRow(
+                    label = "Open file location",
+                    enabled = hasAnyFile,
+                    hint = if (!hasAnyFile) "Export this note first" else null,
+                ) {
+                    when {
+                        hasObsidianFile && hasDriveFile -> chooseOpenTarget = true
+                        hasObsidianFile -> onOpenLocation(ExportTarget.OBSIDIAN)
+                        else -> onOpenLocation(ExportTarget.DRIVE)
+                    }
+                }
+                ContextMenuRow(
+                    label = "Move",
+                    enabled = exportConfigured.any,
+                    hint = if (!exportConfigured.any) "Link a vault or Drive folder in Settings first" else null,
+                ) {
+                    when {
+                        exportConfigured.obsidian && exportConfigured.drive -> chooseMoveTarget = true
+                        exportConfigured.obsidian -> onMove(ExportTarget.OBSIDIAN)
+                        else -> onMove(ExportTarget.DRIVE)
+                    }
+                }
+            }
+        }
+    }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            containerColor = c.card,
+            title = { Text("Delete this note?", color = c.text, fontSize = 17.sp) },
+            text = {
+                Text(
+                    "This can't be undone. If it's been exported to Obsidian or Drive, " +
+                        "TrailMix will try to remove that copy too.",
+                    color = c.dim,
+                    fontSize = 13.5.sp,
+                    lineHeight = 19.sp,
+                )
+            },
+            confirmButton = {
+                Text(
+                    text = "Delete",
+                    color = c.recordingRed,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.clickable { onDelete() }.padding(8.dp),
+                )
+            },
+            dismissButton = {
+                Text(
+                    text = "Cancel",
+                    color = c.dim,
+                    fontSize = 14.sp,
+                    modifier = Modifier.clickable { onDismiss() }.padding(8.dp),
+                )
+            },
+        )
+    }
+
+    if (chooseOpenTarget) {
+        TargetPickerDialog(
+            title = "Open which copy?",
+            onDismiss = onDismiss,
+            onPick = { onOpenLocation(it) },
+        )
+    }
+    if (chooseMoveTarget) {
+        TargetPickerDialog(
+            title = "Move which export?",
+            onDismiss = onDismiss,
+            onPick = { onMove(it) },
+        )
+    }
+}
+
+@Composable
+private fun TargetPickerDialog(title: String, onDismiss: () -> Unit, onPick: (ExportTarget) -> Unit) {
+    val c = TrailMix.colors
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = c.card,
+        title = { Text(title, color = c.text, fontSize = 17.sp) },
+        text = {
+            Column {
+                Text(
+                    text = "Obsidian",
+                    color = c.amber,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.clickable { onPick(ExportTarget.OBSIDIAN) }.padding(vertical = 10.dp),
+                )
+                Text(
+                    text = "Google Drive",
+                    color = c.amber,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.clickable { onPick(ExportTarget.DRIVE) }.padding(vertical = 10.dp),
+                )
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            Text(
+                text = "Cancel",
+                color = c.dim,
+                fontSize = 14.sp,
+                modifier = Modifier.clickable { onDismiss() }.padding(8.dp),
+            )
+        },
+    )
+}
+
+@Composable
+private fun ContextMenuRow(
+    label: String,
+    enabled: Boolean = true,
+    destructive: Boolean = false,
+    hint: String? = null,
+    onClick: () -> Unit,
+) {
+    val c = TrailMix.colors
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 13.dp),
+    ) {
+        Text(
+            text = label,
+            color = when {
+                !enabled -> c.dim.copy(alpha = 0.5f)
+                destructive -> c.recordingRed
+                else -> c.text
+            },
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium,
+        )
+        if (hint != null) {
+            Text(text = hint, color = c.dim, fontSize = 11.5.sp, modifier = Modifier.padding(top = 2.dp))
         }
     }
 }
@@ -325,13 +607,14 @@ private fun UpcomingCard(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun NoteRow(note: NoteEntity, onClick: () -> Unit) {
+private fun NoteRow(note: NoteEntity, onClick: () -> Unit, onLongClick: () -> Unit) {
     val c = TrailMix.colors
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 20.dp),
     ) {
         Column(modifier = Modifier.padding(vertical = 14.dp)) {

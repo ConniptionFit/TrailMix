@@ -27,6 +27,9 @@ class SettingsRepository @Inject constructor(
     private val projectionExplainerShownKey = booleanPreferencesKey("projection_explainer_shown")
     private val nameVariantsKey = stringPreferencesKey("name_variants")
     private val defaultSummaryTemplateKey = stringPreferencesKey("default_summary_template")
+    private val driveUriKey = stringPreferencesKey("drive_folder_uri")
+    private val driveFolderNameKey = stringPreferencesKey("drive_folder_name")
+    private val asrLocaleTagKey = stringPreferencesKey("asr_locale_tag")
 
     /** null = follow the system setting (design default). */
     val darkModeOverride: Flow<Boolean?> = context.dataStore.data.map { it[darkModeOverrideKey] }
@@ -84,6 +87,44 @@ class SettingsRepository @Inject constructor(
     suspend fun setDefaultSummaryTemplate(templateName: String?) {
         context.dataStore.edit { prefs ->
             if (templateName == null) prefs.remove(defaultSummaryTemplateKey) else prefs[defaultSummaryTemplateKey] = templateName
+        }
+    }
+
+    /**
+     * Google Drive sync folder (INT-01, v1.5.0) — the SAF tree URI a user picked via
+     * `ACTION_OPEN_DOCUMENT_TREE` (which lists Drive as a document provider on a device
+     * that has it configured). Absent = sync is a silent no-op, same fail-soft contract as
+     * the Obsidian vault above. Stored the same way as the vault URI — DataStore, not a
+     * Room row, since it's app-wide config rather than per-note.
+     */
+    val driveUri: Flow<String?> = context.dataStore.data.map { it[driveUriKey] }
+    val driveFolderName: Flow<String?> = context.dataStore.data.map { it[driveFolderNameKey] }
+    val driveFolder: Flow<String> = context.dataStore.data.map { it[driveFolderNameKey] ?: "TrailMix" }
+
+    suspend fun setDrive(uri: String, name: String?) {
+        context.dataStore.edit { prefs ->
+            prefs[driveUriKey] = uri
+            if (name != null) prefs[driveFolderNameKey] = name else prefs.remove(driveFolderNameKey)
+        }
+    }
+
+    suspend fun clearDrive() {
+        context.dataStore.edit {
+            it.remove(driveUriKey)
+            it.remove(driveFolderNameKey)
+        }
+    }
+
+    /**
+     * ASR locale setting (AI-02) — `MlKitTranscriber` used to hardcode `Locale.US`. Stored
+     * as a BCP-47 tag (`"en-US"`); null = the default. See [com.trailmix.app.data.speech.AsrLocales]
+     * for the curated supported list.
+     */
+    val asrLocaleTag: Flow<String?> = context.dataStore.data.map { it[asrLocaleTagKey] }
+
+    suspend fun setAsrLocaleTag(tag: String?) {
+        context.dataStore.edit { prefs ->
+            if (tag == null) prefs.remove(asrLocaleTagKey) else prefs[asrLocaleTagKey] = tag
         }
     }
 }

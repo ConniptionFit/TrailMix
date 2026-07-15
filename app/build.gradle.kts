@@ -14,14 +14,20 @@ android {
         applicationId = "com.trailmix.app"
         minSdk = 31
         targetSdk = 35
-        versionCode = 5
-        versionName = "1.4.0"
+        versionCode = 6
+        versionName = "1.5.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // REL-02: R8 shrink/obfuscate + resource shrinking for release, previously off.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            // Placeholder signing (debug key) so `assembleRelease` still produces an
+            // installable APK before a real release keystore exists — swap when this app is
+            // actually distributed anywhere. Sideload/debug-only for now, see README.md.
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

@@ -35,13 +35,21 @@ data architecture than the cloud product it resembles:
   and is read-only. The same grant covers reading attendee names for a matched meeting —
   no separate permission — and those names never leave the device.
 - Optional **Obsidian export** writes Markdown into a folder you pick (SAF) — local disk only.
+- Optional **Google Drive sync** — the one deliberate exception. If you link a Drive
+  folder in Settings, that note's Markdown leaves the device, written through Android's
+  standard folder-sharing picker (not by this app talking to the internet directly —
+  Drive's own app/provider does that). Off by default; the app's `INTERNET` permission
+  stays absent either way.
 
 ## Screens
 
 1. **Home** — notes list, one upcoming meeting (opt-in calendar), amber FAB to start capture.
    While a capture is running — even after you've navigated away — an amber
-   *Recording · mm:ss* chip appears here; tap it to jump straight back into the live
-   session (recording keeps running in the background the whole time).
+   *Recording · mm:ss* chip appears here (and on Note detail, so it's never far away);
+   tap it to jump straight back into the live session (recording keeps running in the
+   background the whole time). **Press and hold a note** for a context menu: Delete
+   (also removes any exported Obsidian/Drive copy), Share, Open file location (once a
+   note has been exported), and Move (re-export to a different folder you pick).
 2. **Live capture** — recording status, live transcript preview, free-typing fragment area,
    red *End & Merge* button. Tap the live-transcript card to **expand** it into a
    scrolling view of recent lines. A 3-dot menu (upper right) picks the input mic
@@ -61,8 +69,11 @@ data architecture than the cloud product it resembles:
    apps set this flag** — can't be captured either. For those, put the call/video on
    speakerphone and let the mic hear it. The device-audio lane works for games, many
    browsers, and podcast apps that permit capture; a hint appears in-app when it's attached
-   but hearing silence. A **Home icon** in the top bar lets you go back to Home without
-   stopping the recording — different from Back, which still confirms before discarding.
+   but hearing silence. A **chevron-back icon** in the top bar lets you go back to Home
+   without stopping the recording — different from system Back, which still confirms
+   before discarding. You can also freely navigate into any other note while a capture
+   is running in the background — nothing about it depends on the Capture screen staying
+   open.
    Above *End & Merge*, a template row (Flat / 1:1 / Weekly Standup / Sales Pitch / User
    Interview) steers how the AI structures the summary for this capture.
 3. **Note detail** — the merged note; amber tint = from your typed fragments, teal tint =
@@ -86,8 +97,9 @@ data architecture than the cloud product it resembles:
    Summarize, Action items) are saved prompts. Chat now knows meeting attendees and any
    name variants you've registered in Settings, so it can answer things like "what did
    Charlie say I need to do."
-6. **Settings** — dark mode (follows system until overridden), privacy disclosure,
-   optional Obsidian vault link, a **Name variants** list (every alias you go by, so the
+6. **Settings** — dark mode (follows system until overridden), privacy disclosure, a
+   **Speech recognition language** picker, optional Obsidian vault link, optional
+   **Google Drive sync** folder, a **Name variants** list (every alias you go by, so the
    AI recognizes you in the transcript), and a **Default summary template**.
 
 ## Requirements
@@ -119,7 +131,10 @@ export ANDROID_HOME="$HOME/Library/Android/sdk"
 - `service/CaptureService` — silent foreground service (`microphone|mediaProjection`)
   keeping capture alive across app switches.
 - `data/db` — notes store provenance-tagged segments + transcript lines as JSON columns;
-  chat messages per note in a second table.
+  chat messages per note in a second table, plus per-note tracked export URIs
+  (Obsidian/Drive) for update-in-place and cascade-delete.
+- `data/export/MarkdownExportWriter.kt` — shared SAF write logic behind both
+  `data/obsidian/ObsidianExporter` and `data/drive/DriveExporter`.
 - `ui/theme/Theme.kt` — design tokens from the handoff (oklch → sRGB), light/dark with a
   persisted manual override.
 

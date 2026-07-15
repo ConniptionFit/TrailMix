@@ -48,11 +48,23 @@ object AppModule {
         }
     }
 
+    /**
+     * v1.5.0: per-note export URI tracking (CAP-05 long-press menu delete/open-location,
+     * INT-01 Google Drive sync). Both nullable/additive — an existing note with neither set
+     * behaves exactly as before (no tracked export, "Open file location" stays disabled).
+     */
+    private val MIGRATION_5_6 = object : Migration(5, 6) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE notes ADD COLUMN obsidianFileUri TEXT")
+            db.execSQL("ALTER TABLE notes ADD COLUMN driveFileUri TEXT")
+        }
+    }
+
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): TrailMixDatabase =
         Room.databaseBuilder(context, TrailMixDatabase::class.java, "trailmix.db")
-            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
             .build()
 
     @Provides

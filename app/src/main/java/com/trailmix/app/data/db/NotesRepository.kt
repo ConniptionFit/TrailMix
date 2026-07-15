@@ -1,5 +1,10 @@
 package com.trailmix.app.data.db
 
+import android.content.Context
+import android.net.Uri
+import android.provider.DocumentsContract
+import com.trailmix.app.data.drive.DriveExporter
+import com.trailmix.app.data.export.ExportTarget
 import com.trailmix.app.data.model.NoteSegment
 import com.trailmix.app.data.model.SegmentsJson
 import com.trailmix.app.data.model.StringListJson
@@ -8,6 +13,7 @@ import com.trailmix.app.data.model.StructuredSummaryJson
 import com.trailmix.app.data.model.TranscriptJson
 import com.trailmix.app.data.model.TranscriptLine
 import com.trailmix.app.data.obsidian.ObsidianExporter
+import dagger.hilt.android.qualifiers.ApplicationContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -15,11 +21,19 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 
+/** Result of deleting a note (CAP-05): the local DB delete always happens; [filesDeleted] is
+ * false only if the note had a tracked export URI and removing it failed (stale URI, revoked
+ * SAF permission, provider error) — fail-soft, surfaced as a non-blocking UI hint, never a
+ * reason to abort the local delete. */
+data class DeleteResult(val filesDeleted: Boolean)
+
 @Singleton
 class NotesRepository @Inject constructor(
+    @ApplicationContext private val context: Context,
     private val noteDao: NoteDao,
     private val chatDao: ChatDao,
     private val obsidianExporter: ObsidianExporter,
+    private val driveExporter: DriveExporter,
 ) {
     fun observeNotes(): Flow<List<NoteEntity>> = noteDao.observeAll()
 
@@ -131,19 +145,64 @@ class NotesRepository @Inject constructor(
         )
     }
 
-    suspend fun delete(id: Long) {
+    /**
+     * Delete a note locally and cascade to any tracked export files (CAP-05: long-press
+     * Delete on Home). The local DB delete always completes; a failed file delete (stale
+     * URI, revoked SAF grant, file already removed externally) is caught and reported back
+     * via [DeleteResult.filesDeleted] rather than aborting or crashing.
+     */
+    suspend fun delete(id: Long): DeleteResult {
+        val note = noteDao.getById(id)
         chatDao.deleteForNote(id)
         noteDao.deleteById(id)
+
+        var filesOk = true
+        note?.obsidianFileUri?.let { if (!deleteDocument(it)) filesOk = false }
+        note?.driveFileUri?.let { if (!deleteDocument(it)) filesOk = false }
+        return DeleteResult(filesDeleted = filesOk)
     }
 
-    /** Best-effort Markdown export into a linked Obsidian vault (local SAF only). */
+    /**
+     * "Move" (CAP-05 Part 1): re-export a single note to a freshly SAF-picked folder for
+     * [target], replacing whatever URI was previously tracked for that target. Independent
+     * of the standing Obsidian vault / Drive folder settings.
+     */
+    suspend fun moveExport(noteId: Long, target: ExportTarget, treeUri: Uri): Boolean {
+        val note = noteDao.getById(noteId) ?: return false
+        val uri = when (target) {
+            ExportTarget.OBSIDIAN -> obsidianExporter.exportNoteToPickedFolder(treeUri, note)
+            ExportTarget.DRIVE -> driveExporter.exportNoteToPickedFolder(treeUri, note)
+        } ?: return false
+        val updated = when (target) {
+            ExportTarget.OBSIDIAN -> note.copy(obsidianFileUri = uri.toString())
+            ExportTarget.DRIVE -> note.copy(driveFileUri = uri.toString())
+        }
+        noteDao.update(updated)
+        return true
+    }
+
+    private fun deleteDocument(uriStr: String): Boolean = runCatching {
+        DocumentsContract.deleteDocument(context.contentResolver, Uri.parse(uriStr))
+    }.getOrDefault(false)
+
+    /**
+     * Best-effort Markdown export/update-in-place into every configured target (Obsidian
+     * vault and/or Google Drive folder — INT-01, v1.5.0). Same automatic-on-merge/edit
+     * trigger for both, by design, so the two export surfaces behave consistently. Absent
+     * config for a target is a silent no-op for that target; a write failure for one target
+     * never blocks the other. Successful exports get their `content://` URI written back
+     * onto the note (update-in-place on the next export, cascade-delete, "Open file
+     * location") without re-triggering export again.
+     */
     private suspend fun exportIfConfigured(note: NoteEntity) {
-        runCatching {
-            obsidianExporter.exportNote(
-                title = note.title,
-                markdown = note.toMarkdown(),
-                createdAtEpochMs = note.createdAtEpochMs,
-                durationMs = note.durationMs,
+        val obsidianUri = runCatching { obsidianExporter.exportNote(note) }.getOrNull()
+        val driveUri = runCatching { driveExporter.exportNote(note) }.getOrNull()
+        if (obsidianUri != null || driveUri != null) {
+            noteDao.update(
+                note.copy(
+                    obsidianFileUri = obsidianUri?.toString() ?: note.obsidianFileUri,
+                    driveFileUri = driveUri?.toString() ?: note.driveFileUri,
+                ),
             )
         }
     }

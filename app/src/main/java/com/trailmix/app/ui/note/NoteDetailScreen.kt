@@ -33,12 +33,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -60,9 +62,12 @@ fun NoteDetailScreen(
     onOpenTranscript: () -> Unit,
     onOpenChat: () -> Unit,
     onResume: () -> Unit,
+    /** CAP-10/Part 3.2: jump back into a capture that's live in the background. */
+    onOpenActiveCapture: () -> Unit = {},
     viewModel: NoteDetailViewModel = hiltViewModel(),
 ) {
     val note by viewModel.note.collectAsStateWithLifecycle()
+    val activeCapture by viewModel.activeCapture.collectAsStateWithLifecycle()
     val c = TrailMix.colors
     val current = note ?: return
     val context = LocalContext.current
@@ -170,6 +175,42 @@ fun NoteDetailScreen(
                                 .padding(horizontal = 12.dp, vertical = 6.dp),
                         )
                     }
+                }
+            }
+        }
+
+        // In-progress transcription chip (CAP-10, extended Part 3.2): a capture is live
+        // somewhere else in the app — surfaced here too so navigating into an unrelated
+        // note's detail screen never strands the user away from the running session.
+        if (!editing) {
+            activeCapture?.let { active ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 4.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(c.amber)
+                        .clickable(onClick = onOpenActiveCapture)
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Recording" + (active.meetingTitle?.let { " · $it" } ?: ""),
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    Text(
+                        text = active.elapsedLabel,
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(start = 10.dp),
+                    )
                 }
             }
         }

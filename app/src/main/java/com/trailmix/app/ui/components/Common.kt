@@ -7,7 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBackIos
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -55,7 +55,7 @@ fun BackTitleBar(title: String, onBack: () -> Unit, modifier: Modifier = Modifie
 @Composable
 fun BackChevron(onBack: () -> Unit) {
     Icon(
-        imageVector = Icons.AutoMirrored.Filled.ArrowBackIos,
+        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
         contentDescription = "Back",
         tint = TrailMix.colors.dim,
         modifier = Modifier

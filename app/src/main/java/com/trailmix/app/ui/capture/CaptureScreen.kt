@@ -41,8 +41,8 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.runtime.Composable
@@ -267,12 +267,13 @@ fun CaptureScreen(
                 )
             }
             Spacer(modifier = Modifier.weight(1f))
-            // Minimize — go to Home while the recording keeps running in the background
-            // (CAP-10). Distinct from Back, which still confirms discard.
+            // Minimize — a literal chevron-back affordance (user-requested), goes to Home
+            // while the recording keeps running in the background (CAP-10). Distinct from
+            // system Back, which still confirms discard.
             IconButton(onClick = onMinimize) {
                 Icon(
-                    imageVector = Icons.Filled.Home,
-                    contentDescription = "Continue in background",
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back to Home (recording continues)",
                     tint = c.dim,
                 )
             }

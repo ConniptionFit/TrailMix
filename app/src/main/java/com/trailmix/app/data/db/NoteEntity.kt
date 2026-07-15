@@ -42,6 +42,14 @@ data class NoteEntity(
     val summaryJson: String? = null,
     /** Name of the [com.trailmix.app.data.model.SummaryTemplate] used to steer structuring, if any. */
     val template: String? = null,
+    /**
+     * `content://` URI of this note's exported file in the linked Obsidian vault, if it has
+     * ever been exported (v1.5.0, needed for update-in-place, cascade-delete, and "Open file
+     * location" — CAP-05/INT-01). Null until the first successful export.
+     */
+    val obsidianFileUri: String? = null,
+    /** Same as [obsidianFileUri] but for the Google Drive SAF sync target (INT-01, v1.5.0). */
+    val driveFileUri: String? = null,
 ) {
     val segments: List<NoteSegment> get() = SegmentsJson.decode(segmentsJson)
     val transcript: List<TranscriptLine> get() = TranscriptJson.decode(transcriptJson)

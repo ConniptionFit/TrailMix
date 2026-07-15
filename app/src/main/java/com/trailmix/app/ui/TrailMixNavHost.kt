@@ -100,6 +100,10 @@ fun TrailMixNavHost(navController: NavHostController = rememberNavController()) 
                         popUpTo(Routes.HOME)
                     }
                 },
+                // Part 3.2: jump back into a capture that's live in the background while
+                // viewing an unrelated note — no title/resumeNoteId needed, same as Home's
+                // chip, CaptureSessionManager already knows what's active.
+                onOpenActiveCapture = { navController.navigate(Routes.capture()) },
             )
         }
         composable(
