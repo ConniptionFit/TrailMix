@@ -32,12 +32,16 @@ data architecture than the cloud product it resembles:
   Every AI feature has a deterministic fallback — the app works with no model present.
 - **`allowBackup="false"`** — notes don't leave the device via cloud backup.
 - **Opt-in calendar.** `READ_CALENDAR` is requested only when you tap the Upcoming card,
-  and is read-only.
+  and is read-only. The same grant covers reading attendee names for a matched meeting —
+  no separate permission — and those names never leave the device.
 - Optional **Obsidian export** writes Markdown into a folder you pick (SAF) — local disk only.
 
 ## Screens
 
 1. **Home** — notes list, one upcoming meeting (opt-in calendar), amber FAB to start capture.
+   While a capture is running — even after you've navigated away — an amber
+   *Recording · mm:ss* chip appears here; tap it to jump straight back into the live
+   session (recording keeps running in the background the whole time).
 2. **Live capture** — recording status, live transcript preview, free-typing fragment area,
    red *End & Merge* button. Tap the live-transcript card to **expand** it into a
    scrolling view of recent lines. A 3-dot menu (upper right) picks the input mic
@@ -57,21 +61,34 @@ data architecture than the cloud product it resembles:
    apps set this flag** — can't be captured either. For those, put the call/video on
    speakerphone and let the mic hear it. The device-audio lane works for games, many
    browsers, and podcast apps that permit capture; a hint appears in-app when it's attached
-   but hearing silence.
+   but hearing silence. A **Home icon** in the top bar lets you go back to Home without
+   stopping the recording — different from Back, which still confirms before discarding.
+   Above *End & Merge*, a template row (Flat / 1:1 / Weekly Standup / Sales Pitch / User
+   Interview) steers how the AI structures the summary for this capture.
 3. **Note detail** — the merged note; amber tint = from your typed fragments, teal tint =
    from the transcript. *Sources shown* pill toggles provenance tinting (on by default
    after a merge). The meta line shows the meeting name and an in-call tag when the
-   capture ran during a calendar event or phone call. **Edit** the title and body inline
-   (a hand-edited note becomes plain text — provenance tinting no longer applies — and is
-   marked *edited*). **Resume** reopens capture seeded with this note's transcript and
-   fragments, and re-merges back into the same note when you finish.
+   capture ran during a calendar event or phone call, and an attendee list when the
+   calendar event had one. **Edit** the title and body inline (a hand-edited note becomes
+   plain text — provenance tinting no longer applies — and is marked *edited*). **Resume**
+   reopens capture seeded with this note's transcript and fragments, and re-merges back
+   into the same note when you finish. A **Share** icon sends the note's Markdown export
+   through the standard Android share sheet. When the on-device AI produced a structured
+   summary, the body shows **Highlights**, expandable/collapsible **topic sections**, and
+   an **Action Items** checklist (owner/deadline when statable) instead of the flat text —
+   tap the small "ⓘ" next to any bullet to see the transcript/fragment sentence it came
+   from.
    - **Upcoming meetings** — tap the calendar label on Home to see the next 7 days; tap a
      meeting to capture it (a meeting more than 5 minutes out asks first).
-4. **Transcript** — full-screen, timestamp-labeled lines (no speaker diarization on-device yet).
+4. **Transcript** — full-screen, timestamp-labeled lines (no speaker diarization on-device
+   yet). A Share icon sends the raw transcript through the Android share sheet.
 5. **Chat & Recipes** — chat about the note; recipe chips (Follow-up email, Create ticket,
-   Summarize, Action items) are saved prompts.
+   Summarize, Action items) are saved prompts. Chat now knows meeting attendees and any
+   name variants you've registered in Settings, so it can answer things like "what did
+   Charlie say I need to do."
 6. **Settings** — dark mode (follows system until overridden), privacy disclosure,
-   optional Obsidian vault link.
+   optional Obsidian vault link, a **Name variants** list (every alias you go by, so the
+   AI recognizes you in the transcript), and a **Default summary template**.
 
 ## Requirements
 

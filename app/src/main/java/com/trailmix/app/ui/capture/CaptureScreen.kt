@@ -10,6 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -41,7 +42,9 @@ import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -62,12 +65,15 @@ import androidx.core.content.ContextCompat
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.trailmix.app.data.model.SummaryTemplate
 import com.trailmix.app.ui.theme.TrailMix
 
 @Composable
 fun CaptureScreen(
     onMerged: (Long) -> Unit,
     onCancel: () -> Unit,
+    /** Navigate to Home without touching the recording (CAP-10) — it keeps running. */
+    onMinimize: () -> Unit = onCancel,
     viewModel: CaptureViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -261,6 +267,15 @@ fun CaptureScreen(
                 )
             }
             Spacer(modifier = Modifier.weight(1f))
+            // Minimize — go to Home while the recording keeps running in the background
+            // (CAP-10). Distinct from Back, which still confirms discard.
+            IconButton(onClick = onMinimize) {
+                Icon(
+                    imageVector = Icons.Filled.Home,
+                    contentDescription = "Continue in background",
+                    tint = c.dim,
+                )
+            }
             CaptureMenu(
                 state = state,
                 deviceAudioSupported = viewModel.deviceAudioSupported,
@@ -419,6 +434,32 @@ fun CaptureScreen(
             cursorBrush = SolidColor(c.amber),
             enabled = !state.merging,
         )
+
+        // Summary template selector (UX-02) — steers the structured-summary prompt.
+        var selectedTemplate by remember { mutableStateOf(viewModel.currentTemplate) }
+        LazyRow(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(SummaryTemplate.entries.size) { i ->
+                val option = SummaryTemplate.entries[i]
+                val selected = option == selectedTemplate
+                Text(
+                    text = option.label,
+                    color = if (selected) Color.White else c.dim,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(100.dp))
+                        .background(if (selected) c.amber else c.card)
+                        .clickable {
+                            selectedTemplate = option
+                            viewModel.setTemplate(option)
+                        }
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                )
+            }
+        }
 
         // End & Merge button
         Box(

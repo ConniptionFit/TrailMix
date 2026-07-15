@@ -53,11 +53,14 @@ fun HomeScreen(
     onOpenMeetings: () -> Unit,
     onOpenNote: (Long) -> Unit,
     onOpenSettings: () -> Unit,
+    /** CAP-10: reopen a capture that's still recording in the background. */
+    onOpenActiveCapture: () -> Unit,
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val notes by viewModel.notes.collectAsStateWithLifecycle()
     val upcoming by viewModel.upcoming.collectAsStateWithLifecycle()
     val calendarGranted by viewModel.calendarGranted.collectAsStateWithLifecycle()
+    val activeCapture by viewModel.activeCapture.collectAsStateWithLifecycle()
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -107,6 +110,39 @@ fun HomeScreen(
                         .background(c.card)
                         .clickable(onClick = onOpenSettings),
                 )
+            }
+
+            // In-progress transcription chip (CAP-10) — recording continues in the
+            // background even after leaving Capture; tap to jump straight back in.
+            activeCapture?.let { active ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 4.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(c.amber)
+                        .clickable(onClick = onOpenActiveCapture)
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Recording" + (active.meetingTitle?.let { " · $it" } ?: ""),
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    Text(
+                        text = active.elapsedLabel,
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(start = 10.dp),
+                    )
+                }
             }
 
             LazyColumn(modifier = Modifier.weight(1f)) {

@@ -20,6 +20,8 @@ data class UpcomingMeeting(
     val timeLabel: String,
     val beginEpochMs: Long,
     val endEpochMs: Long,
+    /** Underlying calendar event id — used to look up attendees (CAL-02). 0 if unknown. */
+    val eventId: Long = 0,
 ) {
     val minutesUntilStart: Long
         get() = (beginEpochMs - System.currentTimeMillis()) / 60_000
@@ -54,6 +56,36 @@ class UpcomingMeetingSource @Inject constructor(
             .firstOrNull { it.isOngoingAt(now) }
     }
 
+    /**
+     * Attendee display names for a calendar event (CAL-02). Read-only, uses the same
+     * opt-in READ_CALENDAR permission as everything else in this class. Returns an
+     * empty list on any failure or missing permission — never throws.
+     */
+    suspend fun attendeesFor(eventId: Long): List<String> = withContext(Dispatchers.IO) {
+        if (eventId <= 0 || !hasPermission()) return@withContext emptyList()
+        val projection = arrayOf(
+            CalendarContract.Attendees.ATTENDEE_NAME,
+            CalendarContract.Attendees.ATTENDEE_EMAIL,
+        )
+        runCatching {
+            context.contentResolver.query(
+                CalendarContract.Attendees.CONTENT_URI,
+                projection,
+                "${CalendarContract.Attendees.EVENT_ID} = ?",
+                arrayOf(eventId.toString()),
+                null,
+            )?.use { cursor ->
+                buildList {
+                    while (cursor.moveToNext()) {
+                        val name = cursor.getString(0)?.takeIf { it.isNotBlank() }
+                            ?: cursor.getString(1)?.takeIf { it.isNotBlank() }
+                        if (name != null) add(name)
+                    }
+                }
+            }.orEmpty()
+        }.getOrDefault(emptyList())
+    }
+
     private suspend fun queryWindow(windowMs: Long, limit: Int): List<UpcomingMeeting> =
         withContext(Dispatchers.IO) {
             if (!hasPermission()) return@withContext emptyList()
@@ -66,6 +98,7 @@ class UpcomingMeetingSource @Inject constructor(
                 CalendarContract.Instances.TITLE,
                 CalendarContract.Instances.BEGIN,
                 CalendarContract.Instances.END,
+                CalendarContract.Instances.EVENT_ID,
             )
             runCatching {
                 context.contentResolver.query(
@@ -85,6 +118,7 @@ class UpcomingMeetingSource @Inject constructor(
                                     timeLabel = timeLabel(begin, now),
                                     beginEpochMs = begin,
                                     endEpochMs = cursor.getLong(2),
+                                    eventId = cursor.getLong(3),
                                 ),
                             )
                         }

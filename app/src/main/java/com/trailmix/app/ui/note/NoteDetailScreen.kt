@@ -1,5 +1,6 @@
 package com.trailmix.app.ui.note
 
+import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -20,6 +21,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -30,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -39,7 +44,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.trailmix.app.data.db.toMarkdown
 import com.trailmix.app.data.model.Provenance
+import com.trailmix.app.data.model.SummaryBullet
 import com.trailmix.app.ui.components.BackChevron
 import com.trailmix.app.ui.theme.TrailMix
 import java.text.SimpleDateFormat
@@ -58,10 +65,20 @@ fun NoteDetailScreen(
     val note by viewModel.note.collectAsStateWithLifecycle()
     val c = TrailMix.colors
     val current = note ?: return
+    val context = LocalContext.current
 
     var editing by remember(current.id) { mutableStateOf(false) }
     var titleDraft by remember(current.id) { mutableStateOf("") }
     var bodyDraft by remember(current.id) { mutableStateOf("") }
+
+    fun shareNote() {
+        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, current.title)
+            putExtra(Intent.EXTRA_TEXT, current.toMarkdown())
+        }
+        context.startActivity(Intent.createChooser(sendIntent, "Share note"))
+    }
 
     fun enterEdit() {
         titleDraft = current.title
@@ -106,6 +123,15 @@ fun NoteDetailScreen(
             } else {
                 BackChevron(onBack)
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Filled.Share,
+                        contentDescription = "Share note",
+                        tint = c.dim,
+                        modifier = Modifier
+                            .size(20.dp)
+                            .clickable { shareNote() },
+                    )
+                    Spacer(modifier = Modifier.size(12.dp))
                     Text(
                         text = "Resume",
                         color = c.amber,
@@ -184,43 +210,56 @@ fun NoteDetailScreen(
                     color = c.text,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(top = 4.dp, bottom = 14.dp),
+                    modifier = Modifier.padding(top = 4.dp, bottom = if (current.attendees.isEmpty()) 14.dp else 6.dp),
                 )
-
-                if (current.bodyOverride != null) {
-                    // Hand-edited body: plain text, no provenance tinting.
+                if (current.attendees.isNotEmpty()) {
                     Text(
-                        text = current.bodyOverride!!,
-                        color = c.text,
-                        fontSize = 15.sp,
-                        lineHeight = 26.25.sp,
+                        text = "Attendees: " + current.attendees.joinToString(", "),
+                        color = c.dim,
+                        fontSize = 12.5.sp,
+                        modifier = Modifier.padding(bottom = 14.dp),
                     )
-                } else {
-                    val body = buildAnnotatedString {
-                        current.segments.forEachIndexed { i, segment ->
-                            if (i > 0) append(" ")
-                            if (current.showSources) {
-                                withStyle(
-                                    SpanStyle(
-                                        background = when (segment.source) {
-                                            Provenance.FRAGMENT -> c.amberTint
-                                            Provenance.TRANSCRIPT -> c.tealTint
-                                        },
-                                        // Fixed dark text on pale tints in BOTH modes (design requirement)
-                                        color = c.spanText,
-                                    ),
-                                ) { append(segment.text) }
-                            } else {
-                                append(segment.text)
+                }
+
+                val summary = current.structuredSummary
+                when {
+                    current.bodyOverride != null -> {
+                        // Hand-edited body: plain text, no provenance tinting.
+                        Text(
+                            text = current.bodyOverride!!,
+                            color = c.text,
+                            fontSize = 15.sp,
+                            lineHeight = 26.25.sp,
+                        )
+                    }
+                    summary != null -> StructuredSummaryBody(summary)
+                    else -> {
+                        val body = buildAnnotatedString {
+                            current.segments.forEachIndexed { i, segment ->
+                                if (i > 0) append(" ")
+                                if (current.showSources) {
+                                    withStyle(
+                                        SpanStyle(
+                                            background = when (segment.source) {
+                                                Provenance.FRAGMENT -> c.amberTint
+                                                Provenance.TRANSCRIPT -> c.tealTint
+                                            },
+                                            // Fixed dark text on pale tints in BOTH modes (design requirement)
+                                            color = c.spanText,
+                                        ),
+                                    ) { append(segment.text) }
+                                } else {
+                                    append(segment.text)
+                                }
                             }
                         }
+                        Text(
+                            text = body,
+                            color = c.text,
+                            fontSize = 15.sp,
+                            lineHeight = 26.25.sp, // 1.75
+                        )
                     }
-                    Text(
-                        text = body,
-                        color = c.text,
-                        fontSize = 15.sp,
-                        lineHeight = 26.25.sp, // 1.75
-                    )
                 }
             }
         }
@@ -259,6 +298,151 @@ fun NoteDetailScreen(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * Structured summary body (UX-02): highlights, topic-grouped sections (tap the heading to
+ * expand/collapse), and an isolated action-items checklist. Each bullet has a small "i"
+ * affordance — tap it to reveal the source transcript/fragment excerpt it was attributed
+ * from, the touch-friendly equivalent of a hover tooltip.
+ */
+@Composable
+private fun StructuredSummaryBody(summary: com.trailmix.app.data.model.StructuredSummary) {
+    val c = TrailMix.colors
+    Column {
+        if (summary.highlights.isNotEmpty()) {
+            Text(
+                text = "HIGHLIGHTS",
+                color = c.dim,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 0.4.sp,
+                modifier = Modifier.padding(bottom = 6.dp),
+            )
+            summary.highlights.forEach { SummaryBulletRow(it) }
+            Spacer(modifier = Modifier.size(16.dp))
+        }
+
+        summary.sections.forEach { section ->
+            var expanded by remember(section.heading) { mutableStateOf(true) }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = section.heading,
+                    color = c.text,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = if (expanded) "▾" else "▸",
+                    color = c.dim,
+                    fontSize = 14.sp,
+                )
+            }
+            if (expanded) {
+                Column(modifier = Modifier.padding(bottom = 10.dp)) {
+                    section.bullets.forEach { SummaryBulletRow(it) }
+                }
+            }
+        }
+
+        if (summary.actionItems.isNotEmpty()) {
+            Spacer(modifier = Modifier.size(8.dp))
+            Text(
+                text = "ACTION ITEMS",
+                color = c.dim,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 0.4.sp,
+                modifier = Modifier.padding(bottom = 6.dp),
+            )
+            summary.actionItems.forEach { item ->
+                var showExcerpt by remember(item) { mutableStateOf(false) }
+                Column(modifier = Modifier.padding(bottom = 8.dp)) {
+                    Row(verticalAlignment = Alignment.Top) {
+                        Text(text = "☐", color = c.amber, fontSize = 14.sp, modifier = Modifier.padding(end = 8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = item.text,
+                                color = c.text,
+                                fontSize = 14.5.sp,
+                                lineHeight = 20.sp,
+                            )
+                            val suffix = buildList {
+                                item.owner?.let { add("Owner: $it") }
+                                item.deadline?.let { add("Due: $it") }
+                            }.joinToString(" · ")
+                            if (suffix.isNotBlank()) {
+                                Text(text = suffix, color = c.dim, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
+                            }
+                        }
+                        if (item.sourceExcerpt != null) {
+                            Text(
+                                text = "ⓘ",
+                                color = c.dim,
+                                fontSize = 13.sp,
+                                modifier = Modifier
+                                    .clickable { showExcerpt = !showExcerpt }
+                                    .padding(start = 8.dp),
+                            )
+                        }
+                    }
+                    if (showExcerpt && item.sourceExcerpt != null) {
+                        Text(
+                            text = "“${item.sourceExcerpt}”",
+                            color = c.dim,
+                            fontSize = 12.5.sp,
+                            lineHeight = 18.sp,
+                            modifier = Modifier.padding(start = 22.dp, top = 4.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SummaryBulletRow(bullet: SummaryBullet) {
+    val c = TrailMix.colors
+    var showExcerpt by remember(bullet) { mutableStateOf(false) }
+    Column(modifier = Modifier.padding(bottom = 8.dp)) {
+        Row(verticalAlignment = Alignment.Top) {
+            Text(text = "•", color = c.dim, fontSize = 14.sp, modifier = Modifier.padding(end = 8.dp))
+            Text(
+                text = bullet.text,
+                color = c.text,
+                fontSize = 14.5.sp,
+                lineHeight = 20.sp,
+                modifier = Modifier.weight(1f),
+            )
+            if (bullet.sourceExcerpt != null) {
+                Text(
+                    text = "ⓘ",
+                    color = c.dim,
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .clickable { showExcerpt = !showExcerpt }
+                        .padding(start = 8.dp),
+                )
+            }
+        }
+        if (showExcerpt && bullet.sourceExcerpt != null) {
+            Text(
+                text = "“${bullet.sourceExcerpt}”",
+                color = c.dim,
+                fontSize = 12.5.sp,
+                lineHeight = 18.sp,
+                modifier = Modifier.padding(start = 22.dp, top = 4.dp),
+            )
         }
     }
 }

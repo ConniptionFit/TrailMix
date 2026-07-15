@@ -4,6 +4,9 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.trailmix.app.data.model.NoteSegment
 import com.trailmix.app.data.model.SegmentsJson
+import com.trailmix.app.data.model.StringListJson
+import com.trailmix.app.data.model.StructuredSummary
+import com.trailmix.app.data.model.StructuredSummaryJson
 import com.trailmix.app.data.model.TranscriptJson
 import com.trailmix.app.data.model.TranscriptLine
 
@@ -33,9 +36,17 @@ data class NoteEntity(
      * clears it back to null.
      */
     val bodyOverride: String? = null,
+    /** JSON-encoded List<String> of calendar attendee names for this meeting, if known (CAL-02). */
+    val attendeesJson: String? = null,
+    /** JSON-encoded [StructuredSummary]; null = this note has only the flat [segments] body (UX-02). */
+    val summaryJson: String? = null,
+    /** Name of the [com.trailmix.app.data.model.SummaryTemplate] used to steer structuring, if any. */
+    val template: String? = null,
 ) {
     val segments: List<NoteSegment> get() = SegmentsJson.decode(segmentsJson)
     val transcript: List<TranscriptLine> get() = TranscriptJson.decode(transcriptJson)
+    val attendees: List<String> get() = StringListJson.decode(attendeesJson)
+    val structuredSummary: StructuredSummary? get() = StructuredSummaryJson.decode(summaryJson)
 
     /** The text shown as the note body: the hand-edited override if present, else the merged segments. */
     val displayBody: String

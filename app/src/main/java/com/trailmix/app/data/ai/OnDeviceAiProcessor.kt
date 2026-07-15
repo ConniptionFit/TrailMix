@@ -4,8 +4,13 @@ import com.google.mlkit.genai.common.DownloadStatus
 import com.google.mlkit.genai.common.FeatureStatus
 import com.google.mlkit.genai.prompt.Generation
 import com.google.mlkit.genai.prompt.GenerativeModel
+import com.trailmix.app.data.model.ActionItem
 import com.trailmix.app.data.model.NoteSegment
 import com.trailmix.app.data.model.Provenance
+import com.trailmix.app.data.model.StructuredSummary
+import com.trailmix.app.data.model.SummaryBullet
+import com.trailmix.app.data.model.SummarySection
+import com.trailmix.app.data.model.SummaryTemplate
 import com.trailmix.app.data.model.TranscriptLine
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -14,6 +19,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 sealed class AiAvailability {
     data object Available : AiAvailability()
@@ -26,6 +32,8 @@ data class MergeResult(
     val title: String,
     val segments: List<NoteSegment>,
     val usedOnDeviceAi: Boolean,
+    /** Structured summary (UX-02) — null when AI is unavailable or structuring failed (deterministic flat fallback). */
+    val structuredSummary: StructuredSummary? = null,
 )
 
 /**
@@ -74,11 +82,22 @@ class OnDeviceAiProcessor @Inject constructor() {
         }
     }
 
-    /** Merge typed fragments + transcript into a provenance-tagged note. */
+    /**
+     * Merge typed fragments + transcript into a provenance-tagged note. When AI is
+     * available, also attempts a structured summary (UX-02) — highlights, topic-grouped
+     * sections, and an isolated action-items list, steered by [template] and given
+     * [attendees]/[nameVariants] as participant context so the model can attribute
+     * statements and tasks correctly. Structuring is best-effort and independent of the
+     * flat title/segments result: any failure just leaves [MergeResult.structuredSummary]
+     * null, never a half-built or bogus structure.
+     */
     suspend fun merge(
         typedFragments: String,
         transcript: List<TranscriptLine>,
         createdAtEpochMs: Long,
+        attendees: List<String> = emptyList(),
+        nameVariants: List<String> = emptyList(),
+        template: SummaryTemplate = SummaryTemplate.NONE,
     ): MergeResult = withContext(Dispatchers.Default) {
         val transcriptText = transcript.joinToString("\n") { it.text }.take(MAX_CONTEXT_CHARS)
         val availability = ensureModelReady()
@@ -109,6 +128,9 @@ class OnDeviceAiProcessor @Inject constructor() {
             val title = lines.first().removePrefix("#").trim().take(80)
             val body = lines.drop(1).joinToString(" ")
             val segments = attributeProvenance(splitSentences(body), typedFragments, transcriptText)
+            val structured = runCatching {
+                generateStructuredSummary(typedFragments, transcriptText, attendees, nameVariants, template)
+            }.getOrNull()
 
             MergeResult(
                 title = title.ifBlank { defaultTitle(createdAtEpochMs) },
@@ -116,6 +138,7 @@ class OnDeviceAiProcessor @Inject constructor() {
                     fallbackMerge(typedFragments, transcript, createdAtEpochMs).segments
                 },
                 usedOnDeviceAi = true,
+                structuredSummary = structured,
             )
         } catch (_: Exception) {
             fallbackMerge(typedFragments, transcript, createdAtEpochMs)
@@ -128,6 +151,8 @@ class OnDeviceAiProcessor @Inject constructor() {
         transcript: String,
         history: List<Pair<String, String>>, // role to text
         userMessage: String,
+        attendees: List<String> = emptyList(),
+        nameVariants: List<String> = emptyList(),
     ): String = withContext(Dispatchers.Default) {
         val availability = ensureModelReady()
         if (availability !is AiAvailability.Available) {
@@ -137,6 +162,15 @@ class OnDeviceAiProcessor @Inject constructor() {
             val prompt = buildString {
                 appendLine("You are a concise assistant working with one meeting note.")
                 appendLine("Answer using only the note and transcript below. Plain text only.")
+                if (attendees.isNotEmpty()) {
+                    appendLine("Meeting attendees: ${attendees.joinToString(", ")}.")
+                }
+                if (nameVariants.isNotEmpty()) {
+                    appendLine(
+                        "The user asking is also known by these names/aliases in the " +
+                            "transcript: ${nameVariants.joinToString(", ")}.",
+                    )
+                }
                 appendLine()
                 appendLine("Note:")
                 appendLine(noteBody.take(MAX_CONTEXT_CHARS))
@@ -161,6 +195,118 @@ class OnDeviceAiProcessor @Inject constructor() {
             OFFLINE_ASSISTANT_REPLY
         }
     }
+
+    // ── Structured summary (UX-02) ───────────────────────────────────────────
+
+    private suspend fun generateStructuredSummary(
+        typedFragments: String,
+        transcriptText: String,
+        attendees: List<String>,
+        nameVariants: List<String>,
+        template: SummaryTemplate,
+    ): StructuredSummary? {
+        val prompt = """
+            You are structuring a meeting note into JSON. ${templateGuidance(template)}
+            ${if (attendees.isNotEmpty()) "Attendees: ${attendees.joinToString(", ")}." else ""}
+            ${if (nameVariants.isNotEmpty()) "The note-taker is also known as: ${nameVariants.joinToString(", ")}." else ""}
+            Respond with ONLY valid JSON, no markdown fences, matching exactly this shape:
+            {"highlights": ["short key decision or highlight", "..."],
+             "sections": [{"heading": "Topic name", "bullets": ["bullet text", "..."]}],
+             "actionItems": [{"text": "what needs doing", "owner": "name or null", "deadline": "date/phrase or null"}]}
+            Rules: factual only, no invented details, omit owner/deadline (use null) when not statable,
+            2-5 highlights, group remaining content into 2-5 topic sections, action items only when real.
+
+            Typed notes:
+            ${typedFragments.ifBlank { "(none)" }}
+
+            Transcript:
+            ${transcriptText.ifBlank { "(none)" }}
+        """.trimIndent()
+
+        val raw = generate(prompt)
+        val jsonText = raw.substringAfter('{', "").let { if (it.isBlank()) raw else "{$it" }
+            .substringBeforeLast('}', "").let { if (it.isBlank()) raw else "$it}" }
+        val root = JSONObject(jsonText)
+
+        val fragmentSentences = splitSentences(typedFragments)
+        val transcriptSentences = splitSentences(transcriptText)
+        val fragWords = tokenize(typedFragments)
+        val transWords = tokenize(transcriptText)
+
+        fun attribute(text: String): SummaryBullet {
+            val (source, excerpt) = classify(text, fragWords, transWords, fragmentSentences, transcriptSentences)
+            return SummaryBullet(text = text, source = source, sourceExcerpt = excerpt)
+        }
+
+        val highlights = root.optJSONArray("highlights")?.let { arr ->
+            (0 until arr.length()).map { attribute(arr.getString(it).trim()) }
+        }.orEmpty().filter { it.text.isNotBlank() }
+
+        val sections = root.optJSONArray("sections")?.let { arr ->
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                val bullets = o.optJSONArray("bullets")?.let { barr ->
+                    (0 until barr.length()).map { attribute(barr.getString(it).trim()) }
+                }.orEmpty().filter { it.text.isNotBlank() }
+                SummarySection(heading = o.getString("heading").trim(), bullets = bullets)
+            }
+        }.orEmpty().filter { it.bullets.isNotEmpty() }
+
+        val actionItems = root.optJSONArray("actionItems")?.let { arr ->
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                val text = o.getString("text").trim()
+                val (source, excerpt) = classify(text, fragWords, transWords, fragmentSentences, transcriptSentences)
+                ActionItem(
+                    text = text,
+                    owner = o.optString("owner").takeIf { it.isNotBlank() && it != "null" },
+                    deadline = o.optString("deadline").takeIf { it.isNotBlank() && it != "null" },
+                    source = source,
+                    sourceExcerpt = excerpt,
+                )
+            }
+        }.orEmpty().filter { it.text.isNotBlank() }
+
+        if (highlights.isEmpty() && sections.isEmpty() && actionItems.isEmpty()) return null
+        return StructuredSummary(highlights = highlights, sections = sections, actionItems = actionItems)
+    }
+
+    private fun templateGuidance(template: SummaryTemplate): String = when (template) {
+        SummaryTemplate.NONE ->
+            "Group the remaining content into whatever topics naturally emerge."
+        SummaryTemplate.ONE_ON_ONE ->
+            "This is a 1:1 — prefer sections like Wins, Challenges, Career/Growth, Feedback."
+        SummaryTemplate.WEEKLY_STANDUP ->
+            "This is a team standup — prefer sections like Done, In Progress, Blockers, Next Up."
+        SummaryTemplate.SALES_PITCH ->
+            "This is a sales call — prefer sections like Pain Points, Product Fit, Objections, Next Steps."
+        SummaryTemplate.USER_INTERVIEW ->
+            "This is a user interview — prefer sections like Background, Pain Points, Feature Requests, Quotes."
+    }
+
+    /** Same word-overlap logic as [attributeProvenance], plus the best-matching source excerpt. */
+    private fun classify(
+        text: String,
+        fragWords: Set<String>,
+        transWords: Set<String>,
+        fragmentSentences: List<String>,
+        transcriptSentences: List<String>,
+    ): Pair<Provenance, String?> {
+        val words = tokenize(text)
+        val fragScore = overlapScore(words, fragWords)
+        val transScore = overlapScore(words, transWords)
+        val source = if (fragScore > transScore) Provenance.FRAGMENT else Provenance.TRANSCRIPT
+        val candidates = if (source == Provenance.FRAGMENT) fragmentSentences else transcriptSentences
+        val excerpt = candidates
+            .map { it to overlapScore(words, tokenize(it)) }
+            .maxByOrNull { it.second }
+            ?.takeIf { it.second > 0.0 }
+            ?.first
+        return source to excerpt
+    }
+
+    private fun overlapScore(words: Set<String>, against: Set<String>): Double =
+        if (against.isEmpty() || words.isEmpty()) 0.0 else words.count { it in against } / words.size.toDouble()
 
     private suspend fun generate(prompt: String): String =
         generativeModel

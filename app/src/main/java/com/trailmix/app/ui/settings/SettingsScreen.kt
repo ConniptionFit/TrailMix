@@ -15,25 +15,35 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.trailmix.app.data.model.SummaryTemplate
 import com.trailmix.app.ui.components.SectionLabel
 import com.trailmix.app.ui.theme.TrailMix
 
@@ -44,6 +54,8 @@ fun SettingsScreen(
 ) {
     val darkOverride by viewModel.darkModeOverride.collectAsStateWithLifecycle()
     val vaultName by viewModel.vaultName.collectAsStateWithLifecycle()
+    val nameVariants by viewModel.nameVariants.collectAsStateWithLifecycle()
+    val defaultTemplate by viewModel.defaultTemplate.collectAsStateWithLifecycle()
     val c = TrailMix.colors
     val systemDark = isSystemInDarkTheme()
     val darkOn = darkOverride ?: systemDark
@@ -155,6 +167,93 @@ fun SettingsScreen(
                 )
             }
         }
+
+        // Name variants (CAL-03) — aliases the AI should recognize as the user across
+        // transcript content, e.g. "JP", "John", "John Powers".
+        SectionLabel(
+            text = "Name variants",
+            modifier = Modifier.padding(top = 28.dp, bottom = 6.dp),
+        )
+        Text(
+            text = "Add every name you go by so chat and summaries can recognize you in the transcript.",
+            color = c.dim,
+            fontSize = 12.5.sp,
+            lineHeight = 18.sp,
+            modifier = Modifier.padding(bottom = 10.dp),
+        )
+        var newName by remember { mutableStateOf("") }
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            BasicTextField(
+                value = newName,
+                onValueChange = { newName = it },
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(c.card)
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                textStyle = TextStyle(color = c.text, fontSize = 14.sp),
+                cursorBrush = SolidColor(c.amber),
+                singleLine = true,
+            )
+            Text(
+                text = "Add",
+                color = c.amber,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .clickable {
+                        viewModel.addNameVariant(newName)
+                        newName = ""
+                    }
+                    .padding(12.dp),
+            )
+        }
+        if (nameVariants.isNotEmpty()) {
+            Column(modifier = Modifier.padding(top = 6.dp)) {
+                nameVariants.forEach { name ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(text = name, color = c.text, fontSize = 14.sp)
+                        Text(
+                            text = "Remove",
+                            color = c.dim,
+                            fontSize = 12.5.sp,
+                            modifier = Modifier
+                                .clickable { viewModel.removeNameVariant(name) }
+                                .padding(4.dp),
+                        )
+                    }
+                }
+            }
+        }
+
+        // Default summary template (UX-02) — steers the structured-summary prompt at
+        // merge time unless overridden on the Capture screen itself.
+        SectionLabel(
+            text = "Default summary template",
+            modifier = Modifier.padding(top = 28.dp, bottom = 10.dp),
+        )
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(SummaryTemplate.entries.size) { i ->
+                val option = SummaryTemplate.entries[i]
+                val selected = option == defaultTemplate
+                Text(
+                    text = option.label,
+                    color = if (selected) Color.White else c.dim,
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(100.dp))
+                        .background(if (selected) c.amber else c.card)
+                        .clickable { viewModel.setDefaultTemplate(option) }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+            }
+        }
+        Spacer(modifier = Modifier.size(24.dp))
     }
 }
 

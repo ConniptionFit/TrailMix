@@ -2,9 +2,15 @@ package com.trailmix.app.data.db
 
 import com.trailmix.app.data.model.NoteSegment
 import com.trailmix.app.data.model.SegmentsJson
+import com.trailmix.app.data.model.StringListJson
+import com.trailmix.app.data.model.StructuredSummary
+import com.trailmix.app.data.model.StructuredSummaryJson
 import com.trailmix.app.data.model.TranscriptJson
 import com.trailmix.app.data.model.TranscriptLine
 import com.trailmix.app.data.obsidian.ObsidianExporter
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
@@ -33,6 +39,9 @@ class NotesRepository @Inject constructor(
         mergedWithAi: Boolean,
         meetingTitle: String? = null,
         capturedInCall: Boolean = false,
+        attendees: List<String> = emptyList(),
+        structuredSummary: StructuredSummary? = null,
+        template: String? = null,
     ): Long {
         val id = noteDao.insert(
             NoteEntity(
@@ -46,6 +55,9 @@ class NotesRepository @Inject constructor(
                 mergedWithAi = mergedWithAi,
                 meetingTitle = meetingTitle,
                 capturedInCall = capturedInCall,
+                attendeesJson = attendees.takeIf { it.isNotEmpty() }?.let { StringListJson.encode(it) },
+                summaryJson = structuredSummary?.let { StructuredSummaryJson.encode(it) },
+                template = template,
             ),
         )
         exportIfConfigured(noteDao.getById(id)!!)
@@ -69,6 +81,9 @@ class NotesRepository @Inject constructor(
         mergedWithAi: Boolean,
         meetingTitle: String? = null,
         capturedInCall: Boolean = false,
+        attendees: List<String> = emptyList(),
+        structuredSummary: StructuredSummary? = null,
+        template: String? = null,
     ) {
         val existing = noteDao.getById(id) ?: return
         val updated = existing.copy(
@@ -83,6 +98,10 @@ class NotesRepository @Inject constructor(
             meetingTitle = meetingTitle ?: existing.meetingTitle,
             capturedInCall = capturedInCall || existing.capturedInCall,
             bodyOverride = null,
+            attendeesJson = attendees.takeIf { it.isNotEmpty() }?.let { StringListJson.encode(it) }
+                ?: existing.attendeesJson,
+            summaryJson = structuredSummary?.let { StructuredSummaryJson.encode(it) },
+            template = template ?: existing.template,
         )
         noteDao.update(updated)
         exportIfConfigured(updated)
@@ -133,12 +152,26 @@ class NotesRepository @Inject constructor(
 fun NoteEntity.toMarkdown(): String = buildString {
     appendLine("# $title")
     appendLine()
-    val override = bodyOverride
-    if (override != null) {
-        appendLine(override.trim())
-    } else {
-        segments.forEach { appendLine(it.text.trim()) }
+
+    // Metadata header block (UX-02): date / meeting title / attendees, composes with CAL-02.
+    val metaLines = buildList {
+        add("- **Date:** ${SimpleDateFormat("MMM d, yyyy · h:mm a", Locale.getDefault()).format(Date(createdAtEpochMs))}")
+        meetingTitle?.let { add("- **Meeting:** $it") }
+        if (attendees.isNotEmpty()) add("- **Attendees:** ${attendees.joinToString(", ")}")
     }
+    if (metaLines.isNotEmpty()) {
+        metaLines.forEach { appendLine(it) }
+        appendLine()
+    }
+
+    val override = bodyOverride
+    val summary = structuredSummary
+    when {
+        override != null -> appendLine(override.trim())
+        summary != null -> appendStructuredSummary(summary)
+        else -> segments.forEach { appendLine(it.text.trim()) }
+    }
+
     val lines = transcript
     if (lines.isNotEmpty()) {
         appendLine()
@@ -146,3 +179,26 @@ fun NoteEntity.toMarkdown(): String = buildString {
         lines.forEach { appendLine("- **${it.label}** ${it.text.trim()}") }
     }
 }.trim()
+
+private fun StringBuilder.appendStructuredSummary(summary: com.trailmix.app.data.model.StructuredSummary) {
+    if (summary.highlights.isNotEmpty()) {
+        appendLine("## Highlights")
+        summary.highlights.forEach { appendLine("- ${it.text.trim()}") }
+        appendLine()
+    }
+    summary.sections.forEach { section ->
+        appendLine("## ${section.heading}")
+        section.bullets.forEach { appendLine("- ${it.text.trim()}") }
+        appendLine()
+    }
+    if (summary.actionItems.isNotEmpty()) {
+        appendLine("## Action Items")
+        summary.actionItems.forEach { item ->
+            val suffix = buildString {
+                item.owner?.let { append(" — $it") }
+                item.deadline?.let { append(" (due $it)") }
+            }
+            appendLine("- [ ] ${item.text.trim()}$suffix")
+        }
+    }
+}

@@ -36,4 +36,50 @@ class ModelsTest {
         val json = """[{"t":"hello","s":"SOMETHING_NEW"}]"""
         assertEquals(Provenance.TRANSCRIPT, SegmentsJson.decode(json).single().source)
     }
+
+    @Test
+    fun `string list round-trips through JSON`() {
+        val names = listOf("Charlie", "JP", "Priya")
+        assertEquals(names, StringListJson.decode(StringListJson.encode(names)))
+    }
+
+    @Test
+    fun `string list decode of null or malformed JSON returns empty`() {
+        assertTrue(StringListJson.decode(null).isEmpty())
+        assertTrue(StringListJson.decode("").isEmpty())
+        assertTrue(StringListJson.decode("not json").isEmpty())
+    }
+
+    @Test
+    fun `structured summary round-trips through JSON`() {
+        val summary = StructuredSummary(
+            highlights = listOf(SummaryBullet("Decided to ship Friday.", Provenance.TRANSCRIPT, "we'll ship Friday")),
+            sections = listOf(
+                SummarySection(
+                    heading = "Blockers",
+                    bullets = listOf(SummaryBullet("Waiting on design review.", Provenance.FRAGMENT, null)),
+                ),
+            ),
+            actionItems = listOf(
+                ActionItem("File the ticket", owner = "Charlie", deadline = "Friday", source = Provenance.TRANSCRIPT),
+            ),
+        )
+        val decoded = StructuredSummaryJson.decode(StructuredSummaryJson.encode(summary))
+        assertEquals(summary, decoded)
+    }
+
+    @Test
+    fun `structured summary decode of null, blank, or empty-content JSON returns null`() {
+        assertEquals(null, StructuredSummaryJson.decode(null))
+        assertEquals(null, StructuredSummaryJson.decode(""))
+        assertEquals(null, StructuredSummaryJson.decode("""{"highlights":[],"sections":[],"actionItems":[]}"""))
+        assertEquals(null, StructuredSummaryJson.decode("not json"))
+    }
+
+    @Test
+    fun `summary template falls back to NONE for unknown or null stored value`() {
+        assertEquals(SummaryTemplate.NONE, SummaryTemplate.fromStored(null))
+        assertEquals(SummaryTemplate.NONE, SummaryTemplate.fromStored("SOMETHING_NEW"))
+        assertEquals(SummaryTemplate.ONE_ON_ONE, SummaryTemplate.fromStored("ONE_ON_ONE"))
+    }
 }

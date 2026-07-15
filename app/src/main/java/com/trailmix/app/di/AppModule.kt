@@ -36,11 +36,23 @@ object AppModule {
         }
     }
 
+    /**
+     * v1.4.0: CAL-02 attendee metadata + UX-02 structured summary. All nullable/additive —
+     * an existing note with none of these set renders/exports exactly as it did before.
+     */
+    private val MIGRATION_4_5 = object : Migration(4, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE notes ADD COLUMN attendeesJson TEXT")
+            db.execSQL("ALTER TABLE notes ADD COLUMN summaryJson TEXT")
+            db.execSQL("ALTER TABLE notes ADD COLUMN template TEXT")
+        }
+    }
+
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): TrailMixDatabase =
         Room.databaseBuilder(context, TrailMixDatabase::class.java, "trailmix.db")
-            .addMigrations(MIGRATION_2_3, MIGRATION_3_4)
+            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
             .build()
 
     @Provides

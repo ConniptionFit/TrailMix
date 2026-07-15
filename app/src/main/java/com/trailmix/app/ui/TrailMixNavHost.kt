@@ -45,6 +45,9 @@ fun TrailMixNavHost(navController: NavHostController = rememberNavController()) 
                 onOpenMeetings = { navController.navigate(Routes.MEETINGS) },
                 onOpenNote = { id -> navController.navigate(Routes.note(id)) },
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                // CAP-10: reopen the still-running capture session — no title/resumeNoteId
+                // args needed, CaptureSessionManager already knows what's active.
+                onOpenActiveCapture = { navController.navigate(Routes.capture()) },
             )
         }
         composable(Routes.MEETINGS) {
@@ -78,6 +81,9 @@ fun TrailMixNavHost(navController: NavHostController = rememberNavController()) 
                     }
                 },
                 onCancel = { navController.popBackStack() },
+                onMinimize = {
+                    navController.popBackStack(Routes.HOME, inclusive = false)
+                },
             )
         }
         composable(

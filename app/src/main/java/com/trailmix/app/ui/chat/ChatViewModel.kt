@@ -8,6 +8,7 @@ import com.trailmix.app.data.ai.OnDeviceAiProcessor
 import com.trailmix.app.data.ai.Recipe
 import com.trailmix.app.data.db.ChatMessageEntity
 import com.trailmix.app.data.db.NotesRepository
+import com.trailmix.app.data.settings.SettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,6 +24,7 @@ class ChatViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val notesRepository: NotesRepository,
     private val aiProcessor: OnDeviceAiProcessor,
+    private val settingsRepository: SettingsRepository,
 ) : ViewModel() {
 
     private val noteId: Long = checkNotNull(savedStateHandle["noteId"])
@@ -49,6 +51,8 @@ class ChatViewModel @Inject constructor(
                     transcript = note.transcript.joinToString("\n") { it.text },
                     history = history,
                     userMessage = trimmed,
+                    attendees = note.attendees,
+                    nameVariants = settingsRepository.nameVariants.first(),
                 )
                 notesRepository.addChatMessage(noteId, "assistant", reply)
             } finally {
@@ -69,6 +73,8 @@ class ChatViewModel @Inject constructor(
                     transcript = note.transcript.joinToString("\n") { it.text },
                     history = emptyList(),
                     userMessage = recipe.prompt,
+                    attendees = note.attendees,
+                    nameVariants = settingsRepository.nameVariants.first(),
                 )
                 notesRepository.addChatMessage(noteId, "assistant", reply)
             } finally {
