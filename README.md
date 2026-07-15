@@ -1,20 +1,67 @@
 # TrailMix
 
-Local-only, security-conscious call/meeting note-taking for Android. Capture a live
-transcript from the mic (no bots, no meeting required), type rough fragments during the
-call, then merge both into a structured note with **fully on-device AI** — and see
-exactly which sentence came from which source.
+Local-only, security-conscious call/meeting note-taking. Capture a live transcript from
+the mic (no bots, no meeting required), type rough fragments during the call, then merge
+both into a structured note with **fully on-device AI** — and see exactly which sentence
+came from which source.
 
-Built from the TrailMix.ai Android design handoff, but with a fundamentally different
-data architecture than the cloud product it resembles:
+**The product is the privacy posture**: no network permission (OS-enforced on Android),
+no audio files ever written to disk, no accounts, no telemetry, no cloud anything.
 
-| | TrailMix.ai (cloud) | This app |
+## Platform status
+
+| Platform | Status | Location |
 |---|---|---|
-| ASR | Deepgram/AssemblyAI (cloud) | ML Kit GenAI on-device speech recognition (AICore), fed by the app's own audio pipeline; system on-device recognizer as fallback |
-| LLM | OpenAI/Anthropic (cloud) | Gemini Nano via ML Kit GenAI (AICore) |
-| Audio retention | Temp cloud cache, deleted post-transcription | **Never written anywhere** — RAM-only PCM pipe into the recognizer |
-| Network | US-hosted AWS VPC | **No `INTERNET` permission in the manifest** |
-| Training opt-out toggle | Yes | Not needed — nothing leaves the device |
+| **Android** | Shipping, actively developed (Kotlin + Jetpack Compose, minSdk 31) | [`Android/`](Android/) |
+| Linux (Arch + Debian) | Planned, not started | Will land as a sibling folder (e.g. `Linux/`) alongside `Android/` when work begins — same product shape and data model (provenance segments, transcript lines, recipes), different native stack (candidate: whisper.cpp/sherpa-onnx + llama.cpp) |
+
+This repo is structured for multiple platform implementations to live side by side as
+top-level folders, each a self-contained project. Only `Android/` exists today.
+
+## Install (Android)
+
+There is **no Play Store distribution** — this is a sideload/debug build only, not
+published anywhere.
+
+**Prerequisites:**
+- JDK 17
+- Android SDK (platform 35, build-tools) — via Android Studio or the standalone
+  command-line tools
+- A device on Android 12+ (API 31) for guaranteed on-device speech recognition, or an
+  emulator image; `adb` for installing to a physical device
+- For AI merge/chat/structured summaries: a device with AICore / Gemini Nano (Pixel 8+,
+  recent Galaxy, etc.). Everything else works without it via a deterministic fallback.
+
+**Build:**
+
+```bash
+cd Android
+export JAVA_HOME=/path/to/jdk-17      # e.g. "$HOME/.jdks/jdk-17.0.19+10/Contents/Home"
+export ANDROID_HOME=/path/to/android-sdk   # e.g. "$HOME/Library/Android/sdk"
+./gradlew :app:assembleDebug
+```
+
+This produces `Android/app/build/outputs/apk/debug/app-debug.apk`.
+
+**Install to a connected/authorized device:**
+
+```bash
+cd Android
+./gradlew :app:installDebug
+```
+
+or, with the APK already built:
+
+```bash
+adb install -r Android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+**Run unit tests:**
+
+```bash
+cd Android
+./gradlew :app:testDebugUnitTest
+```
 
 ## Security posture
 
@@ -41,7 +88,7 @@ data architecture than the cloud product it resembles:
   Drive's own app/provider does that). Off by default; the app's `INTERNET` permission
   stays absent either way.
 
-## Screens
+## Screens (Android)
 
 1. **Home** — notes list, one upcoming meeting (opt-in calendar), amber FAB to start capture.
    While a capture is running — even after you've navigated away — an amber
@@ -73,9 +120,8 @@ data architecture than the cloud product it resembles:
    without stopping the recording — different from system Back, which still confirms
    before discarding. You can also freely navigate into any other note while a capture
    is running in the background — nothing about it depends on the Capture screen staying
-   open.
-   Above *End & Merge*, a template row (Flat / 1:1 / Weekly Standup / Sales Pitch / User
-   Interview) steers how the AI structures the summary for this capture.
+   open. Above *End & Merge*, a template row (Flat / 1:1 / Weekly Standup / Sales Pitch /
+   User Interview) steers how the AI structures the summary for this capture.
 3. **Note detail** — the merged note; amber tint = from your typed fragments, teal tint =
    from the transcript. *Sources shown* pill toggles provenance tinting (on by default
    after a merge). The meta line shows the meeting name and an in-call tag when the
@@ -94,7 +140,7 @@ data architecture than the cloud product it resembles:
 4. **Transcript** — full-screen, timestamp-labeled lines (no speaker diarization on-device
    yet). A Share icon sends the raw transcript through the Android share sheet.
 5. **Chat & Recipes** — chat about the note; recipe chips (Follow-up email, Create ticket,
-   Summarize, Action items) are saved prompts. Chat now knows meeting attendees and any
+   Summarize, Action items) are saved prompts. Chat knows meeting attendees and any
    name variants you've registered in Settings, so it can answer things like "what did
    Charlie say I need to do."
 6. **Settings** — dark mode (follows system until overridden), privacy disclosure, a
@@ -102,32 +148,18 @@ data architecture than the cloud product it resembles:
    **Google Drive sync** folder, a **Name variants** list (every alias you go by, so the
    AI recognizes you in the transcript), and a **Default summary template**.
 
-## Requirements
+## Architecture (Android)
 
-- JDK 17+, Android SDK 35
-- Device on Android 12+ (API 31, for guaranteed-on-device speech recognition)
-- For AI merge/chat: a device with AICore / Gemini Nano (Pixel 8+, recent Galaxy, etc.).
-  Everything else works without it via the deterministic fallback.
-
-## Build
-
-```bash
-export JAVA_HOME="$HOME/.jdks/jdk-17.0.19+10/Contents/Home"
-export ANDROID_HOME="$HOME/Library/Android/sdk"
-./gradlew :app:assembleDebug     # APK
-./gradlew :app:installDebug      # install on a connected device
-```
-
-## Architecture
-
-- Kotlin + Jetpack Compose + Hilt + Room + DataStore. Single `app` module.
+- Kotlin + Jetpack Compose + Hilt + Room + DataStore. Single `app` Gradle module under `Android/`.
 - `data/ai/OnDeviceAiProcessor` — Gemini Nano merge/chat with word-overlap provenance
   attribution (robust even when the small model ignores tagging instructions) and a
   deterministic no-AI fallback.
 - `data/speech/` — app-owned capture pipeline: `AudioPipeline` (mic `AudioRecord` +
   optional `AudioPlaybackCapture` lane, mixed to 16 kHz mono PCM in an in-memory pipe),
-  `MlKitTranscriber` (ML Kit GenAI ASR over that pipe), `CaptureEngine` (backend
-  selection + routing), `OnDeviceSpeechRecognizer` (legacy fallback).
+  `MlKitTranscriber` (ML Kit GenAI ASR over that pipe, user-selectable locale via
+  `AsrLocales`), `CaptureEngine` (backend selection + routing),
+  `CaptureSessionManager` (process-scoped session owner, survives navigation away from
+  the capture screen), `OnDeviceSpeechRecognizer` (legacy fallback).
 - `service/CaptureService` — silent foreground service (`microphone|mediaProjection`)
   keeping capture alive across app switches.
 - `data/db` — notes store provenance-tagged segments + transcript lines as JSON columns;
@@ -135,22 +167,23 @@ export ANDROID_HOME="$HOME/Library/Android/sdk"
   (Obsidian/Drive) for update-in-place and cascade-delete.
 - `data/export/MarkdownExportWriter.kt` — shared SAF write logic behind both
   `data/obsidian/ObsidianExporter` and `data/drive/DriveExporter`.
-- `ui/theme/Theme.kt` — design tokens from the handoff (oklch → sRGB), light/dark with a
-  persisted manual override.
+- `ui/theme/Theme.kt` — design tokens from the design handoff (oklch → sRGB), light/dark
+  with a persisted manual override.
 
 ## Linux plans (Arch/Debian)
 
-The near-term Linux port will not share this Android UI. The plan is to keep the same
-product shape (capture → merge → provenance note → recipes) with a native stack:
-whisper.cpp or sherpa-onnx for streaming ASR and llama.cpp for the merge/chat model,
-which run well on both Arch and Debian. The data model (provenance segments, transcript
-lines, recipes) is deliberately UI-independent so it can be ported directly.
+Planned near-term, not yet started. The Linux port will not share the Android UI. The
+plan is to keep the same product shape (capture → merge → provenance note → recipes)
+with a native stack: whisper.cpp or sherpa-onnx for streaming ASR and llama.cpp for the
+merge/chat model, which run well on both Arch and Debian. The data model (provenance
+segments, transcript lines, recipes) is deliberately UI-independent so it can be ported
+directly. It will land as its own top-level folder alongside `Android/`, not inside it.
 
-## Known deviations from the design handoff
+## Known deviations from the Android design handoff
 
 - The Settings privacy copy replaces the handoff's "SOC 2 Type II · GDPR" line (true of
-  the cloud service, not of a local app) with the app's actual guarantees.
-- An Obsidian-export section was added to Settings (carried over from the prototype);
-  the privacy section itself stays disclosure-only per the handoff.
+  a hypothetical cloud service, not of a local app) with the app's actual guarantees.
+- An Obsidian-export section (and, as of v1.5.0, a Google Drive sync section) was added
+  to Settings; the privacy section itself stays disclosure-only per the handoff.
 - Transcript lines are labeled with capture timestamps instead of speaker names —
   on-device diarization isn't available yet.
