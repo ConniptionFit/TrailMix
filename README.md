@@ -81,12 +81,10 @@ cd Android
 - **Opt-in calendar.** `READ_CALENDAR` is requested only when you tap the Upcoming card,
   and is read-only. The same grant covers reading attendee names for a matched meeting —
   no separate permission — and those names never leave the device.
-- Optional **Obsidian export** writes Markdown into a folder you pick (SAF) — local disk only.
-- Optional **Google Drive sync** — the one deliberate exception. If you link a Drive
-  folder in Settings, that note's Markdown leaves the device, written through Android's
-  standard folder-sharing picker (not by this app talking to the internet directly —
-  Drive's own app/provider does that). Off by default; the app's `INTERNET` permission
-  stays absent either way.
+- Optional **Export location** writes note Markdown into a folder you pick (SAF), and
+  only ever writes locally. One honest nuance, disclosed in-app: if the folder you pick
+  is one another app syncs to the cloud (a Drive folder, say), that app may upload the
+  files — TrailMix itself never does, and its `INTERNET` permission stays absent.
 
 ## Screens (Android)
 
@@ -95,8 +93,7 @@ cd Android
    *Recording · mm:ss* chip appears here (and on Note detail, so it's never far away);
    tap it to jump straight back into the live session (recording keeps running in the
    background the whole time). **Press and hold a note** for a context menu: Delete
-   (also removes any exported Obsidian/Drive copy), Share, Open file location (once a
-   note has been exported), and Move (re-export to a different folder you pick).
+   (also removes the exported copy) and Share.
 2. **Live capture** — recording status, live transcript preview, free-typing fragment area,
    red *End & Merge* button. Tap the live-transcript card to **expand** it into a
    scrolling view of recent lines. A 3-dot menu (upper right) picks the input mic
@@ -116,13 +113,13 @@ cd Android
    apps set this flag** — can't be captured either. For those, put the call/video on
    speakerphone and let the mic hear it. The device-audio lane works for games, many
    browsers, and podcast apps that permit capture; a hint appears in-app when it's attached
-   but hearing silence. A **chevron-back icon** in the top bar lets you go back to Home
+   but hearing silence. A **chevron-back icon** in the top-left corner lets you go back to Home
    without stopping the recording — different from system Back, which still confirms
    before discarding. You can also freely navigate into any other note while a capture
    is running in the background — nothing about it depends on the Capture screen staying
    open. The 3-dot menu also has a **"What can be captured?"** help sheet summarizing all
    of the above limits honestly, in-app. Above *End & Merge*, a template row (Flat / 1:1 /
-   Weekly Standup / Sales Pitch / User Interview) steers how the AI structures the summary
+   Weekly Standup / Learning / User Interview) steers how the AI structures the summary
    for this capture.
 3. **Note detail** — the merged note; amber tint = from your typed fragments, teal tint =
    from the transcript. *Sources shown* pill toggles provenance tinting (on by default
@@ -143,15 +140,17 @@ cd Android
 4. **Transcript** — full-screen, timestamp-labeled lines (no speaker diarization on-device
    yet). A Share icon sends the raw transcript through the Android share sheet.
 5. **Chat & Recipes** — chat about the note; recipe chips (Follow-up email, Create ticket,
-   Summarize, Action items) are saved prompts. Chat knows meeting attendees and any
-   name variants you've registered in Settings, so it can answer things like "what did
-   Charlie say I need to do." Every assistant reply has a **Copy** button, and the latest
-   output of each recipe is included in the note's Obsidian/Drive Markdown export as a
+   Summarize, Action items, plus any **custom recipes** you've saved in Settings) are
+   saved prompts. Chat knows the meeting attendees, so it can answer things like "what
+   did Charlie say I need to do." Every assistant reply has a **Copy** button, and the
+   latest output of each recipe is included in the note's Markdown export as a
    *Recipe Outputs* section.
 6. **Settings** — dark mode (follows system until overridden), privacy disclosure, a
-   **Speech recognition language** picker, optional Obsidian vault link, optional
-   **Google Drive sync** folder, a **Name variants** list (every alias you go by, so the
-   AI recognizes you in the transcript), and a **Default summary template**.
+   **Speech recognition language** picker, an optional **Export location** (pick any
+   folder via the system picker; changing it moves your already-exported files over
+   automatically, and an **Open folder** button jumps to it), **Custom Recipes**
+   (create/edit/delete your own saved prompts for Chat & Recipes), and a
+   **Default summary template**.
 
 ## Architecture (Android)
 
@@ -168,10 +167,10 @@ cd Android
 - `service/CaptureService` — silent foreground service (`microphone|mediaProjection`)
   keeping capture alive across app switches.
 - `data/db` — notes store provenance-tagged segments + transcript lines as JSON columns;
-  chat messages per note in a second table, plus per-note tracked export URIs
-  (Obsidian/Drive) for update-in-place and cascade-delete.
-- `data/export/MarkdownExportWriter.kt` — shared SAF write logic behind both
-  `data/obsidian/ObsidianExporter` and `data/drive/DriveExporter`.
+  chat messages per note in a second table, plus a per-note tracked export URI for
+  update-in-place, cascade-delete, and export-location migration.
+- `data/export/NoteExporter.kt` — writes note Markdown into the configured Export
+  location, over the shared SAF logic in `data/export/MarkdownExportWriter.kt`.
 - `ui/theme/Theme.kt` — design tokens from the design handoff (oklch → sRGB), light/dark
   with a persisted manual override.
 
@@ -188,7 +187,7 @@ directly. It will land as its own top-level folder alongside `Android/`, not ins
 
 - The Settings privacy copy replaces the handoff's "SOC 2 Type II · GDPR" line (true of
   a hypothetical cloud service, not of a local app) with the app's actual guarantees.
-- An Obsidian-export section (and, as of v1.5.0, a Google Drive sync section) was added
+- An Export location section (plus, as of v1.7.0, a Custom Recipes section) was added
   to Settings; the privacy section itself stays disclosure-only per the handoff.
 - Transcript lines are labeled with capture timestamps instead of speaker names —
   on-device diarization isn't available yet.
