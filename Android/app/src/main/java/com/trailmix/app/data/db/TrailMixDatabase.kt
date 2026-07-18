@@ -5,7 +5,7 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [NoteEntity::class, ChatMessageEntity::class],
-    version = 7,
+    version = 8,
     exportSchema = false,
 )
 abstract class TrailMixDatabase : RoomDatabase() {

@@ -177,21 +177,52 @@ class NotesRepository @Inject constructor(
     }
 
     /**
-     * Delete a note locally and cascade to its tracked export file (CAP-05: long-press
-     * Delete on Home). The local DB delete always completes; a failed file delete (stale
-     * URI, revoked SAF grant, file already removed externally) is caught and reported back
-     * via [DeleteResult.filesDeleted] rather than aborting or crashing. (Any dormant
-     * pre-v1.7.0 Drive copy is deliberately left alone — Drive sync is gone and its
-     * tracked URIs are unmaintained.)
+     * Delete a note (CAP-05, reworked by REL-04 in v1.8.0 to be a soft delete): the note
+     * moves to Recently deleted for [RecentlyDeleted.RECOVERY_WINDOW_MS] (1 day) instead of
+     * vanishing, hidden from every normal surface but restorable. The tracked export file
+     * IS removed immediately — a deleted note shouldn't linger in the user's export folder —
+     * and a restore re-exports it fresh. Chat history stays until the purge so a restored
+     * note keeps its conversation. A failed file delete (stale URI, revoked SAF grant) is
+     * reported via [DeleteResult.filesDeleted] rather than aborting, same as before. (Any
+     * dormant pre-v1.7.0 Drive copy is deliberately left alone.)
      */
     suspend fun delete(id: Long): DeleteResult {
-        val note = noteDao.getById(id)
-        chatDao.deleteForNote(id)
-        noteDao.deleteById(id)
+        val note = noteDao.getById(id) ?: return DeleteResult(filesDeleted = true)
+        noteDao.softDelete(id, System.currentTimeMillis())
 
         var filesOk = true
-        note?.obsidianFileUri?.let { if (!deleteDocument(it)) filesOk = false }
+        note.obsidianFileUri?.let { if (!deleteDocument(it)) filesOk = false }
         return DeleteResult(filesDeleted = filesOk)
+    }
+
+    /** Notes currently in Recently deleted, newest deletion first (REL-04). */
+    fun observeDeletedNotes(): Flow<List<NoteEntity>> = noteDao.observeDeleted()
+
+    /**
+     * Bring a soft-deleted note back (REL-04). Its export file was removed at delete time,
+     * so the restore re-exports it fresh into the configured location (silent no-op when
+     * no location is configured, as always).
+     */
+    suspend fun restore(id: Long) {
+        noteDao.restore(id)
+        noteDao.getById(id)?.let { exportIfConfigured(it) }
+    }
+
+    /** Immediate, unrecoverable removal — the "Delete now" action in Recently deleted
+     * and the purge path. The export file is already gone (removed at soft-delete time). */
+    suspend fun deleteForever(id: Long) {
+        chatDao.deleteForNote(id)
+        noteDao.deleteById(id)
+    }
+
+    /**
+     * Hard-delete every soft-deleted note older than the 1-day recovery window (REL-04).
+     * Called opportunistically from the Home and Recently deleted screens — no background
+     * job needed for a purely local cleanup with day-scale granularity.
+     */
+    suspend fun purgeExpiredDeleted() {
+        val cutoff = System.currentTimeMillis() - RecentlyDeleted.RECOVERY_WINDOW_MS
+        noteDao.getDeletedBefore(cutoff).forEach { deleteForever(it.id) }
     }
 
     /**

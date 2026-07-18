@@ -57,6 +57,13 @@ data class NoteEntity(
      * matches DB v7) but is never read or written anymore.
      */
     val driveFileUri: String? = null,
+    /**
+     * REL-04 (v1.8.0): soft-delete timestamp. Non-null = the note is in Recently deleted,
+     * hidden from every normal surface, and recoverable until it's older than
+     * [com.trailmix.app.data.db.RecentlyDeleted.RECOVERY_WINDOW_MS] (1 day), when the purge
+     * removes the row for real. Null = live note.
+     */
+    val deletedAtEpochMs: Long? = null,
 ) {
     val segments: List<NoteSegment> get() = SegmentsJson.decode(segmentsJson)
     val transcript: List<TranscriptLine> get() = TranscriptJson.decode(transcriptJson)

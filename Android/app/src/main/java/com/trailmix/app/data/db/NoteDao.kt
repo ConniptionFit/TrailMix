@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface NoteDao {
-    @Query("SELECT * FROM notes ORDER BY createdAtEpochMs DESC")
+    @Query("SELECT * FROM notes WHERE deletedAtEpochMs IS NULL ORDER BY createdAtEpochMs DESC")
     fun observeAll(): Flow<List<NoteEntity>>
 
     @Query("SELECT * FROM notes WHERE id = :id")
@@ -17,9 +17,24 @@ interface NoteDao {
     @Query("SELECT * FROM notes WHERE id = :id")
     suspend fun getById(id: Long): NoteEntity?
 
-    /** One-shot list of every note — used by the export-location migration (INT-02, v1.7.0). */
-    @Query("SELECT * FROM notes ORDER BY createdAtEpochMs DESC")
+    /** One-shot list of every live note — used by the export-location migration (INT-02, v1.7.0). */
+    @Query("SELECT * FROM notes WHERE deletedAtEpochMs IS NULL ORDER BY createdAtEpochMs DESC")
     suspend fun getAll(): List<NoteEntity>
+
+    // ── Recently deleted (REL-04, v1.8.0) ──────────────────────────────────
+
+    @Query("SELECT * FROM notes WHERE deletedAtEpochMs IS NOT NULL ORDER BY deletedAtEpochMs DESC")
+    fun observeDeleted(): Flow<List<NoteEntity>>
+
+    @Query("UPDATE notes SET deletedAtEpochMs = :deletedAt WHERE id = :id")
+    suspend fun softDelete(id: Long, deletedAt: Long)
+
+    /** Also clears the tracked export URI — the export file was removed at soft-delete time. */
+    @Query("UPDATE notes SET deletedAtEpochMs = NULL, obsidianFileUri = NULL WHERE id = :id")
+    suspend fun restore(id: Long)
+
+    @Query("SELECT * FROM notes WHERE deletedAtEpochMs IS NOT NULL AND deletedAtEpochMs < :cutoff")
+    suspend fun getDeletedBefore(cutoff: Long): List<NoteEntity>
 
     @Insert
     suspend fun insert(note: NoteEntity): Long

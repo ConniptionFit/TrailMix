@@ -99,6 +99,11 @@ class OnDeviceAiProcessor @Inject constructor() {
         attendees: List<String> = emptyList(),
         template: SummaryTemplate = SummaryTemplate.NONE,
     ): MergeResult = withContext(Dispatchers.Default) {
+        // CAP-11 (v1.8.0): no transcript → nothing to merge or summarize. The typed notes
+        // are saved verbatim via the deterministic path; the model is never invoked.
+        if (!MergePolicy.hasTranscript(transcript)) {
+            return@withContext fallbackMerge(typedFragments, transcript, createdAtEpochMs)
+        }
         val transcriptText = transcript.joinToString("\n") { it.text }.take(MAX_CONTEXT_CHARS)
         val availability = ensureModelReady()
         if (availability !is AiAvailability.Available) {

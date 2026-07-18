@@ -1,7 +1,11 @@
 package com.trailmix.app.ui
 
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import android.widget.Toast
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -11,6 +15,7 @@ import androidx.navigation.navArgument
 import com.trailmix.app.ui.capture.CaptureScreen
 import com.trailmix.app.ui.chat.ChatScreen
 import com.trailmix.app.ui.home.HomeScreen
+import com.trailmix.app.ui.home.RecentlyDeletedScreen
 import com.trailmix.app.ui.meetings.MeetingsScreen
 import com.trailmix.app.ui.note.NoteDetailScreen
 import com.trailmix.app.ui.settings.SettingsScreen
@@ -24,6 +29,7 @@ object Routes {
     const val CHAT = "chat/{noteId}"
     const val SETTINGS = "settings"
     const val MEETINGS = "meetings"
+    const val RECENTLY_DELETED = "recently-deleted"
 
     fun capture(title: String? = null) =
         if (title.isNullOrBlank()) "capture" else "capture?title=${Uri.encode(title)}"
@@ -45,6 +51,7 @@ fun TrailMixNavHost(navController: NavHostController = rememberNavController()) 
                 onOpenMeetings = { navController.navigate(Routes.MEETINGS) },
                 onOpenNote = { id -> navController.navigate(Routes.note(id)) },
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                onOpenRecentlyDeleted = { navController.navigate(Routes.RECENTLY_DELETED) },
                 // CAP-10: reopen the still-running capture session — no title/resumeNoteId
                 // args needed, CaptureSessionManager already knows what's active.
                 onOpenActiveCapture = { navController.navigate(Routes.capture()) },
@@ -74,10 +81,19 @@ fun TrailMixNavHost(navController: NavHostController = rememberNavController()) 
                 },
             ),
         ) {
+            val context = LocalContext.current
             CaptureScreen(
                 onMerged = { noteId ->
-                    navController.navigate(Routes.note(noteId)) {
-                        popUpTo(Routes.HOME)
+                    if (noteId > 0) {
+                        navController.navigate(Routes.note(noteId)) {
+                            popUpTo(Routes.HOME)
+                        }
+                    } else {
+                        // CAP-11: nothing typed, nothing transcribed — no note was saved.
+                        Handler(Looper.getMainLooper()).post {
+                            Toast.makeText(context, "Nothing captured — no note saved", Toast.LENGTH_SHORT).show()
+                        }
+                        navController.popBackStack(Routes.HOME, inclusive = false)
                     }
                 },
                 onCancel = { navController.popBackStack() },
@@ -120,6 +136,9 @@ fun TrailMixNavHost(navController: NavHostController = rememberNavController()) 
         }
         composable(Routes.SETTINGS) {
             SettingsScreen(onBack = { navController.popBackStack() })
+        }
+        composable(Routes.RECENTLY_DELETED) {
+            RecentlyDeletedScreen(onBack = { navController.popBackStack() })
         }
     }
 }

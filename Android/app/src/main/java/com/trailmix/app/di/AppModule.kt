@@ -71,11 +71,24 @@ object AppModule {
         }
     }
 
+    /**
+     * v1.8.0: REL-04 — soft-delete timestamp for the 1-day Recently deleted window.
+     * Nullable/additive — every existing note stays a live (non-deleted) note.
+     */
+    private val MIGRATION_7_8 = object : Migration(7, 8) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE notes ADD COLUMN deletedAtEpochMs INTEGER")
+        }
+    }
+
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): TrailMixDatabase =
         Room.databaseBuilder(context, TrailMixDatabase::class.java, "trailmix.db")
-            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+            .addMigrations(
+                MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
+                MIGRATION_7_8,
+            )
             .build()
 
     @Provides

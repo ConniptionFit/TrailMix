@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import com.trailmix.app.data.ai.MergePolicy
 import com.trailmix.app.data.ai.OnDeviceAiProcessor
 import com.trailmix.app.data.calendar.UpcomingMeetingSource
 import com.trailmix.app.data.db.NotesRepository
@@ -255,6 +256,14 @@ class CaptureSessionManager @Inject constructor(
             val createdAt = if (resuming) resumeCreatedAt else System.currentTimeMillis()
             val typed = fragments.value
             val transcript = transcriptLines.toList()
+            // CAP-11: an entirely empty session — nothing typed, nothing transcribed —
+            // saves nothing at all. -1 tells the caller no note was created.
+            if (MergePolicy.nothingToSave(typed, transcript)) {
+                resumeNoteId = -1L
+                _state.value = _state.value.copy(merging = false)
+                onDone(-1L)
+                return@launch
+            }
             val result = aiProcessor.merge(
                 typedFragments = typed,
                 transcript = transcript,
