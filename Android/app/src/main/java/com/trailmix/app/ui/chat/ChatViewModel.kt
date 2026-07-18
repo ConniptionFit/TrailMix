@@ -76,7 +76,8 @@ class ChatViewModel @Inject constructor(
                     attendees = note.attendees,
                     nameVariants = settingsRepository.nameVariants.first(),
                 )
-                notesRepository.addChatMessage(noteId, "assistant", reply)
+                // Tagged with the recipe name (OBS-01) so it's exported with the note.
+                notesRepository.addChatMessage(noteId, "assistant", reply, recipeName = recipe.name)
             } finally {
                 _busy.value = false
             }

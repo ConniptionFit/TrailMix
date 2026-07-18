@@ -38,6 +38,13 @@ interface ChatDao {
     @Insert
     suspend fun insert(message: ChatMessageEntity): Long
 
+    /** All recipe-produced assistant replies for a note, oldest first (OBS-01). */
+    @Query(
+        "SELECT * FROM chat_messages WHERE noteId = :noteId AND recipeName IS NOT NULL " +
+            "ORDER BY createdAtEpochMs ASC, id ASC",
+    )
+    suspend fun getRecipeOutputs(noteId: Long): List<ChatMessageEntity>
+
     @Query("DELETE FROM chat_messages WHERE noteId = :noteId")
     suspend fun deleteForNote(noteId: Long)
 }

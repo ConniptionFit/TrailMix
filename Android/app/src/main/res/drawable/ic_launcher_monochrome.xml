@@ -1,8 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- TrailMix launcher foreground (REL-04, v1.6.0): five capsule waveform bars whose
-     heights rise and fall like a mountain trail silhouette — transcription + "trail" in
-     one motif — in white on the warm amber adaptive-icon background. All content sits
-     inside the 66dp adaptive-icon safe zone of the 108dp canvas. -->
+<!-- Themed/monochrome launcher layer (Android 13+): same waveform-mountain motif as the
+     foreground; the launcher re-tints it, only the alpha shape matters. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"

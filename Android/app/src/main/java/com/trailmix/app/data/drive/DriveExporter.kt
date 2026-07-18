@@ -34,7 +34,10 @@ class DriveExporter @Inject constructor(
     private val settingsRepository: SettingsRepository,
 ) {
     /** Silent no-op if no Drive folder is configured — fail-soft by construction. */
-    suspend fun exportNote(note: NoteEntity): Uri? = withContext(Dispatchers.IO) {
+    suspend fun exportNote(
+        note: NoteEntity,
+        recipeOutputs: List<Pair<String, String>> = emptyList(),
+    ): Uri? = withContext(Dispatchers.IO) {
         val driveUri = settingsRepository.driveUri.first() ?: return@withContext null
         val folderName = settingsRepository.driveFolder.first()
         MarkdownExportWriter.writeIntoFolder(
@@ -42,24 +45,28 @@ class DriveExporter @Inject constructor(
             treeUri = Uri.parse(driveUri),
             folderName = folderName,
             fileName = MarkdownExportWriter.buildFileName(note.title, note.createdAtEpochMs),
-            markdown = body(note),
+            markdown = body(note, recipeOutputs),
             existingFileUri = note.driveFileUri,
         )
     }
 
     /** "Move" (CAP-05 Part 1): re-export straight into a freshly picked folder, one-off. */
-    suspend fun exportNoteToPickedFolder(treeUri: Uri, note: NoteEntity): Uri? = withContext(Dispatchers.IO) {
+    suspend fun exportNoteToPickedFolder(
+        treeUri: Uri,
+        note: NoteEntity,
+        recipeOutputs: List<Pair<String, String>> = emptyList(),
+    ): Uri? = withContext(Dispatchers.IO) {
         MarkdownExportWriter.writeIntoTreeRoot(
             context = context,
             treeUri = treeUri,
             fileName = MarkdownExportWriter.buildFileName(note.title, note.createdAtEpochMs),
-            markdown = body(note),
+            markdown = body(note, recipeOutputs),
         )
     }
 
-    private fun body(note: NoteEntity): String =
+    private fun body(note: NoteEntity, recipeOutputs: List<Pair<String, String>>): String =
         MarkdownExportWriter.frontmatteredBody(
-            markdown = note.toMarkdown(),
+            markdown = note.toMarkdown(recipeOutputs),
             createdAtEpochMs = note.createdAtEpochMs,
             durationMs = note.durationMs,
             source = "trailmix",

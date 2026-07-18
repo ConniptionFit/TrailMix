@@ -71,4 +71,11 @@ data class ChatMessageEntity(
     val role: String, // "user" | "assistant"
     val text: String,
     val createdAtEpochMs: Long,
+    /**
+     * Set on an assistant reply that was produced by running a saved recipe (OBS-01,
+     * v1.6.0) — holds the recipe's name (e.g. "Follow-up email"). Null for ordinary chat
+     * replies and all user messages. Distinguishes durable recipe outputs (exported with
+     * the note) from conversational chatter (not exported).
+     */
+    val recipeName: String? = null,
 )

@@ -11,6 +11,7 @@ import com.trailmix.app.data.model.StringListJson
 import com.trailmix.app.data.model.StructuredSummary
 import com.trailmix.app.data.model.StructuredSummaryJson
 import com.trailmix.app.data.model.TranscriptJson
+import com.trailmix.app.data.model.moveSection
 import com.trailmix.app.data.model.TranscriptLine
 import com.trailmix.app.data.obsidian.ObsidianExporter
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -134,15 +135,39 @@ class NotesRepository @Inject constructor(
 
     suspend fun setShowSources(id: Long, show: Boolean) = noteDao.setShowSources(id, show)
 
-    suspend fun addChatMessage(noteId: Long, role: String, text: String) {
+    /**
+     * [recipeName] is set only on assistant replies produced by running a saved recipe
+     * (OBS-01) — those are durable outputs, so adding one also re-exports the note into
+     * every configured target so the file on disk picks it up immediately.
+     */
+    suspend fun addChatMessage(noteId: Long, role: String, text: String, recipeName: String? = null) {
         chatDao.insert(
             ChatMessageEntity(
                 noteId = noteId,
                 role = role,
                 text = text,
                 createdAtEpochMs = System.currentTimeMillis(),
+                recipeName = recipeName,
             ),
         )
+        if (recipeName != null) {
+            noteDao.getById(noteId)?.let { exportIfConfigured(it) }
+        }
+    }
+
+    /**
+     * UX-04: persist a reorder of the structured summary's topic sections. No-op if the
+     * note has no structured summary or the indices don't move anything. The new order is
+     * re-exported so the Markdown files match what's on screen.
+     */
+    suspend fun moveSummarySection(id: Long, from: Int, to: Int) {
+        val existing = noteDao.getById(id) ?: return
+        val summary = existing.structuredSummary ?: return
+        val moved = summary.moveSection(from, to)
+        if (moved == summary) return
+        val updated = existing.copy(summaryJson = StructuredSummaryJson.encode(moved))
+        noteDao.update(updated)
+        exportIfConfigured(updated)
     }
 
     /**
@@ -169,9 +194,10 @@ class NotesRepository @Inject constructor(
      */
     suspend fun moveExport(noteId: Long, target: ExportTarget, treeUri: Uri): Boolean {
         val note = noteDao.getById(noteId) ?: return false
+        val outputs = latestRecipeOutputs(noteId)
         val uri = when (target) {
-            ExportTarget.OBSIDIAN -> obsidianExporter.exportNoteToPickedFolder(treeUri, note)
-            ExportTarget.DRIVE -> driveExporter.exportNoteToPickedFolder(treeUri, note)
+            ExportTarget.OBSIDIAN -> obsidianExporter.exportNoteToPickedFolder(treeUri, note, outputs)
+            ExportTarget.DRIVE -> driveExporter.exportNoteToPickedFolder(treeUri, note, outputs)
         } ?: return false
         val updated = when (target) {
             ExportTarget.OBSIDIAN -> note.copy(obsidianFileUri = uri.toString())
@@ -180,6 +206,15 @@ class NotesRepository @Inject constructor(
         noteDao.update(updated)
         return true
     }
+
+    /**
+     * The most recent output per recipe for a note (OBS-01), in first-run order — running
+     * "Follow-up email" twice exports only the newest draft, not both.
+     */
+    private suspend fun latestRecipeOutputs(noteId: Long): List<Pair<String, String>> =
+        chatDao.getRecipeOutputs(noteId)
+            .groupBy { it.recipeName!! }
+            .map { (name, messages) -> name to messages.last().text }
 
     private fun deleteDocument(uriStr: String): Boolean = runCatching {
         DocumentsContract.deleteDocument(context.contentResolver, Uri.parse(uriStr))
@@ -195,8 +230,9 @@ class NotesRepository @Inject constructor(
      * location") without re-triggering export again.
      */
     private suspend fun exportIfConfigured(note: NoteEntity) {
-        val obsidianUri = runCatching { obsidianExporter.exportNote(note) }.getOrNull()
-        val driveUri = runCatching { driveExporter.exportNote(note) }.getOrNull()
+        val outputs = latestRecipeOutputs(note.id)
+        val obsidianUri = runCatching { obsidianExporter.exportNote(note, outputs) }.getOrNull()
+        val driveUri = runCatching { driveExporter.exportNote(note, outputs) }.getOrNull()
         if (obsidianUri != null || driveUri != null) {
             noteDao.update(
                 note.copy(
@@ -208,7 +244,12 @@ class NotesRepository @Inject constructor(
     }
 }
 
-fun NoteEntity.toMarkdown(): String = buildString {
+/**
+ * Renders the note as Markdown. [recipeOutputs] (OBS-01) — the latest output per saved
+ * recipe as name→text pairs — is appended as a "Recipe Outputs" section before the raw
+ * transcript appendix; the ad-hoc Share flow passes none, keeping shares note-only.
+ */
+fun NoteEntity.toMarkdown(recipeOutputs: List<Pair<String, String>> = emptyList()): String = buildString {
     appendLine("# $title")
     appendLine()
 
@@ -229,6 +270,16 @@ fun NoteEntity.toMarkdown(): String = buildString {
         override != null -> appendLine(override.trim())
         summary != null -> appendStructuredSummary(summary)
         else -> segments.forEach { appendLine(it.text.trim()) }
+    }
+
+    if (recipeOutputs.isNotEmpty()) {
+        appendLine()
+        appendLine("## Recipe Outputs")
+        recipeOutputs.forEach { (name, text) ->
+            appendLine()
+            appendLine("### $name")
+            appendLine(text.trim())
+        }
     }
 
     val lines = transcript

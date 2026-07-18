@@ -36,6 +36,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -88,9 +90,17 @@ fun ChatScreen(
         ) {
             items(messages, key = { it.id }) { message ->
                 val isUser = message.role == "user"
-                Row(
+                val clipboard = LocalClipboardManager.current
+                var copied by remember(message.id) { mutableStateOf(false) }
+                LaunchedEffect(copied) {
+                    if (copied) {
+                        kotlinx.coroutines.delay(1_500)
+                        copied = false
+                    }
+                }
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start,
+                    horizontalAlignment = if (isUser) Alignment.End else Alignment.Start,
                 ) {
                     Text(
                         text = message.text,
@@ -109,6 +119,22 @@ fun ChatScreen(
                             .background(if (isUser) c.amber else c.card)
                             .padding(horizontal = 14.dp, vertical = 10.dp),
                     )
+                    // Copy-to-clipboard on assistant replies (OBS-01) — recipe outputs
+                    // (follow-up emails, tickets) usually get pasted somewhere else next.
+                    if (!isUser) {
+                        Text(
+                            text = if (copied) "Copied" else "Copy",
+                            color = if (copied) c.teal else c.dim,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier
+                                .clickable {
+                                    clipboard.setText(AnnotatedString(message.text))
+                                    copied = true
+                                }
+                                .padding(horizontal = 4.dp, vertical = 3.dp),
+                        )
+                    }
                 }
             }
             if (busy) {

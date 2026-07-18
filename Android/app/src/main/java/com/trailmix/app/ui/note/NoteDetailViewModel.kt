@@ -54,6 +54,13 @@ class NoteDetailViewModel @Inject constructor(
         }
     }
 
+    /** UX-04: move a structured-summary topic section up/down; persists + re-exports. */
+    fun moveSummarySection(from: Int, to: Int) {
+        viewModelScope.launch {
+            notesRepository.moveSummarySection(noteId, from, to)
+        }
+    }
+
     fun deleteNote(onDeleted: () -> Unit) {
         viewModelScope.launch {
             notesRepository.delete(noteId)

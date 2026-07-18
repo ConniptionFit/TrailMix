@@ -60,11 +60,22 @@ object AppModule {
         }
     }
 
+    /**
+     * v1.6.0: OBS-01 — recipe-produced assistant replies are tagged with the recipe's name
+     * so they can be included in the note's Markdown exports. Nullable/additive — every
+     * existing chat message stays an ordinary (non-exported) message.
+     */
+    private val MIGRATION_6_7 = object : Migration(6, 7) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE chat_messages ADD COLUMN recipeName TEXT")
+        }
+    }
+
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): TrailMixDatabase =
         Room.databaseBuilder(context, TrailMixDatabase::class.java, "trailmix.db")
-            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+            .addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
             .build()
 
     @Provides

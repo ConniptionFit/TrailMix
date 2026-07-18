@@ -122,6 +122,19 @@ data class StructuredSummary(
     val actionItems: List<ActionItem>,
 )
 
+/**
+ * UX-04: reorder the topic sections — returns a copy with the section at [from] moved to
+ * [to], or `this` unchanged when the move is a no-op or either index is out of range.
+ * Highlights and action items keep their fixed positions (top/bottom); only the
+ * topic-grouped middle is user-orderable.
+ */
+fun StructuredSummary.moveSection(from: Int, to: Int): StructuredSummary {
+    if (from == to || from !in sections.indices || to !in sections.indices) return this
+    val reordered = sections.toMutableList()
+    reordered.add(to, reordered.removeAt(from))
+    return copy(sections = reordered)
+}
+
 object StructuredSummaryJson {
     private fun bulletToJson(b: SummaryBullet) = JSONObject()
         .put("t", b.text)

@@ -510,6 +510,50 @@ private fun CaptureMenu(
     val c = TrailMix.colors
     val context = LocalContext.current
     var open by remember { mutableStateOf(false) }
+    var showCaptureHelp by remember { mutableStateOf(false) }
+
+    // CAP-06: capturable-source guidance — honest, dense, mirrors the v1.2.0 finding.
+    // (Up-front detection of an app's FLAG_NO_MEDIA_PROJECTION opt-out isn't feasible from
+    // a third-party app: AudioAttributes.getFlags() masks hidden flags, so the ≥5 s
+    // silence hint in the capture card remains the runtime signal.)
+    if (showCaptureHelp) {
+        AlertDialog(
+            onDismissRequest = { showCaptureHelp = false },
+            containerColor = c.card,
+            title = { Text("What can be captured?", color = c.text, fontSize = 17.sp) },
+            text = {
+                Text(
+                    "Microphone — always works: in-person conversation, speakerphone, " +
+                        "anything the mic can hear.\n\n" +
+                        "System audio (opt-in from this menu) — works for most apps: " +
+                        "browsers, podcasts, games, most video players.\n\n" +
+                        "What can't be captured:\n" +
+                        "• YouTube and DRM/streaming apps — they opt out of capture, and " +
+                        "Android enforces it.\n" +
+                        "• The other side of phone and VoIP calls — Android never shares " +
+                        "call audio with any app.\n\n" +
+                        "For those, put the call or video on speakerphone and let the mic " +
+                        "pick it up.\n\n" +
+                        "TrailMix can't tell up front whether an app allows capture — if " +
+                        "system audio stays silent, a hint appears in the capture card.",
+                    color = c.dim,
+                    fontSize = 13.5.sp,
+                    lineHeight = 19.sp,
+                )
+            },
+            confirmButton = {
+                Text(
+                    text = "Got it",
+                    color = c.amber,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .clickable { showCaptureHelp = false }
+                        .padding(8.dp),
+                )
+            },
+        )
+    }
 
     Box {
         IconButton(onClick = { open = true }) {
@@ -569,6 +613,14 @@ private fun CaptureMenu(
                 onClick = {
                     if (state.deviceAudioActive) onDisableDeviceAudio() else onEnableDeviceAudio()
                     open = false
+                },
+            )
+            HorizontalDivider(color = c.border)
+            DropdownMenuItem(
+                text = { Text("What can be captured?", fontSize = 14.sp, color = c.text) },
+                onClick = {
+                    open = false
+                    showCaptureHelp = true
                 },
             )
             HorizontalDivider(color = c.border)

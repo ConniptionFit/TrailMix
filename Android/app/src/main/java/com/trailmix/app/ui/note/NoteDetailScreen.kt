@@ -273,7 +273,10 @@ fun NoteDetailScreen(
                             lineHeight = 26.25.sp,
                         )
                     }
-                    summary != null -> StructuredSummaryBody(summary)
+                    summary != null -> StructuredSummaryBody(
+                        summary = summary,
+                        onMoveSection = viewModel::moveSummarySection,
+                    )
                     else -> {
                         val body = buildAnnotatedString {
                             current.segments.forEachIndexed { i, segment ->
@@ -348,10 +351,19 @@ fun NoteDetailScreen(
  * expand/collapse), and an isolated action-items checklist. Each bullet has a small "i"
  * affordance — tap it to reveal the source transcript/fragment excerpt it was attributed
  * from, the touch-friendly equivalent of a hover tooltip.
+ *
+ * UX-04: sections can be reordered via an explicit reorder mode (per-section ↑/↓ buttons)
+ * rather than long-press drag — the sections are expandable/variable-height inside an
+ * already-scrollable column, where drag reorder is jank-prone; the buttons deliver the
+ * same user value deterministically. Each move persists immediately via [onMoveSection].
  */
 @Composable
-private fun StructuredSummaryBody(summary: com.trailmix.app.data.model.StructuredSummary) {
+private fun StructuredSummaryBody(
+    summary: com.trailmix.app.data.model.StructuredSummary,
+    onMoveSection: (Int, Int) -> Unit,
+) {
     val c = TrailMix.colors
+    var reordering by remember { mutableStateOf(false) }
     Column {
         if (summary.highlights.isNotEmpty()) {
             Text(
@@ -366,12 +378,31 @@ private fun StructuredSummaryBody(summary: com.trailmix.app.data.model.Structure
             Spacer(modifier = Modifier.size(16.dp))
         }
 
-        summary.sections.forEach { section ->
+        if (summary.sections.size >= 2) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 2.dp),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                Text(
+                    text = if (reordering) "Done" else "Reorder sections",
+                    color = if (reordering) c.amber else c.dim,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(100.dp))
+                        .border(1.dp, if (reordering) c.amber else c.border, RoundedCornerShape(100.dp))
+                        .clickable { reordering = !reordering }
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                )
+            }
+        }
+
+        summary.sections.forEachIndexed { index, section ->
             var expanded by remember(section.heading) { mutableStateOf(true) }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { expanded = !expanded }
+                    .clickable(enabled = !reordering) { expanded = !expanded }
                     .padding(vertical = 6.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
@@ -381,14 +412,38 @@ private fun StructuredSummaryBody(summary: com.trailmix.app.data.model.Structure
                     color = c.text,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
                 )
-                Text(
-                    text = if (expanded) "▾" else "▸",
-                    color = c.dim,
-                    fontSize = 14.sp,
-                )
+                if (reordering) {
+                    val canUp = index > 0
+                    val canDown = index < summary.sections.lastIndex
+                    Text(
+                        text = "↑",
+                        color = if (canUp) c.amber else c.border,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .clickable(enabled = canUp) { onMoveSection(index, index - 1) }
+                            .padding(horizontal = 10.dp, vertical = 2.dp),
+                    )
+                    Text(
+                        text = "↓",
+                        color = if (canDown) c.amber else c.border,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .clickable(enabled = canDown) { onMoveSection(index, index + 1) }
+                            .padding(horizontal = 10.dp, vertical = 2.dp),
+                    )
+                } else {
+                    Text(
+                        text = if (expanded) "▾" else "▸",
+                        color = c.dim,
+                        fontSize = 14.sp,
+                    )
+                }
             }
-            if (expanded) {
+            if (expanded && !reordering) {
                 Column(modifier = Modifier.padding(bottom = 10.dp)) {
                     section.bullets.forEach { SummaryBulletRow(it) }
                 }

@@ -120,8 +120,10 @@ cd Android
    without stopping the recording — different from system Back, which still confirms
    before discarding. You can also freely navigate into any other note while a capture
    is running in the background — nothing about it depends on the Capture screen staying
-   open. Above *End & Merge*, a template row (Flat / 1:1 / Weekly Standup / Sales Pitch /
-   User Interview) steers how the AI structures the summary for this capture.
+   open. The 3-dot menu also has a **"What can be captured?"** help sheet summarizing all
+   of the above limits honestly, in-app. Above *End & Merge*, a template row (Flat / 1:1 /
+   Weekly Standup / Sales Pitch / User Interview) steers how the AI structures the summary
+   for this capture.
 3. **Note detail** — the merged note; amber tint = from your typed fragments, teal tint =
    from the transcript. *Sources shown* pill toggles provenance tinting (on by default
    after a merge). The meta line shows the meeting name and an in-call tag when the
@@ -134,7 +136,8 @@ cd Android
    summary, the body shows **Highlights**, expandable/collapsible **topic sections**, and
    an **Action Items** checklist (owner/deadline when statable) instead of the flat text —
    tap the small "ⓘ" next to any bullet to see the transcript/fragment sentence it came
-   from.
+   from, and use **Reorder sections** to move topic sections up/down (the new order
+   persists and carries into exports).
    - **Upcoming meetings** — tap the calendar label on Home to see the next 7 days; tap a
      meeting to capture it (a meeting more than 5 minutes out asks first).
 4. **Transcript** — full-screen, timestamp-labeled lines (no speaker diarization on-device
@@ -142,7 +145,9 @@ cd Android
 5. **Chat & Recipes** — chat about the note; recipe chips (Follow-up email, Create ticket,
    Summarize, Action items) are saved prompts. Chat knows meeting attendees and any
    name variants you've registered in Settings, so it can answer things like "what did
-   Charlie say I need to do."
+   Charlie say I need to do." Every assistant reply has a **Copy** button, and the latest
+   output of each recipe is included in the note's Obsidian/Drive Markdown export as a
+   *Recipe Outputs* section.
 6. **Settings** — dark mode (follows system until overridden), privacy disclosure, a
    **Speech recognition language** picker, optional Obsidian vault link, optional
    **Google Drive sync** folder, a **Name variants** list (every alias you go by, so the

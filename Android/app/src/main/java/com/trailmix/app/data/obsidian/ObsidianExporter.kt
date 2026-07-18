@@ -24,7 +24,10 @@ class ObsidianExporter @Inject constructor(
      * file's `content://` URI on success (tracked on the note as `obsidianFileUri`), or
      * null if no vault is linked or the write failed for any reason.
      */
-    suspend fun exportNote(note: NoteEntity): Uri? = withContext(Dispatchers.IO) {
+    suspend fun exportNote(
+        note: NoteEntity,
+        recipeOutputs: List<Pair<String, String>> = emptyList(),
+    ): Uri? = withContext(Dispatchers.IO) {
         val vaultUri = settingsRepository.vaultUri.first() ?: return@withContext null
         val folderName = settingsRepository.notesFolder.first()
         MarkdownExportWriter.writeIntoFolder(
@@ -32,7 +35,7 @@ class ObsidianExporter @Inject constructor(
             treeUri = Uri.parse(vaultUri),
             folderName = folderName,
             fileName = MarkdownExportWriter.buildFileName(note.title, note.createdAtEpochMs),
-            markdown = body(note),
+            markdown = body(note, recipeOutputs),
             existingFileUri = note.obsidianFileUri,
         )
     }
@@ -42,12 +45,16 @@ class ObsidianExporter @Inject constructor(
      * picked via `ACTION_OPEN_DOCUMENT_TREE` as a one-off destination, replacing whatever
      * `obsidianFileUri` was previously tracked. Independent of the standing vault setting.
      */
-    suspend fun exportNoteToPickedFolder(treeUri: Uri, note: NoteEntity): Uri? = withContext(Dispatchers.IO) {
+    suspend fun exportNoteToPickedFolder(
+        treeUri: Uri,
+        note: NoteEntity,
+        recipeOutputs: List<Pair<String, String>> = emptyList(),
+    ): Uri? = withContext(Dispatchers.IO) {
         MarkdownExportWriter.writeIntoTreeRoot(
             context = context,
             treeUri = treeUri,
             fileName = MarkdownExportWriter.buildFileName(note.title, note.createdAtEpochMs),
-            markdown = body(note),
+            markdown = body(note, recipeOutputs),
         )
     }
 
@@ -60,9 +67,9 @@ class ObsidianExporter @Inject constructor(
         return Intent(Intent.ACTION_VIEW, uri)
     }
 
-    private fun body(note: NoteEntity): String =
+    private fun body(note: NoteEntity, recipeOutputs: List<Pair<String, String>>): String =
         MarkdownExportWriter.frontmatteredBody(
-            markdown = note.toMarkdown(),
+            markdown = note.toMarkdown(recipeOutputs),
             createdAtEpochMs = note.createdAtEpochMs,
             durationMs = note.durationMs,
             source = "trailmix",
