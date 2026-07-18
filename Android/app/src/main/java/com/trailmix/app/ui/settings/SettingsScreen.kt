@@ -1,5 +1,8 @@
 package com.trailmix.app.ui.settings
 
+import android.content.Intent
+import android.net.Uri
+import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateDpAsState
@@ -13,6 +16,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Spacer
@@ -26,27 +30,38 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.trailmix.app.data.ai.Recipe
 import com.trailmix.app.data.model.SummaryTemplate
 import com.trailmix.app.data.speech.AsrLocales
 import com.trailmix.app.ui.components.SectionLabel
 import com.trailmix.app.ui.theme.TrailMix
+import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen(
@@ -54,31 +69,56 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val darkOverride by viewModel.darkModeOverride.collectAsStateWithLifecycle()
-    val vaultName by viewModel.vaultName.collectAsStateWithLifecycle()
-    val driveFolderName by viewModel.driveFolderName.collectAsStateWithLifecycle()
-    val nameVariants by viewModel.nameVariants.collectAsStateWithLifecycle()
+    val exportLocationName by viewModel.exportLocationName.collectAsStateWithLifecycle()
+    val exportLocationUri by viewModel.exportLocationUri.collectAsStateWithLifecycle()
     val defaultTemplate by viewModel.defaultTemplate.collectAsStateWithLifecycle()
     val asrLocaleTag by viewModel.asrLocaleTag.collectAsStateWithLifecycle()
+    val customRecipes by viewModel.customRecipes.collectAsStateWithLifecycle()
+    val migrating by viewModel.migrating.collectAsStateWithLifecycle()
     val c = TrailMix.colors
+    val context = LocalContext.current
     val systemDark = isSystemInDarkTheme()
     val darkOn = darkOverride ?: systemDark
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
-    val vaultPicker = rememberLauncherForActivityResult(
+    LaunchedEffect(Unit) {
+        viewModel.snackbarMessage.collect { snackbarHostState.showSnackbar(it) }
+    }
+
+    val exportLocationPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree(),
-    ) { uri -> if (uri != null) viewModel.onVaultPicked(uri) }
+    ) { uri -> if (uri != null) viewModel.onExportLocationPicked(uri) }
 
-    val drivePicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocumentTree(),
-    ) { uri -> if (uri != null) viewModel.onDrivePicked(uri) }
+    // UX-06 recipe editor dialog state: null = closed; Recipe("", "") = creating new.
+    var editingRecipe by remember { mutableStateOf<Recipe?>(null) }
+    editingRecipe?.let { recipe ->
+        RecipeEditorDialog(
+            initial = recipe,
+            onSave = { name, prompt ->
+                viewModel.saveRecipe(name, prompt, originalName = recipe.name.ifBlank { null })
+                editingRecipe = null
+            },
+            onDelete = if (recipe.name.isNotBlank()) {
+                {
+                    viewModel.deleteRecipe(recipe.name)
+                    editingRecipe = null
+                }
+            } else {
+                null
+            },
+            onDismiss = { editingRecipe = null },
+        )
+    }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(c.background)
-            .statusBarsPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp),
-    ) {
+    Box(modifier = Modifier.fillMaxSize().background(c.background)) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp),
+        ) {
         Text(
             text = "Settings",
             color = c.text,
@@ -114,6 +154,10 @@ fun SettingsScreen(
         }
         Hairline()
 
+        // SEC-02 (v1.7.0): honest local-only disclosure. The Google Drive sync exception is
+        // gone with the feature (INT-02); the one remaining nuance is that the user-chosen
+        // export folder may itself be cloud-synced — that's the folder provider's behavior,
+        // stated plainly instead of overclaiming "nothing ever leaves the device".
         SectionLabel(
             text = "Privacy & security",
             modifier = Modifier.padding(top = 24.dp, bottom = 10.dp),
@@ -132,9 +176,9 @@ fun SettingsScreen(
             modifier = Modifier.padding(top = 10.dp),
         )
         Text(
-            text = "One opt-in exception: if you link a Google Drive folder below, that note's " +
-                "Markdown leaves the device — written through Android's standard folder-sharing " +
-                "picker, not by this app talking to the internet directly.",
+            text = "One nuance: if the export location you pick below is a folder another app " +
+                "syncs to the cloud (like a Drive folder), that app may upload your note files. " +
+                "TrailMix itself only ever writes them locally.",
             color = c.dim,
             fontSize = 13.5.sp,
             lineHeight = 21.6.sp,
@@ -169,164 +213,162 @@ fun SettingsScreen(
             }
         }
 
+        // Export location (INT-02, v1.7.0 — formerly "Obsidian export"): one
+        // destination-agnostic SAF folder; picking a new one auto-migrates existing files.
         SectionLabel(
-            text = "Obsidian export",
+            text = "Export location",
             modifier = Modifier.padding(top = 28.dp, bottom = 10.dp),
         )
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { vaultPicker.launch(null) }
+                .clickable(enabled = !migrating) { exportLocationPicker.launch(null) }
                 .padding(vertical = 8.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = if (vaultName == null) "Link a vault folder" else "Vault: $vaultName",
+                    text = if (exportLocationName == null) "Pick a folder" else "Folder: $exportLocationName",
                     color = c.text,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Medium,
                 )
                 Text(
-                    text = if (vaultName == null) {
-                        "Optionally mirror merged notes as local Markdown files"
-                    } else {
-                        "New notes export to the TrailMix folder · tap to change"
+                    text = when {
+                        migrating -> "Moving your notes to the new folder…"
+                        exportLocationName == null ->
+                            "Optionally save merged notes as Markdown files — an Obsidian " +
+                                "vault, a synced folder, anywhere"
+                        else -> "Notes save to the TrailMix folder here · tap to change " +
+                            "(existing files move automatically)"
                     },
                     color = c.dim,
                     fontSize = 12.5.sp,
                     modifier = Modifier.padding(top = 2.dp),
                 )
             }
-            if (vaultName != null) {
+            if (migrating) {
+                CircularProgressIndicator(
+                    color = c.amber,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(18.dp),
+                )
+            } else if (exportLocationName != null) {
                 Text(
                     text = "Unlink",
                     color = c.dim,
                     fontSize = 12.5.sp,
                     modifier = Modifier
                         .clip(RoundedCornerShape(100.dp))
-                        .clickable { viewModel.clearVault() }
+                        .clickable { viewModel.clearExportLocation() }
                         .padding(8.dp),
                 )
             }
         }
-
-        // Google Drive sync (INT-01) — same SAF-only architecture and folder-picker pattern
-        // as the Obsidian export above; the Drive app/provider does whatever network I/O
-        // actually moves the bytes, TrailMix itself still has no INTERNET permission.
-        SectionLabel(
-            text = "Google Drive sync",
-            modifier = Modifier.padding(top = 28.dp, bottom = 10.dp),
-        )
-        Text(
-            text = "Note content leaves this device once you link a folder here — see " +
-                "Privacy & security above. Everything else in TrailMix stays local.",
-            color = c.dim,
-            fontSize = 12.5.sp,
-            lineHeight = 18.sp,
-            modifier = Modifier.padding(bottom = 10.dp),
-        )
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable { drivePicker.launch(null) }
-                .padding(vertical = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column {
+        // "Open folder" (UX-08) — replaces the long-press "Open file location" action.
+        val hasLocation = exportLocationUri != null
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+            Text(
+                text = "Open folder",
+                color = if (hasLocation) c.amber else c.dim.copy(alpha = 0.5f),
+                fontSize = 13.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(100.dp))
+                    .background(c.card)
+                    .clickable(enabled = hasLocation) {
+                        exportLocationUri?.let { uriStr ->
+                            runCatching {
+                                val treeUri = Uri.parse(uriStr)
+                                val docUri = DocumentsContract.buildDocumentUriUsingTree(
+                                    treeUri,
+                                    DocumentsContract.getTreeDocumentId(treeUri),
+                                )
+                                context.startActivity(
+                                    Intent(Intent.ACTION_VIEW).apply {
+                                        setDataAndType(docUri, DocumentsContract.Document.MIME_TYPE_DIR)
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    },
+                                )
+                            }.onFailure {
+                                scope.launch {
+                                    snackbarHostState.showSnackbar("No app available to open this folder")
+                                }
+                            }
+                        }
+                    }
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+            )
+            if (!hasLocation) {
                 Text(
-                    text = if (driveFolderName == null) "Link a Drive folder" else "Drive: $driveFolderName",
-                    color = c.text,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium,
-                )
-                Text(
-                    text = if (driveFolderName == null) {
-                        "Optionally mirror merged notes into a folder in Google Drive"
-                    } else {
-                        "New notes sync to the TrailMix folder · tap to change"
-                    },
+                    text = "Pick an export location first",
                     color = c.dim,
-                    fontSize = 12.5.sp,
-                    modifier = Modifier.padding(top = 2.dp),
-                )
-            }
-            if (driveFolderName != null) {
-                Text(
-                    text = "Unlink",
-                    color = c.dim,
-                    fontSize = 12.5.sp,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(100.dp))
-                        .clickable { viewModel.clearDrive() }
-                        .padding(8.dp),
+                    fontSize = 11.5.sp,
+                    modifier = Modifier.padding(start = 10.dp),
                 )
             }
         }
 
-        // Name variants (CAL-03) — aliases the AI should recognize as the user across
-        // transcript content, e.g. "JP", "John", "John Powers".
+        // Custom recipes (UX-06) — user-authored saved prompts, shown as chips on
+        // Chat & Recipes after the built-ins and run through the same on-device path.
         SectionLabel(
-            text = "Name variants",
+            text = "Custom recipes",
             modifier = Modifier.padding(top = 28.dp, bottom = 6.dp),
         )
         Text(
-            text = "Add every name you go by so chat and summaries can recognize you in the transcript.",
+            text = "Your own saved prompts for Chat & Recipes — e.g. \"Draft a status update " +
+                "for my manager from this note.\" The note and transcript are provided " +
+                "automatically; the prompt just says what to do with them.",
             color = c.dim,
             fontSize = 12.5.sp,
             lineHeight = 18.sp,
-            modifier = Modifier.padding(bottom = 10.dp),
+            modifier = Modifier.padding(bottom = 8.dp),
         )
-        var newName by remember { mutableStateOf("") }
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            BasicTextField(
-                value = newName,
-                onValueChange = { newName = it },
+        customRecipes.forEach { recipe ->
+            Row(
                 modifier = Modifier
-                    .weight(1f)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(c.card)
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                textStyle = TextStyle(color = c.text, fontSize = 14.sp),
-                cursorBrush = SolidColor(c.amber),
-                singleLine = true,
-            )
-            Text(
-                text = "Add",
-                color = c.amber,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier
-                    .clickable {
-                        viewModel.addNameVariant(newName)
-                        newName = ""
-                    }
-                    .padding(12.dp),
-            )
-        }
-        if (nameVariants.isNotEmpty()) {
-            Column(modifier = Modifier.padding(top = 6.dp)) {
-                nameVariants.forEach { name ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(text = name, color = c.text, fontSize = 14.sp)
-                        Text(
-                            text = "Remove",
-                            color = c.dim,
-                            fontSize = 12.5.sp,
-                            modifier = Modifier
-                                .clickable { viewModel.removeNameVariant(name) }
-                                .padding(4.dp),
-                        )
-                    }
+                    .fillMaxWidth()
+                    .clickable { editingRecipe = recipe }
+                    .padding(vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = recipe.name,
+                        color = c.text,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Text(
+                        text = recipe.prompt,
+                        color = c.dim,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
                 }
+                Text(
+                    text = "Edit",
+                    color = c.dim,
+                    fontSize = 12.5.sp,
+                    modifier = Modifier.padding(start = 10.dp),
+                )
             }
         }
+        Text(
+            text = "+ Add recipe",
+            color = c.amber,
+            fontSize = 13.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier
+                .clip(RoundedCornerShape(100.dp))
+                .background(c.card)
+                .clickable { editingRecipe = Recipe("", "") }
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+        )
 
         // Default summary template (UX-02) — steers the structured-summary prompt at
         // merge time unless overridden on the Capture screen itself.
@@ -352,7 +394,123 @@ fun SettingsScreen(
             }
         }
         Spacer(modifier = Modifier.size(24.dp))
+        }
+
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp),
+        ) { data -> Snackbar(snackbarData = data) }
     }
+}
+
+/**
+ * Create/edit dialog for a custom recipe (UX-06): name + prompt, a one-line inline example
+ * as the prompt placeholder (the lightweight guidance the row asked for), Delete only when
+ * editing an existing recipe.
+ */
+@Composable
+private fun RecipeEditorDialog(
+    initial: Recipe,
+    onSave: (name: String, prompt: String) -> Unit,
+    onDelete: (() -> Unit)?,
+    onDismiss: () -> Unit,
+) {
+    val c = TrailMix.colors
+    var name by remember { mutableStateOf(initial.name) }
+    var prompt by remember { mutableStateOf(initial.prompt) }
+    val valid = name.isNotBlank() && prompt.isNotBlank()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = c.card,
+        title = {
+            Text(
+                text = if (initial.name.isBlank()) "New recipe" else "Edit recipe",
+                color = c.text,
+                fontSize = 17.sp,
+            )
+        },
+        text = {
+            Column {
+                Text(text = "NAME", color = c.dim, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                BasicTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp, bottom = 12.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(c.background)
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    textStyle = TextStyle(color = c.text, fontSize = 14.sp),
+                    cursorBrush = SolidColor(c.amber),
+                    singleLine = true,
+                    decorationBox = { inner ->
+                        if (name.isEmpty()) Text("e.g. Status update", color = c.dim, fontSize = 14.sp)
+                        inner()
+                    },
+                )
+                Text(text = "PROMPT", color = c.dim, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                BasicTextField(
+                    value = prompt,
+                    onValueChange = { prompt = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 96.dp)
+                        .padding(top = 4.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(c.background)
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    textStyle = TextStyle(color = c.text, fontSize = 14.sp, lineHeight = 20.sp),
+                    cursorBrush = SolidColor(c.amber),
+                    decorationBox = { inner ->
+                        if (prompt.isEmpty()) {
+                            Text(
+                                text = "Tell the AI what to produce from the note, e.g. " +
+                                    "\"Write a 3-sentence status update covering decisions " +
+                                    "and open questions.\"",
+                                color = c.dim,
+                                fontSize = 13.sp,
+                                lineHeight = 18.sp,
+                            )
+                        }
+                        inner()
+                    },
+                )
+                onDelete?.let { delete ->
+                    Text(
+                        text = "Delete recipe",
+                        color = c.recordingRed,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier
+                            .padding(top = 14.dp)
+                            .clickable { delete() }
+                            .padding(4.dp),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Text(
+                text = "Save",
+                color = if (valid) c.amber else c.dim.copy(alpha = 0.5f),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .clickable(enabled = valid) { onSave(name, prompt) }
+                    .padding(8.dp),
+            )
+        },
+        dismissButton = {
+            Text(
+                text = "Cancel",
+                color = c.dim,
+                fontSize = 14.sp,
+                modifier = Modifier.clickable { onDismiss() }.padding(8.dp),
+            )
+        },
+    )
 }
 
 @Composable

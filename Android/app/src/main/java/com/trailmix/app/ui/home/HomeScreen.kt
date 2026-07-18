@@ -2,7 +2,6 @@ package com.trailmix.app.ui.home
 
 import android.Manifest
 import android.content.Intent
-import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -37,7 +36,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,10 +53,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.trailmix.app.data.calendar.UpcomingMeeting
 import com.trailmix.app.data.db.NoteEntity
 import com.trailmix.app.data.db.toMarkdown
-import com.trailmix.app.data.export.ExportTarget
 import com.trailmix.app.ui.components.SectionLabel
 import com.trailmix.app.ui.theme.TrailMix
-import kotlinx.coroutines.launch
 
 @Composable
 fun HomeScreen(
@@ -75,7 +71,6 @@ fun HomeScreen(
     val upcoming by viewModel.upcoming.collectAsStateWithLifecycle()
     val calendarGranted by viewModel.calendarGranted.collectAsStateWithLifecycle()
     val activeCapture by viewModel.activeCapture.collectAsStateWithLifecycle()
-    val exportTargetsConfigured by viewModel.exportTargetsConfigured.collectAsStateWithLifecycle()
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -83,7 +78,6 @@ fun HomeScreen(
 
     val c = TrailMix.colors
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(Unit) {
@@ -92,20 +86,11 @@ fun HomeScreen(
         }
     }
 
-    // Long-press context menu state (CAP-05): which note's menu is open, and any pending
-    // "Move" re-export awaiting a freshly SAF-picked destination folder.
+    // Long-press context menu state (CAP-05): which note's menu is open. Since v1.7.0
+    // (INT-02/UX-08) the menu is just Delete + Share — per-note Move was replaced by the
+    // global Export location + auto-migration, and "Open file location" by the Settings
+    // "Open folder" button.
     var contextMenuNote by remember { mutableStateOf<NoteEntity?>(null) }
-    var pendingMove by remember { mutableStateOf<Pair<Long, ExportTarget>?>(null) }
-
-    val moveFolderPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocumentTree(),
-    ) { uri ->
-        val move = pendingMove
-        pendingMove = null
-        if (uri != null && move != null) {
-            viewModel.moveExport(move.first, move.second, uri)
-        }
-    }
 
     // Tapping the next meeting: imminent (≤5 min) or ongoing starts capture
     // immediately; further out asks first.
@@ -265,11 +250,10 @@ fun HomeScreen(
         ) { data -> Snackbar(snackbarData = data) }
     }
 
-    // Long-press context menu (CAP-05): Delete / Share / Open file location / Move.
+    // Long-press context menu (CAP-05, slimmed by INT-02/UX-08 in v1.7.0): Delete / Share.
     contextMenuNote?.let { note ->
         NoteContextMenu(
             note = note,
-            exportConfigured = exportTargetsConfigured,
             onDismiss = { contextMenuNote = null },
             onDelete = {
                 contextMenuNote = null
@@ -284,59 +268,28 @@ fun HomeScreen(
                 }
                 context.startActivity(Intent.createChooser(sendIntent, "Share note"))
             },
-            onOpenLocation = { target ->
-                contextMenuNote = null
-                val uriString = if (target == ExportTarget.OBSIDIAN) note.obsidianFileUri else note.driveFileUri
-                uriString?.let { uriStr ->
-                    runCatching {
-                        val viewIntent = Intent(Intent.ACTION_VIEW).apply {
-                            setDataAndType(Uri.parse(uriStr), "text/markdown")
-                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        }
-                        context.startActivity(viewIntent)
-                    }.onFailure {
-                        scope.launch { snackbarHostState.showSnackbar("No app available to open this file") }
-                    }
-                }
-            },
-            onMove = { target ->
-                contextMenuNote = null
-                pendingMove = note.id to target
-                moveFolderPicker.launch(null)
-            },
         )
     }
 }
 
 /**
  * Long-press context menu on a Home note row (CAP-05 Part 1): Delete (with confirm, cascades
- * to any tracked export file), Share (reuses the UX-03 ACTION_SEND flow), Open file location
- * (ACTION_VIEW on the tracked export URI — disabled until the note has been exported at least
- * once), and Move ("re-export to a newly SAF-picked folder, replacing the tracked URI" — see
- * `UI and Design.md` for why this interpretation was chosen over an in-app folder concept).
- * When both Obsidian and Drive are tracked/configured, Open-location/Move ask which target
- * first via a small sub-dialog.
+ * to the tracked export file) and Share (reuses the UX-03 ACTION_SEND flow). v1.7.0 removed
+ * the other two actions by user request: "Move" (INT-02 — the single global Export location
+ * with auto-migration replaces per-note re-export) and "Open file location" (UX-08 — replaced
+ * by the "Open folder" button next to the Export location in Settings).
  */
 @Composable
 private fun NoteContextMenu(
     note: NoteEntity,
-    exportConfigured: ExportTargetsConfigured,
     onDismiss: () -> Unit,
     onDelete: () -> Unit,
     onShare: () -> Unit,
-    onOpenLocation: (ExportTarget) -> Unit,
-    onMove: (ExportTarget) -> Unit,
 ) {
     val c = TrailMix.colors
     var confirmDelete by remember { mutableStateOf(false) }
-    var chooseOpenTarget by remember { mutableStateOf(false) }
-    var chooseMoveTarget by remember { mutableStateOf(false) }
 
-    val hasObsidianFile = note.obsidianFileUri != null
-    val hasDriveFile = note.driveFileUri != null
-    val hasAnyFile = hasObsidianFile || hasDriveFile
-
-    if (!confirmDelete && !chooseOpenTarget && !chooseMoveTarget) {
+    if (!confirmDelete) {
         Dialog(onDismissRequest = onDismiss) {
             Column(
                 modifier = Modifier
@@ -356,28 +309,6 @@ private fun NoteContextMenu(
                 Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(c.border))
                 ContextMenuRow(label = "Delete", destructive = true) { confirmDelete = true }
                 ContextMenuRow(label = "Share") { onShare() }
-                ContextMenuRow(
-                    label = "Open file location",
-                    enabled = hasAnyFile,
-                    hint = if (!hasAnyFile) "Export this note first" else null,
-                ) {
-                    when {
-                        hasObsidianFile && hasDriveFile -> chooseOpenTarget = true
-                        hasObsidianFile -> onOpenLocation(ExportTarget.OBSIDIAN)
-                        else -> onOpenLocation(ExportTarget.DRIVE)
-                    }
-                }
-                ContextMenuRow(
-                    label = "Move",
-                    enabled = exportConfigured.any,
-                    hint = if (!exportConfigured.any) "Link a vault or Drive folder in Settings first" else null,
-                ) {
-                    when {
-                        exportConfigured.obsidian && exportConfigured.drive -> chooseMoveTarget = true
-                        exportConfigured.obsidian -> onMove(ExportTarget.OBSIDIAN)
-                        else -> onMove(ExportTarget.DRIVE)
-                    }
-                }
             }
         }
     }
@@ -389,7 +320,7 @@ private fun NoteContextMenu(
             title = { Text("Delete this note?", color = c.text, fontSize = 17.sp) },
             text = {
                 Text(
-                    "This can't be undone. If it's been exported to Obsidian or Drive, " +
+                    "This can't be undone. If it's been exported to your export location, " +
                         "TrailMix will try to remove that copy too.",
                     color = c.dim,
                     fontSize = 13.5.sp,
@@ -415,58 +346,6 @@ private fun NoteContextMenu(
             },
         )
     }
-
-    if (chooseOpenTarget) {
-        TargetPickerDialog(
-            title = "Open which copy?",
-            onDismiss = onDismiss,
-            onPick = { onOpenLocation(it) },
-        )
-    }
-    if (chooseMoveTarget) {
-        TargetPickerDialog(
-            title = "Move which export?",
-            onDismiss = onDismiss,
-            onPick = { onMove(it) },
-        )
-    }
-}
-
-@Composable
-private fun TargetPickerDialog(title: String, onDismiss: () -> Unit, onPick: (ExportTarget) -> Unit) {
-    val c = TrailMix.colors
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = c.card,
-        title = { Text(title, color = c.text, fontSize = 17.sp) },
-        text = {
-            Column {
-                Text(
-                    text = "Obsidian",
-                    color = c.amber,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.clickable { onPick(ExportTarget.OBSIDIAN) }.padding(vertical = 10.dp),
-                )
-                Text(
-                    text = "Google Drive",
-                    color = c.amber,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.clickable { onPick(ExportTarget.DRIVE) }.padding(vertical = 10.dp),
-                )
-            }
-        },
-        confirmButton = {},
-        dismissButton = {
-            Text(
-                text = "Cancel",
-                color = c.dim,
-                fontSize = 14.sp,
-                modifier = Modifier.clickable { onDismiss() }.padding(8.dp),
-            )
-        },
-    )
 }
 
 @Composable

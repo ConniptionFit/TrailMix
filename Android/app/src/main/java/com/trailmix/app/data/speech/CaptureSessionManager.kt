@@ -255,13 +255,11 @@ class CaptureSessionManager @Inject constructor(
             val createdAt = if (resuming) resumeCreatedAt else System.currentTimeMillis()
             val typed = fragments.value
             val transcript = transcriptLines.toList()
-            val nameVariants = settingsRepository.nameVariants.first()
             val result = aiProcessor.merge(
                 typedFragments = typed,
                 transcript = transcript,
                 createdAtEpochMs = createdAt,
                 attendees = attendees,
-                nameVariants = nameVariants,
                 template = template,
             )
             val id = if (resuming) {

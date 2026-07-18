@@ -237,13 +237,24 @@ fun CaptureScreen(
             .imePadding()
             .padding(horizontal = 20.dp),
     ) {
-        // Recording status row + audio menu (3 dots, upper right)
+        // Recording status row: back chevron upper-LEFT (UX-07, standard Android
+        // convention — was next to the 3-dot at top-right), audio menu (3 dots) upper right.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // Minimize — a literal chevron-back affordance, goes to Home while the
+            // recording keeps running in the background (CAP-10). Distinct from system
+            // Back, which still confirms discard.
+            IconButton(onClick = onMinimize) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "Back to Home (recording continues)",
+                    tint = c.dim,
+                )
+            }
             Box(
                 modifier = Modifier
                     .size(9.dp)
@@ -267,16 +278,6 @@ fun CaptureScreen(
                 )
             }
             Spacer(modifier = Modifier.weight(1f))
-            // Minimize — a literal chevron-back affordance (user-requested), goes to Home
-            // while the recording keeps running in the background (CAP-10). Distinct from
-            // system Back, which still confirms discard.
-            IconButton(onClick = onMinimize) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back to Home (recording continues)",
-                    tint = c.dim,
-                )
-            }
             CaptureMenu(
                 state = state,
                 deviceAudioSupported = viewModel.deviceAudioSupported,

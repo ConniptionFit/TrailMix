@@ -86,17 +86,17 @@ class OnDeviceAiProcessor @Inject constructor() {
      * Merge typed fragments + transcript into a provenance-tagged note. When AI is
      * available, also attempts a structured summary (UX-02) — highlights, topic-grouped
      * sections, and an isolated action-items list, steered by [template] and given
-     * [attendees]/[nameVariants] as participant context so the model can attribute
-     * statements and tasks correctly. Structuring is best-effort and independent of the
-     * flat title/segments result: any failure just leaves [MergeResult.structuredSummary]
-     * null, never a half-built or bogus structure.
+     * [attendees] as participant context so the model can attribute statements and tasks
+     * correctly. (The separate name-variants alias list was removed in v1.7.0, CAL-04 —
+     * calendar attendees cover the in-person meeting case.) Structuring is best-effort and
+     * independent of the flat title/segments result: any failure just leaves
+     * [MergeResult.structuredSummary] null, never a half-built or bogus structure.
      */
     suspend fun merge(
         typedFragments: String,
         transcript: List<TranscriptLine>,
         createdAtEpochMs: Long,
         attendees: List<String> = emptyList(),
-        nameVariants: List<String> = emptyList(),
         template: SummaryTemplate = SummaryTemplate.NONE,
     ): MergeResult = withContext(Dispatchers.Default) {
         val transcriptText = transcript.joinToString("\n") { it.text }.take(MAX_CONTEXT_CHARS)
@@ -129,7 +129,7 @@ class OnDeviceAiProcessor @Inject constructor() {
             val body = lines.drop(1).joinToString(" ")
             val segments = attributeProvenance(splitSentences(body), typedFragments, transcriptText)
             val structured = runCatching {
-                generateStructuredSummary(typedFragments, transcriptText, attendees, nameVariants, template)
+                generateStructuredSummary(typedFragments, transcriptText, attendees, template)
             }.getOrNull()
 
             MergeResult(
@@ -152,7 +152,6 @@ class OnDeviceAiProcessor @Inject constructor() {
         history: List<Pair<String, String>>, // role to text
         userMessage: String,
         attendees: List<String> = emptyList(),
-        nameVariants: List<String> = emptyList(),
     ): String = withContext(Dispatchers.Default) {
         val availability = ensureModelReady()
         if (availability !is AiAvailability.Available) {
@@ -164,12 +163,6 @@ class OnDeviceAiProcessor @Inject constructor() {
                 appendLine("Answer using only the note and transcript below. Plain text only.")
                 if (attendees.isNotEmpty()) {
                     appendLine("Meeting attendees: ${attendees.joinToString(", ")}.")
-                }
-                if (nameVariants.isNotEmpty()) {
-                    appendLine(
-                        "The user asking is also known by these names/aliases in the " +
-                            "transcript: ${nameVariants.joinToString(", ")}.",
-                    )
                 }
                 appendLine()
                 appendLine("Note:")
@@ -202,13 +195,11 @@ class OnDeviceAiProcessor @Inject constructor() {
         typedFragments: String,
         transcriptText: String,
         attendees: List<String>,
-        nameVariants: List<String>,
         template: SummaryTemplate,
     ): StructuredSummary? {
         val prompt = """
             You are structuring a meeting note into JSON. ${templateGuidance(template)}
             ${if (attendees.isNotEmpty()) "Attendees: ${attendees.joinToString(", ")}." else ""}
-            ${if (nameVariants.isNotEmpty()) "The note-taker is also known as: ${nameVariants.joinToString(", ")}." else ""}
             Respond with ONLY valid JSON, no markdown fences, matching exactly this shape:
             {"highlights": ["short key decision or highlight", "..."],
              "sections": [{"heading": "Topic name", "bullets": ["bullet text", "..."]}],
@@ -278,8 +269,9 @@ class OnDeviceAiProcessor @Inject constructor() {
             "This is a 1:1 — prefer sections like Wins, Challenges, Career/Growth, Feedback."
         SummaryTemplate.WEEKLY_STANDUP ->
             "This is a team standup — prefer sections like Done, In Progress, Blockers, Next Up."
-        SummaryTemplate.SALES_PITCH ->
-            "This is a sales call — prefer sections like Pain Points, Product Fit, Objections, Next Steps."
+        SummaryTemplate.LEARNING ->
+            "This is a learning session (talk, seminar, Lunch & Learn, vendor demo, deep dive) — " +
+                "prefer sections like Speakers, Key Takeaways, Learning Points, Follow-up Resources."
         SummaryTemplate.USER_INTERVIEW ->
             "This is a user interview — prefer sections like Background, Pain Points, Feature Requests, Quotes."
     }

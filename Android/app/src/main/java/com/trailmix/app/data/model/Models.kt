@@ -73,12 +73,17 @@ object StringListJson {
     }
 }
 
-/** Pre-generated structuring templates that steer [StructuredSummary] generation (UX-02). */
+/**
+ * Pre-generated structuring templates that steer [StructuredSummary] generation (UX-02).
+ * UX-05 (v1.7.0): LEARNING replaced SALES_PITCH — old notes that stored "SALES_PITCH"
+ * still load fine ([fromStored] falls back to NONE for any retired/unknown value; the
+ * stored string on the note is never rewritten).
+ */
 enum class SummaryTemplate(val label: String) {
     NONE("Flat (no template)"),
     ONE_ON_ONE("1:1"),
     WEEKLY_STANDUP("Weekly Standup"),
-    SALES_PITCH("Sales Pitch"),
+    LEARNING("Learning"),
     USER_INTERVIEW("User Interview"),
     ;
 

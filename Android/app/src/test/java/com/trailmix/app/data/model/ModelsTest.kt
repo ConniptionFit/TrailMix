@@ -82,4 +82,13 @@ class ModelsTest {
         assertEquals(SummaryTemplate.NONE, SummaryTemplate.fromStored("SOMETHING_NEW"))
         assertEquals(SummaryTemplate.ONE_ON_ONE, SummaryTemplate.fromStored("ONE_ON_ONE"))
     }
+
+    @Test
+    fun `retired Sales Pitch template loads as NONE and Learning replaces it`(): Unit {
+        // UX-05 (v1.7.0): SALES_PITCH was removed — old notes that stored it must still
+        // load without crashing, falling back to NONE.
+        assertEquals(SummaryTemplate.NONE, SummaryTemplate.fromStored("SALES_PITCH"))
+        assertEquals(SummaryTemplate.LEARNING, SummaryTemplate.fromStored("LEARNING"))
+        assertTrue(SummaryTemplate.entries.none { it.name == "SALES_PITCH" })
+    }
 }

@@ -17,6 +17,10 @@ interface NoteDao {
     @Query("SELECT * FROM notes WHERE id = :id")
     suspend fun getById(id: Long): NoteEntity?
 
+    /** One-shot list of every note — used by the export-location migration (INT-02, v1.7.0). */
+    @Query("SELECT * FROM notes ORDER BY createdAtEpochMs DESC")
+    suspend fun getAll(): List<NoteEntity>
+
     @Insert
     suspend fun insert(note: NoteEntity): Long
 

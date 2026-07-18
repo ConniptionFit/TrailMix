@@ -7,7 +7,8 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import com.trailmix.app.data.model.StringListJson
+import com.trailmix.app.data.ai.Recipe
+import com.trailmix.app.data.ai.RecipesJson
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -21,15 +22,22 @@ class SettingsRepository @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
     private val darkModeOverrideKey = booleanPreferencesKey("dark_mode_override")
-    private val vaultUriKey = stringPreferencesKey("obsidian_vault_uri")
-    private val vaultNameKey = stringPreferencesKey("obsidian_vault_name")
+
+    // INT-02 (v1.7.0): the "Obsidian export" setting became the destination-agnostic
+    // "Export location". The DataStore key names keep their historical "obsidian_*" spelling
+    // on purpose so an existing user's configured folder survives the rename untouched.
+    private val exportLocationUriKey = stringPreferencesKey("obsidian_vault_uri")
+    private val exportLocationNameKey = stringPreferencesKey("obsidian_vault_name")
     private val folderKey = stringPreferencesKey("obsidian_folder")
+
     private val projectionExplainerShownKey = booleanPreferencesKey("projection_explainer_shown")
-    private val nameVariantsKey = stringPreferencesKey("name_variants")
     private val defaultSummaryTemplateKey = stringPreferencesKey("default_summary_template")
-    private val driveUriKey = stringPreferencesKey("drive_folder_uri")
-    private val driveFolderNameKey = stringPreferencesKey("drive_folder_name")
     private val asrLocaleTagKey = stringPreferencesKey("asr_locale_tag")
+    private val customRecipesKey = stringPreferencesKey("custom_recipes")
+
+    // Retired keys, deliberately no longer read or written:
+    // - "name_variants" (CAL-04, v1.7.0)
+    // - "drive_folder_uri" / "drive_folder_name" (INT-02, v1.7.0 — Google Drive sync removed)
 
     /** null = follow the system setting (design default). */
     val darkModeOverride: Flow<Boolean?> = context.dataStore.data.map { it[darkModeOverrideKey] }
@@ -42,8 +50,14 @@ class SettingsRepository @Inject constructor(
         context.dataStore.edit { it[projectionExplainerShownKey] = true }
     }
 
-    val vaultUri: Flow<String?> = context.dataStore.data.map { it[vaultUriKey] }
-    val vaultName: Flow<String?> = context.dataStore.data.map { it[vaultNameKey] }
+    /**
+     * Export location (INT-02, v1.7.0) — the single SAF tree URI note Markdown files are
+     * written into. Destination-agnostic: an Obsidian vault, a cloud-synced folder, or any
+     * plain folder all behave identically (SAF makes the provider's sync behavior the OS's
+     * business, not TrailMix's). Absent = export is a silent no-op.
+     */
+    val exportLocationUri: Flow<String?> = context.dataStore.data.map { it[exportLocationUriKey] }
+    val exportLocationName: Flow<String?> = context.dataStore.data.map { it[exportLocationNameKey] }
     val notesFolder: Flow<String> = context.dataStore.data.map { it[folderKey] ?: "TrailMix" }
 
     suspend fun setDarkModeOverride(value: Boolean?) {
@@ -52,31 +66,17 @@ class SettingsRepository @Inject constructor(
         }
     }
 
-    suspend fun setVault(uri: String, name: String?) {
+    suspend fun setExportLocation(uri: String, name: String?) {
         context.dataStore.edit { prefs ->
-            prefs[vaultUriKey] = uri
-            if (name != null) prefs[vaultNameKey] = name else prefs.remove(vaultNameKey)
+            prefs[exportLocationUriKey] = uri
+            if (name != null) prefs[exportLocationNameKey] = name else prefs.remove(exportLocationNameKey)
         }
     }
 
-    suspend fun clearVault() {
+    suspend fun clearExportLocation() {
         context.dataStore.edit {
-            it.remove(vaultUriKey)
-            it.remove(vaultNameKey)
-        }
-    }
-
-    /**
-     * Names/aliases the user goes by (CAL-03), e.g. "JP", "John Powers". Threaded into
-     * the AI merge/chat prompts so the model can recognize the user under any of them.
-     */
-    val nameVariants: Flow<List<String>> =
-        context.dataStore.data.map { StringListJson.decode(it[nameVariantsKey]) }
-
-    suspend fun setNameVariants(names: List<String>) {
-        context.dataStore.edit { prefs ->
-            val cleaned = names.map { it.trim() }.filter { it.isNotBlank() }.distinct()
-            if (cleaned.isEmpty()) prefs.remove(nameVariantsKey) else prefs[nameVariantsKey] = StringListJson.encode(cleaned)
+            it.remove(exportLocationUriKey)
+            it.remove(exportLocationNameKey)
         }
     }
 
@@ -91,31 +91,6 @@ class SettingsRepository @Inject constructor(
     }
 
     /**
-     * Google Drive sync folder (INT-01, v1.5.0) — the SAF tree URI a user picked via
-     * `ACTION_OPEN_DOCUMENT_TREE` (which lists Drive as a document provider on a device
-     * that has it configured). Absent = sync is a silent no-op, same fail-soft contract as
-     * the Obsidian vault above. Stored the same way as the vault URI — DataStore, not a
-     * Room row, since it's app-wide config rather than per-note.
-     */
-    val driveUri: Flow<String?> = context.dataStore.data.map { it[driveUriKey] }
-    val driveFolderName: Flow<String?> = context.dataStore.data.map { it[driveFolderNameKey] }
-    val driveFolder: Flow<String> = context.dataStore.data.map { it[driveFolderNameKey] ?: "TrailMix" }
-
-    suspend fun setDrive(uri: String, name: String?) {
-        context.dataStore.edit { prefs ->
-            prefs[driveUriKey] = uri
-            if (name != null) prefs[driveFolderNameKey] = name else prefs.remove(driveFolderNameKey)
-        }
-    }
-
-    suspend fun clearDrive() {
-        context.dataStore.edit {
-            it.remove(driveUriKey)
-            it.remove(driveFolderNameKey)
-        }
-    }
-
-    /**
      * ASR locale setting (AI-02) — `MlKitTranscriber` used to hardcode `Locale.US`. Stored
      * as a BCP-47 tag (`"en-US"`); null = the default. See [com.trailmix.app.data.speech.AsrLocales]
      * for the curated supported list.
@@ -125,6 +100,24 @@ class SettingsRepository @Inject constructor(
     suspend fun setAsrLocaleTag(tag: String?) {
         context.dataStore.edit { prefs ->
             if (tag == null) prefs.remove(asrLocaleTagKey) else prefs[asrLocaleTagKey] = tag
+        }
+    }
+
+    /**
+     * User-defined recipes (UX-06, v1.7.0) — stored as a JSON list in DataStore (keeps the
+     * DB at Room v7; recipes are app-wide config, not per-note data). Rendered as chips
+     * after the built-ins on Chat & Recipes and executed through the exact same path.
+     */
+    val customRecipes: Flow<List<Recipe>> =
+        context.dataStore.data.map { RecipesJson.decode(it[customRecipesKey]) }
+
+    suspend fun setCustomRecipes(recipes: List<Recipe>) {
+        context.dataStore.edit { prefs ->
+            val cleaned = recipes
+                .map { Recipe(it.name.trim(), it.prompt.trim()) }
+                .filter { it.name.isNotBlank() && it.prompt.isNotBlank() }
+                .distinctBy { it.name }
+            if (cleaned.isEmpty()) prefs.remove(customRecipesKey) else prefs[customRecipesKey] = RecipesJson.encode(cleaned)
         }
     }
 }

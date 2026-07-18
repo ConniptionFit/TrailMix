@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -24,12 +25,15 @@ class ChatViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val notesRepository: NotesRepository,
     private val aiProcessor: OnDeviceAiProcessor,
-    private val settingsRepository: SettingsRepository,
+    settingsRepository: SettingsRepository,
 ) : ViewModel() {
 
     private val noteId: Long = checkNotNull(savedStateHandle["noteId"])
 
-    val recipes: List<Recipe> = DEFAULT_RECIPES
+    /** Built-ins first, then any user-defined recipes (UX-06) — one chip row, same execution path. */
+    val recipes: StateFlow<List<Recipe>> = settingsRepository.customRecipes
+        .map { DEFAULT_RECIPES + it }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DEFAULT_RECIPES)
 
     val messages: StateFlow<List<ChatMessageEntity>> = notesRepository.observeChat(noteId)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -52,7 +56,6 @@ class ChatViewModel @Inject constructor(
                     history = history,
                     userMessage = trimmed,
                     attendees = note.attendees,
-                    nameVariants = settingsRepository.nameVariants.first(),
                 )
                 notesRepository.addChatMessage(noteId, "assistant", reply)
             } finally {
@@ -74,9 +77,9 @@ class ChatViewModel @Inject constructor(
                     history = emptyList(),
                     userMessage = recipe.prompt,
                     attendees = note.attendees,
-                    nameVariants = settingsRepository.nameVariants.first(),
                 )
-                // Tagged with the recipe name (OBS-01) so it's exported with the note.
+                // Tagged with the recipe name (OBS-01) so it's exported with the note —
+                // custom recipes (UX-06) get the identical treatment.
                 notesRepository.addChatMessage(noteId, "assistant", reply, recipeName = recipe.name)
             } finally {
                 _busy.value = false
@@ -90,5 +93,5 @@ private fun Recipe.displayMessage(): String = when (name) {
     "Create ticket" -> "Create a ticket from this note"
     "Summarize" -> "Summarize this note"
     "Action items" -> "List the action items"
-    else -> name
+    else -> "Run \"$name\""
 }

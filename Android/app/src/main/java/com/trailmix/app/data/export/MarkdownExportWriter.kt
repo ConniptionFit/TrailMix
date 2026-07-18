@@ -8,19 +8,11 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Which SAF-backed destination a note's Markdown export is tracked against. Shared by the
- * Obsidian export (since v1.0.0) and Google Drive sync (INT-01, v1.5.0) — both go through
- * plain [android.provider.DocumentsContract] writes onto a user-picked tree, never a
- * network SDK, so the app never needs the INTERNET permission for either.
- */
-enum class ExportTarget { OBSIDIAN, DRIVE }
-
-/**
- * Shared SAF markdown-file writer used by both [com.trailmix.app.data.obsidian.ObsidianExporter]
- * and [com.trailmix.app.data.drive.DriveExporter] — both write the identical per-note Markdown
- * body into a folder under a user-picked SAF tree, differing only in which DataStore key holds
- * the tree URI. Factored out here so the two exporters, and the ad-hoc "Move" re-export (CAP-05
- * Part 1), don't duplicate the find-or-create-then-write dance.
+ * SAF markdown-file writer behind [NoteExporter] — writes the per-note Markdown body into
+ * a folder under the user-picked Export location tree via plain
+ * [android.provider.DocumentsContract] writes, never a network SDK, so the app never needs
+ * the INTERNET permission. (Historically shared by the Obsidian and Google Drive exporters;
+ * INT-02, v1.7.0 collapsed those into the single destination-agnostic [NoteExporter].)
  */
 object MarkdownExportWriter {
 
@@ -44,21 +36,6 @@ object MarkdownExportWriter {
             ?: tree.createDirectory(folderName)
             ?: return@runCatching null
         write(context, folder, fileName, markdown, existingFileUri)
-    }.getOrNull()
-
-    /**
-     * Writes directly into the root of [treeUri] (no named subfolder) — used for "Move"
-     * (CAP-05 Part 1), which re-exports a single note to a folder the user just picked via
-     * `ACTION_OPEN_DOCUMENT_TREE` specifically as the new destination, not a standing vault.
-     */
-    fun writeIntoTreeRoot(
-        context: Context,
-        treeUri: Uri,
-        fileName: String,
-        markdown: String,
-    ): Uri? = runCatching {
-        val folder = DocumentFile.fromTreeUri(context, treeUri) ?: return@runCatching null
-        write(context, folder, fileName, markdown, existingFileUri = null)
     }.getOrNull()
 
     private fun write(

@@ -55,6 +55,7 @@ fun ChatScreen(
 ) {
     val messages by viewModel.messages.collectAsStateWithLifecycle()
     val busy by viewModel.busy.collectAsStateWithLifecycle()
+    val recipes by viewModel.recipes.collectAsStateWithLifecycle()
     val c = TrailMix.colors
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -161,7 +162,7 @@ fun ChatScreen(
                     .padding(horizontal = 20.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                viewModel.recipes.forEach { recipe ->
+                recipes.forEach { recipe ->
                     Text(
                         text = recipe.name,
                         color = c.text,

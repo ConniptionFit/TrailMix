@@ -3,8 +3,7 @@ package com.trailmix.app.data.db
 import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
-import com.trailmix.app.data.drive.DriveExporter
-import com.trailmix.app.data.export.ExportTarget
+import com.trailmix.app.data.export.NoteExporter
 import com.trailmix.app.data.model.NoteSegment
 import com.trailmix.app.data.model.SegmentsJson
 import com.trailmix.app.data.model.StringListJson
@@ -13,7 +12,6 @@ import com.trailmix.app.data.model.StructuredSummaryJson
 import com.trailmix.app.data.model.TranscriptJson
 import com.trailmix.app.data.model.moveSection
 import com.trailmix.app.data.model.TranscriptLine
-import com.trailmix.app.data.obsidian.ObsidianExporter
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -28,13 +26,21 @@ import kotlinx.coroutines.flow.Flow
  * reason to abort the local delete. */
 data class DeleteResult(val filesDeleted: Boolean)
 
+/**
+ * Outcome of the export-location migration (INT-02, v1.7.0). [moved] notes were written to
+ * the new folder (tracked URI updated); [writeFailures] couldn't be written to the new
+ * location (their tracked URI is left pointing at the old file, untouched);
+ * [removeFailures] were written to the new location but the old copy couldn't be deleted
+ * (stale/revoked URI) — every case is per-note fail-soft, one bad note never aborts the rest.
+ */
+data class ExportMigrationResult(val moved: Int, val writeFailures: Int, val removeFailures: Int)
+
 @Singleton
 class NotesRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val noteDao: NoteDao,
     private val chatDao: ChatDao,
-    private val obsidianExporter: ObsidianExporter,
-    private val driveExporter: DriveExporter,
+    private val noteExporter: NoteExporter,
 ) {
     fun observeNotes(): Flow<List<NoteEntity>> = noteDao.observeAll()
 
@@ -137,8 +143,8 @@ class NotesRepository @Inject constructor(
 
     /**
      * [recipeName] is set only on assistant replies produced by running a saved recipe
-     * (OBS-01) — those are durable outputs, so adding one also re-exports the note into
-     * every configured target so the file on disk picks it up immediately.
+     * (OBS-01) — those are durable outputs, so adding one also re-exports the note so the
+     * file on disk picks it up immediately.
      */
     suspend fun addChatMessage(noteId: Long, role: String, text: String, recipeName: String? = null) {
         chatDao.insert(
@@ -171,10 +177,12 @@ class NotesRepository @Inject constructor(
     }
 
     /**
-     * Delete a note locally and cascade to any tracked export files (CAP-05: long-press
+     * Delete a note locally and cascade to its tracked export file (CAP-05: long-press
      * Delete on Home). The local DB delete always completes; a failed file delete (stale
      * URI, revoked SAF grant, file already removed externally) is caught and reported back
-     * via [DeleteResult.filesDeleted] rather than aborting or crashing.
+     * via [DeleteResult.filesDeleted] rather than aborting or crashing. (Any dormant
+     * pre-v1.7.0 Drive copy is deliberately left alone — Drive sync is gone and its
+     * tracked URIs are unmaintained.)
      */
     suspend fun delete(id: Long): DeleteResult {
         val note = noteDao.getById(id)
@@ -183,28 +191,37 @@ class NotesRepository @Inject constructor(
 
         var filesOk = true
         note?.obsidianFileUri?.let { if (!deleteDocument(it)) filesOk = false }
-        note?.driveFileUri?.let { if (!deleteDocument(it)) filesOk = false }
         return DeleteResult(filesDeleted = filesOk)
     }
 
     /**
-     * "Move" (CAP-05 Part 1): re-export a single note to a freshly SAF-picked folder for
-     * [target], replacing whatever URI was previously tracked for that target. Independent
-     * of the standing Obsidian vault / Drive folder settings.
+     * Export-location migration (INT-02, v1.7.0): called right after the user picks a NEW
+     * export location while notes are still tracked against the old one. For each note with
+     * a tracked export file: write it into the new location (a forced fresh write — the
+     * tracked URI is ignored so the note lands in the new folder, not updated in place in
+     * the old one), update the tracked URI, then delete the old file. Per-note fail-soft:
+     * a stale/revoked old URI or an unwritable note never aborts the rest.
      */
-    suspend fun moveExport(noteId: Long, target: ExportTarget, treeUri: Uri): Boolean {
-        val note = noteDao.getById(noteId) ?: return false
-        val outputs = latestRecipeOutputs(noteId)
-        val uri = when (target) {
-            ExportTarget.OBSIDIAN -> obsidianExporter.exportNoteToPickedFolder(treeUri, note, outputs)
-            ExportTarget.DRIVE -> driveExporter.exportNoteToPickedFolder(treeUri, note, outputs)
-        } ?: return false
-        val updated = when (target) {
-            ExportTarget.OBSIDIAN -> note.copy(obsidianFileUri = uri.toString())
-            ExportTarget.DRIVE -> note.copy(driveFileUri = uri.toString())
+    suspend fun migrateExports(): ExportMigrationResult {
+        var moved = 0
+        var writeFailures = 0
+        var removeFailures = 0
+        noteDao.getAll().filter { it.obsidianFileUri != null }.forEach { note ->
+            val oldUri = note.obsidianFileUri!!
+            val outputs = latestRecipeOutputs(note.id)
+            // Clearing the tracked URI forces a find-or-create in the new folder.
+            val newUri = runCatching {
+                noteExporter.exportNote(note.copy(obsidianFileUri = null), outputs)
+            }.getOrNull()
+            if (newUri == null) {
+                writeFailures++
+                return@forEach
+            }
+            noteDao.update(note.copy(obsidianFileUri = newUri.toString()))
+            moved++
+            if (newUri.toString() != oldUri && !deleteDocument(oldUri)) removeFailures++
         }
-        noteDao.update(updated)
-        return true
+        return ExportMigrationResult(moved, writeFailures, removeFailures)
     }
 
     /**
@@ -221,25 +238,17 @@ class NotesRepository @Inject constructor(
     }.getOrDefault(false)
 
     /**
-     * Best-effort Markdown export/update-in-place into every configured target (Obsidian
-     * vault and/or Google Drive folder — INT-01, v1.5.0). Same automatic-on-merge/edit
-     * trigger for both, by design, so the two export surfaces behave consistently. Absent
-     * config for a target is a silent no-op for that target; a write failure for one target
-     * never blocks the other. Successful exports get their `content://` URI written back
-     * onto the note (update-in-place on the next export, cascade-delete, "Open file
-     * location") without re-triggering export again.
+     * Best-effort Markdown export/update-in-place into the configured Export location
+     * (INT-02, v1.7.0 — formerly Obsidian vault and/or Google Drive). Automatic on every
+     * merge/edit/recipe run; absent config is a silent no-op. A successful export gets its
+     * `content://` URI written back onto the note (update-in-place on the next export,
+     * cascade-delete, migration) without re-triggering export again.
      */
     private suspend fun exportIfConfigured(note: NoteEntity) {
         val outputs = latestRecipeOutputs(note.id)
-        val obsidianUri = runCatching { obsidianExporter.exportNote(note, outputs) }.getOrNull()
-        val driveUri = runCatching { driveExporter.exportNote(note, outputs) }.getOrNull()
-        if (obsidianUri != null || driveUri != null) {
-            noteDao.update(
-                note.copy(
-                    obsidianFileUri = obsidianUri?.toString() ?: note.obsidianFileUri,
-                    driveFileUri = driveUri?.toString() ?: note.driveFileUri,
-                ),
-            )
+        val exportUri = runCatching { noteExporter.exportNote(note, outputs) }.getOrNull()
+        if (exportUri != null) {
+            noteDao.update(note.copy(obsidianFileUri = exportUri.toString()))
         }
     }
 }

@@ -43,12 +43,19 @@ data class NoteEntity(
     /** Name of the [com.trailmix.app.data.model.SummaryTemplate] used to steer structuring, if any. */
     val template: String? = null,
     /**
-     * `content://` URI of this note's exported file in the linked Obsidian vault, if it has
-     * ever been exported (v1.5.0, needed for update-in-place, cascade-delete, and "Open file
-     * location" — CAP-05/INT-01). Null until the first successful export.
+     * `content://` URI of this note's exported file in the configured Export location, if it
+     * has ever been exported (v1.5.0; needed for update-in-place, cascade-delete, and the
+     * INT-02 export-location migration). Column keeps its historical "obsidian" name — since
+     * v1.7.0 the destination is the neutral Export location, not necessarily an Obsidian vault.
+     * Null until the first successful export.
      */
     val obsidianFileUri: String? = null,
-    /** Same as [obsidianFileUri] but for the Google Drive SAF sync target (INT-01, v1.5.0). */
+    /**
+     * DORMANT (INT-02, v1.7.0): was the Google Drive sync copy's URI (INT-01, v1.5.0).
+     * Google Drive sync was removed; this column stays physically in the schema (Room
+     * migrations are additive-only) and on the entity (so the Room identity hash still
+     * matches DB v7) but is never read or written anymore.
+     */
     val driveFileUri: String? = null,
 ) {
     val segments: List<NoteSegment> get() = SegmentsJson.decode(segmentsJson)
