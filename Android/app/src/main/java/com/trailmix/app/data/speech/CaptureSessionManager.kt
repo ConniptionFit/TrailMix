@@ -20,6 +20,7 @@ import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
@@ -32,6 +33,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -261,7 +263,9 @@ class CaptureSessionManager @Inject constructor(
             if (MergePolicy.nothingToSave(typed, transcript)) {
                 resumeNoteId = -1L
                 _state.value = _state.value.copy(merging = false)
-                onDone(-1L)
+                // The caller navigates from this callback — NavController is main-thread-only
+                // (this scope's default dispatcher crashed popBackStack when first shipped).
+                withContext(Dispatchers.Main) { onDone(-1L) }
                 return@launch
             }
             val result = aiProcessor.merge(
@@ -306,7 +310,7 @@ class CaptureSessionManager @Inject constructor(
             }
             resumeNoteId = -1L
             _state.value = _state.value.copy(merging = false)
-            onDone(id)
+            withContext(Dispatchers.Main) { onDone(id) }
         }
     }
 

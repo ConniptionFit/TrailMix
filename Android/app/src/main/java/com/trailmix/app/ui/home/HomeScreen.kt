@@ -23,8 +23,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Snackbar
@@ -42,7 +45,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -55,6 +60,9 @@ import com.trailmix.app.data.db.NoteEntity
 import com.trailmix.app.data.db.toMarkdown
 import com.trailmix.app.ui.components.SectionLabel
 import com.trailmix.app.ui.theme.TrailMix
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun HomeScreen(
@@ -68,6 +76,7 @@ fun HomeScreen(
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val notes by viewModel.notes.collectAsStateWithLifecycle()
+    val query by viewModel.searchQuery.collectAsStateWithLifecycle()
     val upcoming by viewModel.upcoming.collectAsStateWithLifecycle()
     val calendarGranted by viewModel.calendarGranted.collectAsStateWithLifecycle()
     val activeCapture by viewModel.activeCapture.collectAsStateWithLifecycle()
@@ -169,44 +178,108 @@ fun HomeScreen(
                 }
             }
 
+            // Search (UX-13): live keyword + date filter over the notes list. Dates match
+            // in common spellings ("jul 18", "7/18/2026", "2026-07-18") via NoteSearch.
+            val searching = query.isNotBlank()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 6.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(c.card)
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Search,
+                    contentDescription = null,
+                    tint = c.dim,
+                    modifier = Modifier.size(18.dp),
+                )
+                BasicTextField(
+                    value = query,
+                    onValueChange = { viewModel.searchQuery.value = it },
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 10.dp),
+                    textStyle = TextStyle(color = c.text, fontSize = 14.sp),
+                    cursorBrush = SolidColor(c.amber),
+                    singleLine = true,
+                    decorationBox = { inner ->
+                        if (query.isEmpty()) {
+                            Text(
+                                text = "Search notes — keywords or dates",
+                                color = c.dim,
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        inner()
+                    },
+                )
+                if (query.isNotEmpty()) {
+                    Icon(
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "Clear search",
+                        tint = c.dim,
+                        modifier = Modifier
+                            .size(18.dp)
+                            .clickable { viewModel.searchQuery.value = "" },
+                    )
+                }
+            }
+
             LazyColumn(modifier = Modifier.weight(1f)) {
                 item {
-                    SectionLabel(
-                        text = "Upcoming — from calendar",
-                        modifier = Modifier
-                            .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 10.dp)
-                            .clickable {
-                                if (calendarGranted) {
-                                    onOpenMeetings()
-                                } else {
-                                    permissionLauncher.launch(Manifest.permission.READ_CALENDAR)
+                    // While a search is active the Upcoming section gives way to results.
+                    if (!searching) {
+                        SectionLabel(
+                            text = "Upcoming — from calendar",
+                            modifier = Modifier
+                                .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 10.dp)
+                                .clickable {
+                                    if (calendarGranted) {
+                                        onOpenMeetings()
+                                    } else {
+                                        permissionLauncher.launch(Manifest.permission.READ_CALENDAR)
+                                    }
+                                },
+                        )
+                        UpcomingCard(
+                            granted = calendarGranted,
+                            title = upcoming?.title,
+                            time = upcoming?.timeLabel,
+                            onEnable = { permissionLauncher.launch(Manifest.permission.READ_CALENDAR) },
+                            onTapMeeting = upcoming?.let { meeting ->
+                                {
+                                    if (meeting.minutesUntilStart > 5) {
+                                        pendingStart = meeting
+                                    } else {
+                                        onCaptureMeeting(meeting.title)
+                                    }
                                 }
                             },
-                    )
-                    UpcomingCard(
-                        granted = calendarGranted,
-                        title = upcoming?.title,
-                        time = upcoming?.timeLabel,
-                        onEnable = { permissionLauncher.launch(Manifest.permission.READ_CALENDAR) },
-                        onTapMeeting = upcoming?.let { meeting ->
-                            {
-                                if (meeting.minutesUntilStart > 5) {
-                                    pendingStart = meeting
-                                } else {
-                                    onCaptureMeeting(meeting.title)
-                                }
-                            }
-                        },
-                    )
+                        )
+                    }
                     SectionLabel(
-                        text = "Notes",
-                        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 22.dp, bottom = 4.dp),
+                        text = if (searching) "Results" else "Notes",
+                        modifier = Modifier.padding(
+                            start = 20.dp,
+                            end = 20.dp,
+                            top = if (searching) 8.dp else 22.dp,
+                            bottom = 4.dp,
+                        ),
                     )
                 }
                 if (notes.isEmpty()) {
                     item {
                         Text(
-                            text = "No notes yet — tap + to start a capture.",
+                            text = if (searching) {
+                                "No notes match your search."
+                            } else {
+                                "No notes yet — tap + to start a capture."
+                            },
                             color = c.dim,
                             fontSize = 13.sp,
                             modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
@@ -511,6 +584,17 @@ private fun NoteRow(note: NoteEntity, onClick: () -> Unit, onLongClick: () -> Un
                 fontSize = 13.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 3.dp),
+            )
+            // UX-12: creation date & time on every row.
+            val createdLabel = remember(note.createdAtEpochMs) {
+                SimpleDateFormat("MMM d, yyyy · h:mm a", Locale.getDefault())
+                    .format(Date(note.createdAtEpochMs))
+            }
+            Text(
+                text = createdLabel,
+                color = c.dim.copy(alpha = 0.75f),
+                fontSize = 11.5.sp,
                 modifier = Modifier.padding(top = 3.dp),
             )
         }

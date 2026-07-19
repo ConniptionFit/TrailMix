@@ -6,8 +6,10 @@ import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -56,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.trailmix.app.data.ai.DEFAULT_RECIPES
 import com.trailmix.app.data.ai.Recipe
 import com.trailmix.app.data.model.SummaryTemplate
 import com.trailmix.app.data.speech.AsrLocales
@@ -63,6 +66,7 @@ import com.trailmix.app.ui.components.SectionLabel
 import com.trailmix.app.ui.theme.TrailMix
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
@@ -90,8 +94,29 @@ fun SettingsScreen(
         ActivityResultContracts.OpenDocumentTree(),
     ) { uri -> if (uri != null) viewModel.onExportLocationPicked(uri) }
 
+    // UX-14 prompt viewer state: the recipe whose "logic" is being viewed, and whether
+    // it's a custom one (custom → the viewer offers Edit).
+    var viewingRecipe by remember { mutableStateOf<Recipe?>(null) }
+    var viewingIsCustom by remember { mutableStateOf(false) }
+
     // UX-06 recipe editor dialog state: null = closed; Recipe("", "") = creating new.
     var editingRecipe by remember { mutableStateOf<Recipe?>(null) }
+
+    viewingRecipe?.let { recipe ->
+        RecipePromptDialog(
+            recipe = recipe,
+            isCustom = viewingIsCustom,
+            onEdit = if (viewingIsCustom) {
+                {
+                    viewingRecipe = null
+                    editingRecipe = recipe
+                }
+            } else {
+                null
+            },
+            onDismiss = { viewingRecipe = null },
+        )
+    }
     editingRecipe?.let { recipe ->
         RecipeEditorDialog(
             initial = recipe,
@@ -310,8 +335,38 @@ fun SettingsScreen(
             }
         }
 
+        // Built-in recipes (UX-14) — read-only list of the standard Chat & Recipes prompts;
+        // press-and-hold (or tap) any row to see the full prompt it runs.
+        SectionLabel(
+            text = "Built-in recipes",
+            modifier = Modifier.padding(top = 28.dp, bottom = 6.dp),
+        )
+        Text(
+            text = "The standard Chat & Recipes prompts. Press and hold a recipe to see the " +
+                "exact prompt it runs.",
+            color = c.dim,
+            fontSize = 12.5.sp,
+            lineHeight = 18.sp,
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
+        DEFAULT_RECIPES.forEach { recipe ->
+            RecipeRow(
+                recipe = recipe,
+                trailing = null,
+                onClick = {
+                    viewingIsCustom = false
+                    viewingRecipe = recipe
+                },
+                onLongClick = {
+                    viewingIsCustom = false
+                    viewingRecipe = recipe
+                },
+            )
+        }
+
         // Custom recipes (UX-06) — user-authored saved prompts, shown as chips on
         // Chat & Recipes after the built-ins and run through the same on-device path.
+        // UX-14: press-and-hold views the full prompt (with Edit); tap still edits directly.
         SectionLabel(
             text = "Custom recipes",
             modifier = Modifier.padding(top = 28.dp, bottom = 6.dp),
@@ -319,44 +374,23 @@ fun SettingsScreen(
         Text(
             text = "Your own saved prompts for Chat & Recipes — e.g. \"Draft a status update " +
                 "for my manager from this note.\" The note and transcript are provided " +
-                "automatically; the prompt just says what to do with them.",
+                "automatically; the prompt just says what to do with them. Press and hold " +
+                "to view a recipe's prompt.",
             color = c.dim,
             fontSize = 12.5.sp,
             lineHeight = 18.sp,
             modifier = Modifier.padding(bottom = 8.dp),
         )
         customRecipes.forEach { recipe ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { editingRecipe = recipe }
-                    .padding(vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = recipe.name,
-                        color = c.text,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium,
-                    )
-                    Text(
-                        text = recipe.prompt,
-                        color = c.dim,
-                        fontSize = 12.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(top = 2.dp),
-                    )
-                }
-                Text(
-                    text = "Edit",
-                    color = c.dim,
-                    fontSize = 12.5.sp,
-                    modifier = Modifier.padding(start = 10.dp),
-                )
-            }
+            RecipeRow(
+                recipe = recipe,
+                trailing = "Edit",
+                onClick = { editingRecipe = recipe },
+                onLongClick = {
+                    viewingIsCustom = true
+                    viewingRecipe = recipe
+                },
+            )
         }
         Text(
             text = "+ Add recipe",
@@ -509,6 +543,132 @@ private fun RecipeEditorDialog(
                 fontSize = 14.sp,
                 modifier = Modifier.clickable { onDismiss() }.padding(8.dp),
             )
+        },
+    )
+}
+
+/** One recipe row in Settings (built-in or custom): name + one-line prompt preview. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun RecipeRow(
+    recipe: Recipe,
+    trailing: String?,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    val c = TrailMix.colors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = recipe.name,
+                color = c.text,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+            )
+            Text(
+                text = recipe.prompt,
+                color = c.dim,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+        if (trailing != null) {
+            Text(
+                text = trailing,
+                color = c.dim,
+                fontSize = 12.5.sp,
+                modifier = Modifier.padding(start = 10.dp),
+            )
+        }
+    }
+}
+
+/**
+ * UX-14: read-only viewer for a recipe's full prompt ("the logic"), opened by
+ * press-and-hold on any recipe row — built-in or custom. Custom recipes get an
+ * Edit action that hands off to the existing UX-06 editor.
+ */
+@Composable
+private fun RecipePromptDialog(
+    recipe: Recipe,
+    isCustom: Boolean,
+    onEdit: (() -> Unit)?,
+    onDismiss: () -> Unit,
+) {
+    val c = TrailMix.colors
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = c.card,
+        title = { Text(recipe.name, color = c.text, fontSize = 17.sp) },
+        text = {
+            Column {
+                Text(
+                    text = if (isCustom) "CUSTOM RECIPE — PROMPT" else "BUILT-IN RECIPE — PROMPT",
+                    color = c.dim,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = recipe.prompt,
+                    color = c.text,
+                    fontSize = 13.5.sp,
+                    lineHeight = 20.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 6.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(c.background)
+                        .heightIn(max = 280.dp)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                )
+                Text(
+                    text = "The note and its transcript are supplied automatically when the " +
+                        "recipe runs — the prompt describes what to produce from them.",
+                    color = c.dim,
+                    fontSize = 11.5.sp,
+                    lineHeight = 16.sp,
+                    modifier = Modifier.padding(top = 10.dp),
+                )
+            }
+        },
+        confirmButton = {
+            if (onEdit != null) {
+                Text(
+                    text = "Edit",
+                    color = c.amber,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.clickable { onEdit() }.padding(8.dp),
+                )
+            } else {
+                Text(
+                    text = "Close",
+                    color = c.amber,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.clickable { onDismiss() }.padding(8.dp),
+                )
+            }
+        },
+        dismissButton = {
+            if (onEdit != null) {
+                Text(
+                    text = "Close",
+                    color = c.dim,
+                    fontSize = 14.sp,
+                    modifier = Modifier.clickable { onDismiss() }.padding(8.dp),
+                )
+            }
         },
     )
 }
