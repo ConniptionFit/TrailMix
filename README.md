@@ -88,12 +88,18 @@ cd Android
 
 ## Screens (Android)
 
-1. **Home** — notes list, one upcoming meeting (opt-in calendar), amber FAB to start capture.
-   While a capture is running — even after you've navigated away — an amber
-   *Recording · mm:ss* chip appears here (and on Note detail, so it's never far away);
-   tap it to jump straight back into the live session (recording keeps running in the
-   background the whole time). **Press and hold a note** for a context menu: Delete
-   (also removes the exported copy) and Share.
+1. **Home** — notes list (every row shows its creation date & time, and calendar-linked
+   notes get a **Meeting** tag), one upcoming meeting (opt-in calendar), a **search bar**
+   (keywords or dates — "jul 18", "7/18/2026", and "2026-07-18" all work), a **Meetings**
+   filter chip, and an amber FAB to start capture. While a capture is running — even after
+   you've navigated away — an amber *Recording · mm:ss* chip appears here (and on Note
+   detail, so it's never far away); tap it to jump straight back into the live session
+   (recording keeps running in the background the whole time). **Press and hold a note**
+   for a context menu: **Select multiple** (selection mode with bulk Delete and bulk
+   Share), Delete (also removes the exported copy), and Share. Deleting is safe: notes
+   move to **Recently deleted** (an entry row appears at the bottom of the list) and stay
+   restorable for 1 day before being removed for good — open it to restore a note or
+   delete it immediately.
 2. **Live capture** — recording status, live transcript preview, free-typing fragment area,
    red *End & Merge* button. Tap the live-transcript card to **expand** it into a
    scrolling view of recent lines. A 3-dot menu (upper right) picks the input mic
@@ -119,8 +125,10 @@ cd Android
    is running in the background — nothing about it depends on the Capture screen staying
    open. The 3-dot menu also has a **"What can be captured?"** help sheet summarizing all
    of the above limits honestly, in-app. Above *End & Merge*, a template row (Flat / 1:1 /
-   Weekly Standup / Learning / User Interview) steers how the AI structures the summary
-   for this capture.
+   Weekly Standup / Learning / User Interview, plus any **custom templates** you've saved
+   in Settings) steers how the AI structures the summary for this capture. Ending a
+   capture with **nothing typed and nothing transcribed saves no note at all**, and a
+   typed-only capture is saved verbatim without invoking the AI.
 3. **Note detail** — the merged note; amber tint = from your typed fragments, teal tint =
    from the transcript. *Sources shown* pill toggles provenance tinting (on by default
    after a merge). The meta line shows the meeting name and an in-call tag when the
@@ -148,9 +156,12 @@ cd Android
 6. **Settings** — dark mode (follows system until overridden), privacy disclosure, a
    **Speech recognition language** picker, an optional **Export location** (pick any
    folder via the system picker; changing it moves your already-exported files over
-   automatically, and an **Open folder** button jumps to it), **Custom Recipes**
-   (create/edit/delete your own saved prompts for Chat & Recipes), and a
-   **Default summary template**.
+   automatically, and an **Open folder** button jumps to it), **Built-in and Custom
+   Recipes** (tap any recipe to see the exact prompt it runs; create/edit/delete your own),
+   **Built-in and Custom summary templates** (tap any template to see the exact guidance
+   it adds to the AI's structuring prompt, and add your own — e.g. a "Sales call" template
+   preferring Customer Needs / Objections / Pricing / Next Steps sections), and a
+   **Default summary template** (custom templates selectable there and on Capture too).
 
 ## Architecture (Android)
 
