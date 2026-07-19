@@ -27,6 +27,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -136,13 +137,23 @@ fun HomeScreen(
                     fontSize = 22.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
+                // UX-09 (revised): hamburger menu button — theme-adaptive (c.card/c.text
+                // flip with light/dark), replacing the blank avatar-slot circle.
                 Box(
                     modifier = Modifier
                         .size(34.dp)
                         .clip(CircleShape)
                         .background(c.card)
                         .clickable(onClick = onOpenSettings),
-                )
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Menu,
+                        contentDescription = "Settings",
+                        tint = c.text,
+                        modifier = Modifier.size(19.dp),
+                    )
+                }
             }
 
             // In-progress transcription chip (CAP-10) — recording continues in the
@@ -178,9 +189,42 @@ fun HomeScreen(
                 }
             }
 
+            val searching = query.isNotBlank()
+
+            // Upcoming meeting sits above the search bar (user request); it still gives
+            // way to results while a search is active.
+            if (!searching) {
+                SectionLabel(
+                    text = "Upcoming — from calendar",
+                    modifier = Modifier
+                        .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 10.dp)
+                        .clickable {
+                            if (calendarGranted) {
+                                onOpenMeetings()
+                            } else {
+                                permissionLauncher.launch(Manifest.permission.READ_CALENDAR)
+                            }
+                        },
+                )
+                UpcomingCard(
+                    granted = calendarGranted,
+                    title = upcoming?.title,
+                    time = upcoming?.timeLabel,
+                    onEnable = { permissionLauncher.launch(Manifest.permission.READ_CALENDAR) },
+                    onTapMeeting = upcoming?.let { meeting ->
+                        {
+                            if (meeting.minutesUntilStart > 5) {
+                                pendingStart = meeting
+                            } else {
+                                onCaptureMeeting(meeting.title)
+                            }
+                        }
+                    },
+                )
+            }
+
             // Search (UX-13): live keyword + date filter over the notes list. Dates match
             // in common spellings ("jul 18", "7/18/2026", "2026-07-18") via NoteSearch.
-            val searching = query.isNotBlank()
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -232,42 +276,12 @@ fun HomeScreen(
 
             LazyColumn(modifier = Modifier.weight(1f)) {
                 item {
-                    // While a search is active the Upcoming section gives way to results.
-                    if (!searching) {
-                        SectionLabel(
-                            text = "Upcoming — from calendar",
-                            modifier = Modifier
-                                .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 10.dp)
-                                .clickable {
-                                    if (calendarGranted) {
-                                        onOpenMeetings()
-                                    } else {
-                                        permissionLauncher.launch(Manifest.permission.READ_CALENDAR)
-                                    }
-                                },
-                        )
-                        UpcomingCard(
-                            granted = calendarGranted,
-                            title = upcoming?.title,
-                            time = upcoming?.timeLabel,
-                            onEnable = { permissionLauncher.launch(Manifest.permission.READ_CALENDAR) },
-                            onTapMeeting = upcoming?.let { meeting ->
-                                {
-                                    if (meeting.minutesUntilStart > 5) {
-                                        pendingStart = meeting
-                                    } else {
-                                        onCaptureMeeting(meeting.title)
-                                    }
-                                }
-                            },
-                        )
-                    }
                     SectionLabel(
                         text = if (searching) "Results" else "Notes",
                         modifier = Modifier.padding(
                             start = 20.dp,
                             end = 20.dp,
-                            top = if (searching) 8.dp else 22.dp,
+                            top = 10.dp,
                             bottom = 4.dp,
                         ),
                     )

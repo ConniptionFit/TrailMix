@@ -342,8 +342,8 @@ fun SettingsScreen(
             modifier = Modifier.padding(top = 28.dp, bottom = 6.dp),
         )
         Text(
-            text = "The standard Chat & Recipes prompts. Press and hold a recipe to see the " +
-                "exact prompt it runs.",
+            text = "The standard Chat & Recipes prompts. Tap a recipe to see the exact " +
+                "prompt it runs.",
             color = c.dim,
             fontSize = 12.5.sp,
             lineHeight = 18.sp,
@@ -353,6 +353,7 @@ fun SettingsScreen(
             RecipeRow(
                 recipe = recipe,
                 trailing = null,
+                onTrailingClick = null,
                 onClick = {
                     viewingIsCustom = false
                     viewingRecipe = recipe
@@ -374,8 +375,8 @@ fun SettingsScreen(
         Text(
             text = "Your own saved prompts for Chat & Recipes — e.g. \"Draft a status update " +
                 "for my manager from this note.\" The note and transcript are provided " +
-                "automatically; the prompt just says what to do with them. Press and hold " +
-                "to view a recipe's prompt.",
+                "automatically; the prompt just says what to do with them. Tap a recipe " +
+                "to view its prompt; tap Edit to change it.",
             color = c.dim,
             fontSize = 12.5.sp,
             lineHeight = 18.sp,
@@ -385,7 +386,15 @@ fun SettingsScreen(
             RecipeRow(
                 recipe = recipe,
                 trailing = "Edit",
-                onClick = { editingRecipe = recipe },
+                onTrailingClick = { editingRecipe = recipe },
+                // UX-14 fix (user-reported): press-and-hold proved unreliable with a real
+                // finger inside the scrolling settings column — tap now opens the prompt
+                // viewer (long-press kept as a shortcut); direct edit moved to the
+                // trailing Edit button and the viewer's own Edit action.
+                onClick = {
+                    viewingIsCustom = true
+                    viewingRecipe = recipe
+                },
                 onLongClick = {
                     viewingIsCustom = true
                     viewingRecipe = recipe
@@ -553,6 +562,7 @@ private fun RecipeEditorDialog(
 private fun RecipeRow(
     recipe: Recipe,
     trailing: String?,
+    onTrailingClick: (() -> Unit)?,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
@@ -584,9 +594,14 @@ private fun RecipeRow(
         if (trailing != null) {
             Text(
                 text = trailing,
-                color = c.dim,
+                color = if (onTrailingClick != null) c.amber else c.dim,
                 fontSize = 12.5.sp,
-                modifier = Modifier.padding(start = 10.dp),
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .padding(start = 10.dp)
+                    .clip(RoundedCornerShape(100.dp))
+                    .let { m -> if (onTrailingClick != null) m.clickable { onTrailingClick() } else m }
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
             )
         }
     }
