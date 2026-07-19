@@ -137,13 +137,13 @@ fun HomeScreen(
                     fontSize = 22.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
-                // UX-09 (revised): hamburger menu button — theme-adaptive (c.card/c.text
-                // flip with light/dark), replacing the blank avatar-slot circle.
+                // UX-09 (revised): bare hamburger menu button — theme-adaptive tint,
+                // no circle background (user request); CircleShape clip keeps the
+                // ripple round over the 34dp touch target.
                 Box(
                     modifier = Modifier
                         .size(34.dp)
                         .clip(CircleShape)
-                        .background(c.card)
                         .clickable(onClick = onOpenSettings),
                     contentAlignment = Alignment.Center,
                 ) {
