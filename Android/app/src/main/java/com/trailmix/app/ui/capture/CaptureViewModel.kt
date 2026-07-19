@@ -4,14 +4,20 @@ import android.content.Intent
 import android.media.AudioDeviceInfo
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
-import com.trailmix.app.data.model.SummaryTemplate
+import androidx.lifecycle.viewModelScope
+import com.trailmix.app.data.model.TemplateOption
+import com.trailmix.app.data.model.TemplateOptions
 import com.trailmix.app.data.model.TranscriptLine
+import com.trailmix.app.data.settings.SettingsRepository
 import com.trailmix.app.data.speech.CaptureSessionManager
 import com.trailmix.app.data.speech.EngineKind
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 
 /** A selectable input in the capture menu; null device = automatic routing. */
 data class InputOption(val label: String, val device: AudioDeviceInfo?)
@@ -48,6 +54,7 @@ data class CaptureUiState(
 class CaptureViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val manager: CaptureSessionManager,
+    settingsRepository: SettingsRepository,
 ) : ViewModel() {
 
     private val requestedResumeNoteId: Long =
@@ -59,7 +66,15 @@ class CaptureViewModel @Inject constructor(
     val fragments: MutableStateFlow<String> get() = manager.fragments
     val liveLines: StateFlow<List<TranscriptLine>> = manager.liveLines
     val deviceAudioSupported: Boolean get() = manager.deviceAudioSupported
-    val currentTemplate: SummaryTemplate get() = manager.currentTemplate
+
+    /** The active session's stored template value (enum name or `custom:<name>`, AI-03). */
+    val currentTemplate: String get() = manager.currentTemplate
+
+    /** Built-ins + the user's custom templates (AI-03) — the Capture selector's chips. */
+    val templateOptions: StateFlow<List<TemplateOption>> =
+        settingsRepository.customSummaryTemplates
+            .map { TemplateOptions.all(it) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TemplateOptions.builtIns())
 
     /** True if we're observing a session that was already running before this VM existed. */
     val reattached: Boolean get() = manager.state.value.recording || manager.state.value.merging
@@ -71,7 +86,7 @@ class CaptureViewModel @Inject constructor(
         manager.beginSession(requestedResumeNoteId, requestedTitle)
     }
 
-    fun setTemplate(template: SummaryTemplate) = manager.setTemplate(template)
+    fun setTemplate(stored: String) = manager.setTemplate(stored)
 
     fun requestDeviceAudio() = manager.requestDeviceAudio()
     fun consumeDeviceAudioPrompt() = manager.consumeDeviceAudioPrompt()

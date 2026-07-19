@@ -60,7 +60,9 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.trailmix.app.data.ai.DEFAULT_RECIPES
 import com.trailmix.app.data.ai.Recipe
+import com.trailmix.app.data.model.CustomSummaryTemplate
 import com.trailmix.app.data.model.SummaryTemplate
+import com.trailmix.app.data.model.TemplateOptions
 import com.trailmix.app.data.speech.AsrLocales
 import com.trailmix.app.ui.components.SectionLabel
 import com.trailmix.app.ui.theme.TrailMix
@@ -78,6 +80,7 @@ fun SettingsScreen(
     val defaultTemplate by viewModel.defaultTemplate.collectAsStateWithLifecycle()
     val asrLocaleTag by viewModel.asrLocaleTag.collectAsStateWithLifecycle()
     val customRecipes by viewModel.customRecipes.collectAsStateWithLifecycle()
+    val customTemplates by viewModel.customTemplates.collectAsStateWithLifecycle()
     val migrating by viewModel.migrating.collectAsStateWithLifecycle()
     val c = TrailMix.colors
     val context = LocalContext.current
@@ -102,10 +105,19 @@ fun SettingsScreen(
     // UX-06 recipe editor dialog state: null = closed; Recipe("", "") = creating new.
     var editingRecipe by remember { mutableStateOf<Recipe?>(null) }
 
+    // AI-03 template viewer/editor state — mirrors the recipe dialogs. Built-in templates
+    // are viewed through the same (name, guidance) shape customs use.
+    var viewingTemplate by remember { mutableStateOf<CustomSummaryTemplate?>(null) }
+    var viewingTemplateIsCustom by remember { mutableStateOf(false) }
+    var editingTemplate by remember { mutableStateOf<CustomSummaryTemplate?>(null) }
+
     viewingRecipe?.let { recipe ->
-        RecipePromptDialog(
-            recipe = recipe,
-            isCustom = viewingIsCustom,
+        PromptViewerDialog(
+            title = recipe.name,
+            kindLabel = if (viewingIsCustom) "CUSTOM RECIPE — PROMPT" else "BUILT-IN RECIPE — PROMPT",
+            body = recipe.prompt,
+            footer = "The note and its transcript are supplied automatically when the " +
+                "recipe runs — the prompt describes what to produce from them.",
             onEdit = if (viewingIsCustom) {
                 {
                     viewingRecipe = null
@@ -118,8 +130,17 @@ fun SettingsScreen(
         )
     }
     editingRecipe?.let { recipe ->
-        RecipeEditorDialog(
-            initial = recipe,
+        NamedPromptEditorDialog(
+            initialName = recipe.name,
+            initialText = recipe.prompt,
+            newTitle = "New recipe",
+            editTitle = "Edit recipe",
+            nameHint = "e.g. Status update",
+            textLabel = "PROMPT",
+            textHint = "Tell the AI what to produce from the note, e.g. " +
+                "\"Write a 3-sentence status update covering decisions " +
+                "and open questions.\"",
+            deleteLabel = "Delete recipe",
             onSave = { name, prompt ->
                 viewModel.saveRecipe(name, prompt, originalName = recipe.name.ifBlank { null })
                 editingRecipe = null
@@ -133,6 +154,56 @@ fun SettingsScreen(
                 null
             },
             onDismiss = { editingRecipe = null },
+        )
+    }
+    viewingTemplate?.let { template ->
+        PromptViewerDialog(
+            title = template.name,
+            kindLabel = if (viewingTemplateIsCustom) {
+                "CUSTOM TEMPLATE — PROMPT GUIDANCE"
+            } else {
+                "BUILT-IN TEMPLATE — PROMPT GUIDANCE"
+            },
+            body = template.guidance,
+            footer = "This guidance is spliced into the structuring prompt when a capture " +
+                "ends, steering which sections the summary is grouped into. The rest of " +
+                "the prompt (JSON shape, factual-only rules) is fixed.",
+            onEdit = if (viewingTemplateIsCustom) {
+                {
+                    viewingTemplate = null
+                    editingTemplate = template
+                }
+            } else {
+                null
+            },
+            onDismiss = { viewingTemplate = null },
+        )
+    }
+    editingTemplate?.let { template ->
+        NamedPromptEditorDialog(
+            initialName = template.name,
+            initialText = template.guidance,
+            newTitle = "New template",
+            editTitle = "Edit template",
+            nameHint = "e.g. Sales call",
+            textLabel = "GUIDANCE",
+            textHint = "A sentence steering the summary's sections, e.g. \"This is a " +
+                "sales call — prefer sections like Customer Needs, Objections, " +
+                "Pricing, Next Steps.\"",
+            deleteLabel = "Delete template",
+            onSave = { name, guidance ->
+                viewModel.saveTemplate(name, guidance, originalName = template.name.ifBlank { null })
+                editingTemplate = null
+            },
+            onDelete = if (template.name.isNotBlank()) {
+                {
+                    viewModel.deleteTemplate(template.name)
+                    editingTemplate = null
+                }
+            } else {
+                null
+            },
+            onDismiss = { editingTemplate = null },
         )
     }
 
@@ -350,8 +421,9 @@ fun SettingsScreen(
             modifier = Modifier.padding(bottom = 8.dp),
         )
         DEFAULT_RECIPES.forEach { recipe ->
-            RecipeRow(
-                recipe = recipe,
+            PromptRow(
+                name = recipe.name,
+                preview = recipe.prompt,
                 trailing = null,
                 onTrailingClick = null,
                 onClick = {
@@ -383,8 +455,9 @@ fun SettingsScreen(
             modifier = Modifier.padding(bottom = 8.dp),
         )
         customRecipes.forEach { recipe ->
-            RecipeRow(
-                recipe = recipe,
+            PromptRow(
+                name = recipe.name,
+                preview = recipe.prompt,
                 trailing = "Edit",
                 onTrailingClick = { editingRecipe = recipe },
                 // UX-14 fix (user-reported): press-and-hold proved unreliable with a real
@@ -413,16 +486,93 @@ fun SettingsScreen(
                 .padding(horizontal = 14.dp, vertical = 8.dp),
         )
 
+        // Built-in summary templates (AI-03) — read-only list of the structuring guidance
+        // each template splices into the End & Merge prompt; tap to view the exact text.
+        SectionLabel(
+            text = "Built-in summary templates",
+            modifier = Modifier.padding(top = 28.dp, bottom = 6.dp),
+        )
+        Text(
+            text = "Templates steer how End & Merge groups a note's summary into sections. " +
+                "Tap a template to see the exact guidance it adds to the prompt.",
+            color = c.dim,
+            fontSize = 12.5.sp,
+            lineHeight = 18.sp,
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
+        SummaryTemplate.entries.forEach { template ->
+            val asViewable = CustomSummaryTemplate(template.label, template.guidance)
+            PromptRow(
+                name = template.label,
+                preview = template.guidance,
+                trailing = null,
+                onTrailingClick = null,
+                onClick = {
+                    viewingTemplateIsCustom = false
+                    viewingTemplate = asViewable
+                },
+                onLongClick = {
+                    viewingTemplateIsCustom = false
+                    viewingTemplate = asViewable
+                },
+            )
+        }
+
+        // Custom summary templates (AI-03) — user-authored guidance, selectable everywhere
+        // the built-ins are (Capture screen chips and the default below).
+        SectionLabel(
+            text = "Custom summary templates",
+            modifier = Modifier.padding(top = 28.dp, bottom = 6.dp),
+        )
+        Text(
+            text = "Your own templates for the kinds of meetings you actually have. The " +
+                "guidance is one or two sentences telling the AI which sections to prefer. " +
+                "Tap a template to view its guidance; tap Edit to change it.",
+            color = c.dim,
+            fontSize = 12.5.sp,
+            lineHeight = 18.sp,
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
+        customTemplates.forEach { template ->
+            PromptRow(
+                name = template.name,
+                preview = template.guidance,
+                trailing = "Edit",
+                onTrailingClick = { editingTemplate = template },
+                onClick = {
+                    viewingTemplateIsCustom = true
+                    viewingTemplate = template
+                },
+                onLongClick = {
+                    viewingTemplateIsCustom = true
+                    viewingTemplate = template
+                },
+            )
+        }
+        Text(
+            text = "+ Add template",
+            color = c.amber,
+            fontSize = 13.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier
+                .clip(RoundedCornerShape(100.dp))
+                .background(c.card)
+                .clickable { editingTemplate = CustomSummaryTemplate("", "") }
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+        )
+
         // Default summary template (UX-02) — steers the structured-summary prompt at
-        // merge time unless overridden on the Capture screen itself.
+        // merge time unless overridden on the Capture screen itself. AI-03: custom
+        // templates are selectable here too.
         SectionLabel(
             text = "Default summary template",
             modifier = Modifier.padding(top = 28.dp, bottom = 10.dp),
         )
+        val templateOptions = TemplateOptions.all(customTemplates)
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(SummaryTemplate.entries.size) { i ->
-                val option = SummaryTemplate.entries[i]
-                val selected = option == defaultTemplate
+            items(templateOptions.size) { i ->
+                val option = templateOptions[i]
+                val selected = option.stored == defaultTemplate
                 Text(
                     text = option.label,
                     color = if (selected) Color.White else c.dim,
@@ -431,7 +581,7 @@ fun SettingsScreen(
                     modifier = Modifier
                         .clip(RoundedCornerShape(100.dp))
                         .background(if (selected) c.amber else c.card)
-                        .clickable { viewModel.setDefaultTemplate(option) }
+                        .clickable { viewModel.setDefaultTemplate(option.stored) }
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                 )
             }
@@ -447,28 +597,35 @@ fun SettingsScreen(
 }
 
 /**
- * Create/edit dialog for a custom recipe (UX-06): name + prompt, a one-line inline example
- * as the prompt placeholder (the lightweight guidance the row asked for), Delete only when
- * editing an existing recipe.
+ * Create/edit dialog for a named prompt-ish thing — custom recipes (UX-06) and custom
+ * summary templates (AI-03) share this: name + free text, inline example placeholders,
+ * Delete only when editing an existing entry ([onDelete] non-null).
  */
 @Composable
-private fun RecipeEditorDialog(
-    initial: Recipe,
-    onSave: (name: String, prompt: String) -> Unit,
+private fun NamedPromptEditorDialog(
+    initialName: String,
+    initialText: String,
+    newTitle: String,
+    editTitle: String,
+    nameHint: String,
+    textLabel: String,
+    textHint: String,
+    deleteLabel: String,
+    onSave: (name: String, text: String) -> Unit,
     onDelete: (() -> Unit)?,
     onDismiss: () -> Unit,
 ) {
     val c = TrailMix.colors
-    var name by remember { mutableStateOf(initial.name) }
-    var prompt by remember { mutableStateOf(initial.prompt) }
-    val valid = name.isNotBlank() && prompt.isNotBlank()
+    var name by remember { mutableStateOf(initialName) }
+    var text by remember { mutableStateOf(initialText) }
+    val valid = name.isNotBlank() && text.isNotBlank()
 
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = c.card,
         title = {
             Text(
-                text = if (initial.name.isBlank()) "New recipe" else "Edit recipe",
+                text = if (initialName.isBlank()) newTitle else editTitle,
                 color = c.text,
                 fontSize = 17.sp,
             )
@@ -489,14 +646,14 @@ private fun RecipeEditorDialog(
                     cursorBrush = SolidColor(c.amber),
                     singleLine = true,
                     decorationBox = { inner ->
-                        if (name.isEmpty()) Text("e.g. Status update", color = c.dim, fontSize = 14.sp)
+                        if (name.isEmpty()) Text(nameHint, color = c.dim, fontSize = 14.sp)
                         inner()
                     },
                 )
-                Text(text = "PROMPT", color = c.dim, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                Text(text = textLabel, color = c.dim, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
                 BasicTextField(
-                    value = prompt,
-                    onValueChange = { prompt = it },
+                    value = text,
+                    onValueChange = { text = it },
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = 96.dp)
@@ -507,11 +664,9 @@ private fun RecipeEditorDialog(
                     textStyle = TextStyle(color = c.text, fontSize = 14.sp, lineHeight = 20.sp),
                     cursorBrush = SolidColor(c.amber),
                     decorationBox = { inner ->
-                        if (prompt.isEmpty()) {
+                        if (text.isEmpty()) {
                             Text(
-                                text = "Tell the AI what to produce from the note, e.g. " +
-                                    "\"Write a 3-sentence status update covering decisions " +
-                                    "and open questions.\"",
+                                text = textHint,
                                 color = c.dim,
                                 fontSize = 13.sp,
                                 lineHeight = 18.sp,
@@ -522,7 +677,7 @@ private fun RecipeEditorDialog(
                 )
                 onDelete?.let { delete ->
                     Text(
-                        text = "Delete recipe",
+                        text = deleteLabel,
                         color = c.recordingRed,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
@@ -541,7 +696,7 @@ private fun RecipeEditorDialog(
                 fontSize = 14.sp,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier
-                    .clickable(enabled = valid) { onSave(name, prompt) }
+                    .clickable(enabled = valid) { onSave(name, text) }
                     .padding(8.dp),
             )
         },
@@ -556,11 +711,12 @@ private fun RecipeEditorDialog(
     )
 }
 
-/** One recipe row in Settings (built-in or custom): name + one-line prompt preview. */
+/** One name + one-line-preview row in Settings — recipe or summary template, built-in or custom. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun RecipeRow(
-    recipe: Recipe,
+private fun PromptRow(
+    name: String,
+    preview: String,
     trailing: String?,
     onTrailingClick: (() -> Unit)?,
     onClick: () -> Unit,
@@ -577,13 +733,13 @@ private fun RecipeRow(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = recipe.name,
+                text = name,
                 color = c.text,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Medium,
             )
             Text(
-                text = recipe.prompt,
+                text = preview,
                 color = c.dim,
                 fontSize = 12.sp,
                 maxLines = 1,
@@ -608,14 +764,16 @@ private fun RecipeRow(
 }
 
 /**
- * UX-14: read-only viewer for a recipe's full prompt ("the logic"), opened by
- * press-and-hold on any recipe row — built-in or custom. Custom recipes get an
- * Edit action that hands off to the existing UX-06 editor.
+ * Read-only viewer for "the logic" behind a row — a recipe's full prompt (UX-14) or a
+ * summary template's guidance sentence (AI-03). Custom entries get an Edit action that
+ * hands off to [NamedPromptEditorDialog].
  */
 @Composable
-private fun RecipePromptDialog(
-    recipe: Recipe,
-    isCustom: Boolean,
+private fun PromptViewerDialog(
+    title: String,
+    kindLabel: String,
+    body: String,
+    footer: String,
     onEdit: (() -> Unit)?,
     onDismiss: () -> Unit,
 ) {
@@ -623,17 +781,17 @@ private fun RecipePromptDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = c.card,
-        title = { Text(recipe.name, color = c.text, fontSize = 17.sp) },
+        title = { Text(title, color = c.text, fontSize = 17.sp) },
         text = {
             Column {
                 Text(
-                    text = if (isCustom) "CUSTOM RECIPE — PROMPT" else "BUILT-IN RECIPE — PROMPT",
+                    text = kindLabel,
                     color = c.dim,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = recipe.prompt,
+                    text = body,
                     color = c.text,
                     fontSize = 13.5.sp,
                     lineHeight = 20.sp,
@@ -647,8 +805,7 @@ private fun RecipePromptDialog(
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                 )
                 Text(
-                    text = "The note and its transcript are supplied automatically when the " +
-                        "recipe runs — the prompt describes what to produce from them.",
+                    text = footer,
                     color = c.dim,
                     fontSize = 11.5.sp,
                     lineHeight = 16.sp,

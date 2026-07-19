@@ -65,7 +65,6 @@ import androidx.core.content.ContextCompat
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.trailmix.app.data.model.SummaryTemplate
 import com.trailmix.app.ui.theme.TrailMix
 
 @Composable
@@ -438,14 +437,16 @@ fun CaptureScreen(
         )
 
         // Summary template selector (UX-02) — steers the structured-summary prompt.
+        // AI-03: chips list the built-ins plus the user's custom templates from Settings.
+        val templateOptions by viewModel.templateOptions.collectAsStateWithLifecycle()
         var selectedTemplate by remember { mutableStateOf(viewModel.currentTemplate) }
         LazyRow(
             modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            items(SummaryTemplate.entries.size) { i ->
-                val option = SummaryTemplate.entries[i]
-                val selected = option == selectedTemplate
+            items(templateOptions.size) { i ->
+                val option = templateOptions[i]
+                val selected = option.stored == selectedTemplate
                 Text(
                     text = option.label,
                     color = if (selected) Color.White else c.dim,
@@ -455,8 +456,8 @@ fun CaptureScreen(
                         .clip(RoundedCornerShape(100.dp))
                         .background(if (selected) c.amber else c.card)
                         .clickable {
-                            selectedTemplate = option
-                            viewModel.setTemplate(option)
+                            selectedTemplate = option.stored
+                            viewModel.setTemplate(option.stored)
                         }
                         .padding(horizontal = 12.dp, vertical = 7.dp),
                 )

@@ -9,6 +9,8 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.trailmix.app.data.ai.Recipe
 import com.trailmix.app.data.ai.RecipesJson
+import com.trailmix.app.data.model.CustomSummaryTemplate
+import com.trailmix.app.data.model.CustomTemplatesJson
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -34,6 +36,7 @@ class SettingsRepository @Inject constructor(
     private val defaultSummaryTemplateKey = stringPreferencesKey("default_summary_template")
     private val asrLocaleTagKey = stringPreferencesKey("asr_locale_tag")
     private val customRecipesKey = stringPreferencesKey("custom_recipes")
+    private val customTemplatesKey = stringPreferencesKey("custom_summary_templates")
 
     // Retired keys, deliberately no longer read or written:
     // - "name_variants" (CAL-04, v1.7.0)
@@ -118,6 +121,28 @@ class SettingsRepository @Inject constructor(
                 .filter { it.name.isNotBlank() && it.prompt.isNotBlank() }
                 .distinctBy { it.name }
             if (cleaned.isEmpty()) prefs.remove(customRecipesKey) else prefs[customRecipesKey] = RecipesJson.encode(cleaned)
+        }
+    }
+
+    /**
+     * User-defined summary templates (AI-03, v1.8.0) — same DataStore-list pattern as
+     * custom recipes. Selectable everywhere the built-in templates are (Capture screen,
+     * Settings default) via [com.trailmix.app.data.model.TemplateOptions].
+     */
+    val customSummaryTemplates: Flow<List<CustomSummaryTemplate>> =
+        context.dataStore.data.map { CustomTemplatesJson.decode(it[customTemplatesKey]) }
+
+    suspend fun setCustomSummaryTemplates(templates: List<CustomSummaryTemplate>) {
+        context.dataStore.edit { prefs ->
+            val cleaned = templates
+                .map { CustomSummaryTemplate(it.name.trim(), it.guidance.trim()) }
+                .filter { it.name.isNotBlank() && it.guidance.isNotBlank() }
+                .distinctBy { it.name }
+            if (cleaned.isEmpty()) {
+                prefs.remove(customTemplatesKey)
+            } else {
+                prefs[customTemplatesKey] = CustomTemplatesJson.encode(cleaned)
+            }
         }
     }
 }

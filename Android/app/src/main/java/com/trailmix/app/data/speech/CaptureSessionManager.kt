@@ -9,6 +9,7 @@ import com.trailmix.app.data.ai.OnDeviceAiProcessor
 import com.trailmix.app.data.calendar.UpcomingMeetingSource
 import com.trailmix.app.data.db.NotesRepository
 import com.trailmix.app.data.model.SummaryTemplate
+import com.trailmix.app.data.model.TemplateOptions
 import com.trailmix.app.data.model.TranscriptLine
 import com.trailmix.app.data.settings.SettingsRepository
 import com.trailmix.app.service.CaptureService
@@ -84,7 +85,11 @@ class CaptureSessionManager @Inject constructor(
     private var resumeCreatedAt = 0L
     private var resumeNoteId = -1L
     private var attendees: List<String> = emptyList()
-    private var template: SummaryTemplate = SummaryTemplate.NONE
+
+    // AI-03: the STORED template value — a SummaryTemplate enum name or "custom:<name>".
+    // Resolved to its prompt-guidance sentence only at merge time (TemplateOptions.guidanceFor),
+    // so editing a custom template mid-capture picks up the latest wording.
+    private var template: String = SummaryTemplate.NONE.name
 
     /** Which existing note (if any) the *currently active* session is attached to. */
     val activeResumeNoteId: Long get() = resumeNoteId.takeIf { state.value.recording || state.value.merging } ?: -1L
@@ -103,12 +108,14 @@ class CaptureSessionManager @Inject constructor(
         resumeCreatedAt = 0L
         capturedInCall = false
         attendees = emptyList()
-        template = SummaryTemplate.NONE
+        template = SummaryTemplate.NONE.name
         _state.value = CaptureUiState(meetingTitle = meetingTitle)
         if (resumeNoteId <= 0) {
             // Fresh note: seed the template from the user's Settings default (UX-02);
             // a resumed note keeps whatever template it was created with (see applyResume).
-            scope.launch { template = SummaryTemplate.fromStored(settingsRepository.defaultSummaryTemplate.first()) }
+            scope.launch {
+                settingsRepository.defaultSummaryTemplate.first()?.let { template = it }
+            }
         }
         startRecording()
     }
@@ -184,7 +191,7 @@ class CaptureSessionManager @Inject constructor(
         resumeCreatedAt = note.createdAtEpochMs
         capturedInCall = note.capturedInCall
         attendees = note.attendees
-        template = SummaryTemplate.fromStored(note.template)
+        template = note.template ?: SummaryTemplate.NONE.name
         _state.value = _state.value.copy(
             meetingTitle = note.meetingTitle ?: _state.value.meetingTitle,
             lastFinalLine = transcriptLines.lastOrNull()?.text ?: "",
@@ -237,11 +244,12 @@ class CaptureSessionManager @Inject constructor(
         _state.value = _state.value.copy(deviceAudioActive = false, deviceAudioSilent = false)
     }
 
-    fun setTemplate(t: SummaryTemplate) {
-        template = t
+    /** [stored] is a [TemplateOption.stored] value — enum name or `custom:<name>` (AI-03). */
+    fun setTemplate(stored: String) {
+        template = stored
     }
 
-    val currentTemplate: SummaryTemplate get() = template
+    val currentTemplate: String get() = template
 
     val deviceAudioSupported: Boolean
         get() = engine.deviceAudioSupported
@@ -273,7 +281,10 @@ class CaptureSessionManager @Inject constructor(
                 transcript = transcript,
                 createdAtEpochMs = createdAt,
                 attendees = attendees,
-                template = template,
+                templateGuidance = TemplateOptions.guidanceFor(
+                    template,
+                    settingsRepository.customSummaryTemplates.first(),
+                ),
             )
             val id = if (resuming) {
                 notesRepository.updateMergedNote(
@@ -289,7 +300,7 @@ class CaptureSessionManager @Inject constructor(
                     capturedInCall = capturedInCall,
                     attendees = attendees,
                     structuredSummary = result.structuredSummary,
-                    template = template.name,
+                    template = template,
                 )
                 resumeNoteId
             } else {
@@ -305,7 +316,7 @@ class CaptureSessionManager @Inject constructor(
                     capturedInCall = capturedInCall,
                     attendees = attendees,
                     structuredSummary = result.structuredSummary,
-                    template = template.name,
+                    template = template,
                 )
             }
             resumeNoteId = -1L

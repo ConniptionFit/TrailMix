@@ -13,6 +13,7 @@ import androidx.navigation.navArgument
 import com.trailmix.app.ui.capture.CaptureScreen
 import com.trailmix.app.ui.chat.ChatScreen
 import com.trailmix.app.ui.home.HomeScreen
+import com.trailmix.app.ui.home.RecentlyDeletedScreen
 import com.trailmix.app.ui.meetings.MeetingsScreen
 import com.trailmix.app.ui.note.NoteDetailScreen
 import com.trailmix.app.ui.settings.SettingsScreen
@@ -26,7 +27,7 @@ object Routes {
     const val CHAT = "chat/{noteId}"
     const val SETTINGS = "settings"
     const val MEETINGS = "meetings"
-    // REL-06: route reserved for the Recently deleted screen (backend shipped; UI pending).
+    // REL-06: the Recently deleted screen (1-day soft-delete recovery window).
     const val RECENTLY_DELETED = "recently-deleted"
 
     fun capture(title: String? = null) =
@@ -49,6 +50,7 @@ fun TrailMixNavHost(navController: NavHostController = rememberNavController()) 
                 onOpenMeetings = { navController.navigate(Routes.MEETINGS) },
                 onOpenNote = { id -> navController.navigate(Routes.note(id)) },
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                onOpenRecentlyDeleted = { navController.navigate(Routes.RECENTLY_DELETED) },
                 // CAP-10: reopen the still-running capture session — no title/resumeNoteId
                 // args needed, CaptureSessionManager already knows what's active.
                 onOpenActiveCapture = { navController.navigate(Routes.capture()) },
@@ -132,6 +134,9 @@ fun TrailMixNavHost(navController: NavHostController = rememberNavController()) 
         }
         composable(Routes.SETTINGS) {
             SettingsScreen(onBack = { navController.popBackStack() })
+        }
+        composable(Routes.RECENTLY_DELETED) {
+            RecentlyDeletedScreen(onBack = { navController.popBackStack() })
         }
     }
 }

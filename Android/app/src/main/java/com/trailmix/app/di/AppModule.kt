@@ -72,7 +72,7 @@ object AppModule {
     }
 
     /**
-     * v1.8.0: REL-04 — soft-delete timestamp for the 1-day Recently deleted window.
+     * v1.8.0: REL-06 — soft-delete timestamp for the 1-day Recently deleted window.
      * Nullable/additive — every existing note stays a live (non-deleted) note.
      */
     private val MIGRATION_7_8 = object : Migration(7, 8) {

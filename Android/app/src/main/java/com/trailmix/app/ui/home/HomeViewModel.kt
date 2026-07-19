@@ -47,7 +47,7 @@ class HomeViewModel @Inject constructor(
             }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    /** How many notes sit in Recently deleted (REL-04) — drives the entry row's visibility. */
+    /** How many notes sit in Recently deleted (REL-06) — drives the entry row's visibility. */
     val deletedCount: StateFlow<Int> = notesRepository.observeDeletedNotes()
         .map { it.size }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
@@ -111,7 +111,7 @@ class HomeViewModel @Inject constructor(
 
     init {
         refreshUpcoming()
-        // REL-04: opportunistic purge of notes past the 1-day recovery window.
+        // REL-06: opportunistic purge of notes past the 1-day recovery window.
         viewModelScope.launch { notesRepository.purgeExpiredDeleted() }
     }
 
@@ -124,7 +124,7 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch { _upcoming.value = meetingSource.nextMeeting() }
     }
 
-    /** Soft delete (REL-04) + remove the tracked export file (CAP-05). Fail-soft: a file
+    /** Soft delete (REL-06) + remove the tracked export file (CAP-05). Fail-soft: a file
      * delete failure never blocks the local delete, just surfaces a Snackbar hint. */
     fun deleteNote(id: Long) {
         viewModelScope.launch {

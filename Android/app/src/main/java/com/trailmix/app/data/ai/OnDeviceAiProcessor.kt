@@ -91,13 +91,18 @@ class OnDeviceAiProcessor @Inject constructor() {
      * calendar attendees cover the in-person meeting case.) Structuring is best-effort and
      * independent of the flat title/segments result: any failure just leaves
      * [MergeResult.structuredSummary] null, never a half-built or bogus structure.
+     *
+     * AI-03 (v1.8.0): [templateGuidance] is the already-resolved guidance sentence — the
+     * caller resolves the stored template value (built-in enum name or `custom:<name>`)
+     * through [com.trailmix.app.data.model.TemplateOptions.guidanceFor], so this class no
+     * longer knows or cares which template kind it came from.
      */
     suspend fun merge(
         typedFragments: String,
         transcript: List<TranscriptLine>,
         createdAtEpochMs: Long,
         attendees: List<String> = emptyList(),
-        template: SummaryTemplate = SummaryTemplate.NONE,
+        templateGuidance: String = SummaryTemplate.NONE.guidance,
     ): MergeResult = withContext(Dispatchers.Default) {
         // CAP-11 (v1.8.0): no transcript → nothing to merge or summarize. The typed notes
         // are saved verbatim via the deterministic path; the model is never invoked.
@@ -134,7 +139,7 @@ class OnDeviceAiProcessor @Inject constructor() {
             val body = lines.drop(1).joinToString(" ")
             val segments = attributeProvenance(splitSentences(body), typedFragments, transcriptText)
             val structured = runCatching {
-                generateStructuredSummary(typedFragments, transcriptText, attendees, template)
+                generateStructuredSummary(typedFragments, transcriptText, attendees, templateGuidance)
             }.getOrNull()
 
             MergeResult(
@@ -200,10 +205,10 @@ class OnDeviceAiProcessor @Inject constructor() {
         typedFragments: String,
         transcriptText: String,
         attendees: List<String>,
-        template: SummaryTemplate,
+        templateGuidance: String,
     ): StructuredSummary? {
         val prompt = """
-            You are structuring a meeting note into JSON. ${templateGuidance(template)}
+            You are structuring a meeting note into JSON. $templateGuidance
             ${if (attendees.isNotEmpty()) "Attendees: ${attendees.joinToString(", ")}." else ""}
             Respond with ONLY valid JSON, no markdown fences, matching exactly this shape:
             {"highlights": ["short key decision or highlight", "..."],
@@ -265,20 +270,6 @@ class OnDeviceAiProcessor @Inject constructor() {
 
         if (highlights.isEmpty() && sections.isEmpty() && actionItems.isEmpty()) return null
         return StructuredSummary(highlights = highlights, sections = sections, actionItems = actionItems)
-    }
-
-    private fun templateGuidance(template: SummaryTemplate): String = when (template) {
-        SummaryTemplate.NONE ->
-            "Group the remaining content into whatever topics naturally emerge."
-        SummaryTemplate.ONE_ON_ONE ->
-            "This is a 1:1 — prefer sections like Wins, Challenges, Career/Growth, Feedback."
-        SummaryTemplate.WEEKLY_STANDUP ->
-            "This is a team standup — prefer sections like Done, In Progress, Blockers, Next Up."
-        SummaryTemplate.LEARNING ->
-            "This is a learning session (talk, seminar, Lunch & Learn, vendor demo, deep dive) — " +
-                "prefer sections like Speakers, Key Takeaways, Learning Points, Follow-up Resources."
-        SummaryTemplate.USER_INTERVIEW ->
-            "This is a user interview — prefer sections like Background, Pain Points, Feature Requests, Quotes."
     }
 
     /** Same word-overlap logic as [attributeProvenance], plus the best-matching source excerpt. */

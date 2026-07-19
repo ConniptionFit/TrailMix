@@ -78,18 +78,109 @@ object StringListJson {
  * UX-05 (v1.7.0): LEARNING replaced SALES_PITCH — old notes that stored "SALES_PITCH"
  * still load fine ([fromStored] falls back to NONE for any retired/unknown value; the
  * stored string on the note is never rewritten).
+ * AI-03 (v1.8.0): [guidance] — the sentence spliced into the structuring prompt — moved
+ * here from OnDeviceAiProcessor so Settings can show each template's actual logic, and
+ * user-defined templates ([CustomSummaryTemplate]) now sit alongside these built-ins via
+ * [TemplateOption].
  */
-enum class SummaryTemplate(val label: String) {
-    NONE("Flat (no template)"),
-    ONE_ON_ONE("1:1"),
-    WEEKLY_STANDUP("Weekly Standup"),
-    LEARNING("Learning"),
-    USER_INTERVIEW("User Interview"),
+enum class SummaryTemplate(val label: String, val guidance: String) {
+    NONE(
+        "Flat (no template)",
+        "Group the remaining content into whatever topics naturally emerge.",
+    ),
+    ONE_ON_ONE(
+        "1:1",
+        "This is a 1:1 — prefer sections like Wins, Challenges, Career/Growth, Feedback.",
+    ),
+    WEEKLY_STANDUP(
+        "Weekly Standup",
+        "This is a team standup — prefer sections like Done, In Progress, Blockers, Next Up.",
+    ),
+    LEARNING(
+        "Learning",
+        "This is a learning session (talk, seminar, Lunch & Learn, vendor demo, deep dive) — " +
+            "prefer sections like Speakers, Key Takeaways, Learning Points, Follow-up Resources.",
+    ),
+    USER_INTERVIEW(
+        "User Interview",
+        "This is a user interview — prefer sections like Background, Pain Points, Feature Requests, Quotes.",
+    ),
     ;
 
     companion object {
         fun fromStored(value: String?): SummaryTemplate =
             entries.firstOrNull { it.name == value } ?: NONE
+    }
+}
+
+/** A user-defined summary template (AI-03): a display name plus the guidance sentence that
+ * steers the structuring prompt, exactly like a built-in's [SummaryTemplate.guidance]. */
+data class CustomSummaryTemplate(val name: String, val guidance: String)
+
+/**
+ * JSON codec for the user-defined template list (AI-03) — DataStore-backed, same fail-soft
+ * decode contract as the other codecs here: malformed input returns an empty list, entries
+ * missing either field are skipped.
+ */
+object CustomTemplatesJson {
+    fun encode(templates: List<CustomSummaryTemplate>): String {
+        val arr = JSONArray()
+        templates.forEach { arr.put(JSONObject().put("n", it.name).put("g", it.guidance)) }
+        return arr.toString()
+    }
+
+    fun decode(json: String?): List<CustomSummaryTemplate> {
+        if (json.isNullOrBlank()) return emptyList()
+        return runCatching {
+            val arr = JSONArray(json)
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                val name = o.optString("n").trim()
+                val guidance = o.optString("g").trim()
+                if (name.isBlank() || guidance.isBlank()) null else CustomSummaryTemplate(name, guidance)
+            }
+        }.getOrDefault(emptyList())
+    }
+}
+
+/**
+ * One selectable summary template — a built-in [SummaryTemplate] entry or a user-defined
+ * [CustomSummaryTemplate] (AI-03). [stored] is what gets persisted on the note and as the
+ * Settings default: the enum name for built-ins, `"custom:<name>"` for customs (the prefix
+ * can never collide with an enum name, and [SummaryTemplate.fromStored] already treats any
+ * unknown value as NONE, so old code paths stay safe).
+ */
+data class TemplateOption(
+    val stored: String,
+    val label: String,
+    val guidance: String,
+    val isCustom: Boolean,
+)
+
+object TemplateOptions {
+    private const val CUSTOM_PREFIX = "custom:"
+
+    fun customStored(name: String): String = CUSTOM_PREFIX + name
+
+    fun builtIns(): List<TemplateOption> =
+        SummaryTemplate.entries.map { TemplateOption(it.name, it.label, it.guidance, isCustom = false) }
+
+    /** Built-ins first, then the user's custom templates in saved order. */
+    fun all(customs: List<CustomSummaryTemplate>): List<TemplateOption> =
+        builtIns() + customs.map { TemplateOption(customStored(it.name), it.name, it.guidance, isCustom = true) }
+
+    /**
+     * Resolve a stored template value to the guidance sentence for the structuring prompt.
+     * Unknown values — including a custom template deleted after being set — fall back to
+     * [SummaryTemplate.NONE]'s guidance, same contract as [SummaryTemplate.fromStored].
+     */
+    fun guidanceFor(stored: String?, customs: List<CustomSummaryTemplate>): String {
+        if (stored != null && stored.startsWith(CUSTOM_PREFIX)) {
+            val name = stored.removePrefix(CUSTOM_PREFIX)
+            customs.firstOrNull { it.name == name }?.let { return it.guidance }
+            return SummaryTemplate.NONE.guidance
+        }
+        return SummaryTemplate.fromStored(stored).guidance
     }
 }
 

@@ -1,7 +1,7 @@
 package com.trailmix.app.data.db
 
 /**
- * REL-04 (v1.8.0): the Recently deleted recovery window. Deleted notes stay restorable
+ * REL-06 (v1.8.0): the Recently deleted recovery window. Deleted notes stay restorable
  * for one day, then the purge removes them for real.
  */
 object RecentlyDeleted {

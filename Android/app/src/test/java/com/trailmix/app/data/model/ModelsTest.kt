@@ -91,4 +91,45 @@ class ModelsTest {
         assertEquals(SummaryTemplate.LEARNING, SummaryTemplate.fromStored("LEARNING"))
         assertTrue(SummaryTemplate.entries.none { it.name == "SALES_PITCH" })
     }
+
+    // ── Custom summary templates (AI-03, v1.8.0) ────────────────────────────
+
+    @Test
+    fun `custom templates JSON round-trips and skips malformed entries`() {
+        val templates = listOf(
+            CustomSummaryTemplate("Sales call", "Prefer sections like Needs, Objections, Next Steps."),
+            CustomSummaryTemplate("Retro", "Prefer sections like Went Well, Didn't, Actions."),
+        )
+        assertEquals(templates, CustomTemplatesJson.decode(CustomTemplatesJson.encode(templates)))
+        assertEquals(emptyList<CustomSummaryTemplate>(), CustomTemplatesJson.decode(null))
+        assertEquals(emptyList<CustomSummaryTemplate>(), CustomTemplatesJson.decode("not json"))
+        // An entry missing its guidance is skipped, not crashed on.
+        assertEquals(
+            listOf(CustomSummaryTemplate("Kept", "Has guidance.")),
+            CustomTemplatesJson.decode("""[{"n":"Nameless"},{"n":"Kept","g":"Has guidance."}]"""),
+        )
+    }
+
+    @Test
+    fun `template options list built-ins first then customs with prefixed stored values`() {
+        val customs = listOf(CustomSummaryTemplate("Sales call", "Custom guidance."))
+        val options = TemplateOptions.all(customs)
+        assertEquals(SummaryTemplate.entries.size + 1, options.size)
+        assertEquals(SummaryTemplate.NONE.name, options.first().stored)
+        val custom = options.last()
+        assertEquals("custom:Sales call", custom.stored)
+        assertEquals("Sales call", custom.label)
+        assertTrue(custom.isCustom)
+    }
+
+    @Test
+    fun `guidance resolves for built-ins and customs and falls back to NONE when deleted`() {
+        val customs = listOf(CustomSummaryTemplate("Sales call", "Custom guidance."))
+        assertEquals(SummaryTemplate.ONE_ON_ONE.guidance, TemplateOptions.guidanceFor("ONE_ON_ONE", customs))
+        assertEquals("Custom guidance.", TemplateOptions.guidanceFor("custom:Sales call", customs))
+        // A stored custom whose template was since deleted degrades to the flat default.
+        assertEquals(SummaryTemplate.NONE.guidance, TemplateOptions.guidanceFor("custom:Gone", customs))
+        assertEquals(SummaryTemplate.NONE.guidance, TemplateOptions.guidanceFor(null, emptyList()))
+        assertEquals(SummaryTemplate.NONE.guidance, TemplateOptions.guidanceFor("SALES_PITCH", emptyList()))
+    }
 }

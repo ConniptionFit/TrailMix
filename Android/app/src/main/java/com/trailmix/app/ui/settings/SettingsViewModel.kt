@@ -7,7 +7,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.trailmix.app.data.ai.Recipe
 import com.trailmix.app.data.db.NotesRepository
+import com.trailmix.app.data.model.CustomSummaryTemplate
 import com.trailmix.app.data.model.SummaryTemplate
+import com.trailmix.app.data.model.TemplateOptions
 import com.trailmix.app.data.settings.SettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -40,9 +42,15 @@ class SettingsViewModel @Inject constructor(
     val exportLocationUri: StateFlow<String?> = settingsRepository.exportLocationUri
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
-    val defaultTemplate: StateFlow<SummaryTemplate> = settingsRepository.defaultSummaryTemplate
-        .map { SummaryTemplate.fromStored(it) }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SummaryTemplate.NONE)
+    /** The default template's STORED value (AI-03): enum name or `custom:<name>`. */
+    val defaultTemplate: StateFlow<String> = settingsRepository.defaultSummaryTemplate
+        .map { it ?: SummaryTemplate.NONE.name }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SummaryTemplate.NONE.name)
+
+    /** User-defined summary templates (AI-03). */
+    val customTemplates: StateFlow<List<CustomSummaryTemplate>> =
+        settingsRepository.customSummaryTemplates
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** ASR locale (AI-02) — null means "use the default" (`AsrLocales.default`). */
     val asrLocaleTag: StateFlow<String?> = settingsRepository.asrLocaleTag
@@ -104,9 +112,48 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { settingsRepository.clearExportLocation() }
     }
 
-    fun setDefaultTemplate(template: SummaryTemplate) {
+    fun setDefaultTemplate(stored: String) {
         viewModelScope.launch {
-            settingsRepository.setDefaultSummaryTemplate(if (template == SummaryTemplate.NONE) null else template.name)
+            settingsRepository.setDefaultSummaryTemplate(stored.takeIf { it != SummaryTemplate.NONE.name })
+        }
+    }
+
+    /**
+     * Create or update a custom summary template (AI-03) — same contract as [saveRecipe]:
+     * [originalName] replaces the old entry on rename, names colliding with a built-in
+     * template label are rejected with a hint. A rename also re-points the Settings
+     * default if it referenced the old name (a stale default would silently fall back to
+     * Flat at merge time).
+     */
+    fun saveTemplate(name: String, guidance: String, originalName: String? = null) {
+        val trimmedName = name.trim()
+        val trimmedGuidance = guidance.trim()
+        if (trimmedName.isBlank() || trimmedGuidance.isBlank()) return
+        if (SummaryTemplate.entries.any { it.label.equals(trimmedName, ignoreCase = true) }) {
+            _snackbarMessage.tryEmit("\"$trimmedName\" is a built-in template name — pick another")
+            return
+        }
+        viewModelScope.launch {
+            val current = settingsRepository.customSummaryTemplates.first()
+                .filterNot { it.name == originalName || it.name == trimmedName }
+            settingsRepository.setCustomSummaryTemplates(current + CustomSummaryTemplate(trimmedName, trimmedGuidance))
+            if (originalName != null && originalName != trimmedName &&
+                settingsRepository.defaultSummaryTemplate.first() == TemplateOptions.customStored(originalName)
+            ) {
+                settingsRepository.setDefaultSummaryTemplate(TemplateOptions.customStored(trimmedName))
+            }
+        }
+    }
+
+    /** Delete a custom template; a default pointing at it falls back to Flat explicitly. */
+    fun deleteTemplate(name: String) {
+        viewModelScope.launch {
+            settingsRepository.setCustomSummaryTemplates(
+                settingsRepository.customSummaryTemplates.first().filterNot { it.name == name },
+            )
+            if (settingsRepository.defaultSummaryTemplate.first() == TemplateOptions.customStored(name)) {
+                settingsRepository.setDefaultSummaryTemplate(null)
+            }
         }
     }
 

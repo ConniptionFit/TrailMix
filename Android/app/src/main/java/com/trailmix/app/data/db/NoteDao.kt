@@ -21,7 +21,7 @@ interface NoteDao {
     @Query("SELECT * FROM notes WHERE deletedAtEpochMs IS NULL ORDER BY createdAtEpochMs DESC")
     suspend fun getAll(): List<NoteEntity>
 
-    // ── Recently deleted (REL-04, v1.8.0) ──────────────────────────────────
+    // ── Recently deleted (REL-06, v1.8.0) ──────────────────────────────────
 
     @Query("SELECT * FROM notes WHERE deletedAtEpochMs IS NOT NULL ORDER BY deletedAtEpochMs DESC")
     fun observeDeleted(): Flow<List<NoteEntity>>

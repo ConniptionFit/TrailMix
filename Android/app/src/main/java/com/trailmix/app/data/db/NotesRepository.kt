@@ -177,7 +177,7 @@ class NotesRepository @Inject constructor(
     }
 
     /**
-     * Delete a note (CAP-05, reworked by REL-04 in v1.8.0 to be a soft delete): the note
+     * Delete a note (CAP-05, reworked by REL-06 in v1.8.0 to be a soft delete): the note
      * moves to Recently deleted for [RecentlyDeleted.RECOVERY_WINDOW_MS] (1 day) instead of
      * vanishing, hidden from every normal surface but restorable. The tracked export file
      * IS removed immediately — a deleted note shouldn't linger in the user's export folder —
@@ -195,11 +195,11 @@ class NotesRepository @Inject constructor(
         return DeleteResult(filesDeleted = filesOk)
     }
 
-    /** Notes currently in Recently deleted, newest deletion first (REL-04). */
+    /** Notes currently in Recently deleted, newest deletion first (REL-06). */
     fun observeDeletedNotes(): Flow<List<NoteEntity>> = noteDao.observeDeleted()
 
     /**
-     * Bring a soft-deleted note back (REL-04). Its export file was removed at delete time,
+     * Bring a soft-deleted note back (REL-06). Its export file was removed at delete time,
      * so the restore re-exports it fresh into the configured location (silent no-op when
      * no location is configured, as always).
      */
@@ -216,7 +216,7 @@ class NotesRepository @Inject constructor(
     }
 
     /**
-     * Hard-delete every soft-deleted note older than the 1-day recovery window (REL-04).
+     * Hard-delete every soft-deleted note older than the 1-day recovery window (REL-06).
      * Called opportunistically from the Home and Recently deleted screens — no background
      * job needed for a purely local cleanup with day-scale granularity.
      */
