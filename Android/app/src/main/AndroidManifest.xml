@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Local-only by construction: this app deliberately has NO INTERNET
+         permission. Audio is consumed in memory by the on-device recognizer
+         and never written to disk. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- The ML Kit GenAI client library declares these, but model downloads are
+         performed by the separate AICore system app, not this process. Strip
+         them so the OS enforces our local-only guarantee. -->
+    <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" tools:node="remove" />
+    <!-- Optional, requested at runtime only when the user taps the Home
+         "Upcoming" card. Read-only. -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <!-- Keeps a capture session alive when the user switches to the meeting
+         or video app. mediaProjection covers the opt-in device-audio lane,
+         which only ever activates after the system consent dialog. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+
+    <application
+        android:name=".TrailMixApp"
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.TrailMix">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:theme="@style/Theme.TrailMix"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service
+            android:name=".service.CaptureService"
+            android:exported="false"
+            android:foregroundServiceType="microphone|mediaProjection" />
+    </application>
+</manifest>
