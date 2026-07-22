@@ -138,9 +138,11 @@ class OnDeviceAiProcessor @Inject constructor() {
             val title = lines.first().removePrefix("#").trim().take(80)
             val body = lines.drop(1).joinToString(" ")
             val segments = attributeProvenance(splitSentences(body), typedFragments, transcriptText)
+            // Structured summary from the model, or the deterministic structurer as a net so
+            // a bad/non-JSON model reply still yields sectioned output, never a flat wall.
             val structured = runCatching {
                 generateStructuredSummary(typedFragments, transcriptText, attendees, templateGuidance)
-            }.getOrNull()
+            }.getOrNull() ?: DeterministicSummary.from(typedFragments, transcriptText)
 
             MergeResult(
                 title = title.ifBlank { defaultTitle(createdAtEpochMs) },
@@ -318,12 +320,16 @@ class OnDeviceAiProcessor @Inject constructor() {
                 add(NoteSegment(it.trim(), Provenance.TRANSCRIPT))
             }
         }
+        // Even with no AI, structure the content deterministically so the default note is
+        // Key Topics + Action Items rather than a flat block (null → flat only for tiny notes).
+        val transcriptText = transcript.joinToString("\n") { it.text }
         return MergeResult(
             title = defaultTitle(createdAtEpochMs),
             segments = segments.ifEmpty {
                 listOf(NoteSegment("Empty capture.", Provenance.FRAGMENT))
             },
             usedOnDeviceAi = false,
+            structuredSummary = DeterministicSummary.from(typedFragments, transcriptText),
         )
     }
 

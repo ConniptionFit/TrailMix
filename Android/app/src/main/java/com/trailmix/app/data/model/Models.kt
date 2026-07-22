@@ -86,7 +86,8 @@ object StringListJson {
 enum class SummaryTemplate(val label: String, val guidance: String) {
     NONE(
         "Flat (no template)",
-        "Group the remaining content into whatever topics naturally emerge.",
+        "Group the discussion into a few clearly-named topic sections and keep any tasks " +
+            "or commitments in a separate Action Items list.",
     ),
     ONE_ON_ONE(
         "1:1",
