@@ -20,8 +20,27 @@ top-level folders, each a self-contained project. Only `Android/` exists today.
 
 ## Install (Android)
 
-There is **no Play Store distribution** — this is a sideload/debug build only, not
-published anywhere.
+There is **no Play Store distribution** — TrailMix is sideloaded. It deliberately has
+**no INTERNET permission**, so it can't update itself; distribution and updates go
+through GitHub Releases.
+
+### Recommended: install + auto-update via Obtainium
+
+Signed APKs are published on the [Releases page](https://github.com/ConniptionFit/TrailMix/releases).
+The easiest way to stay current without the app ever touching the network is
+[**Obtainium**](https://github.com/ImranR98/Obtainium) — a free, open-source app that
+watches a GitHub repo and installs new releases:
+
+1. Install Obtainium (from F-Droid or its own GitHub Releases).
+2. **Add App** → paste `https://github.com/ConniptionFit/TrailMix` → Obtainium finds the
+   APK asset and installs it.
+3. It notifies you (and can auto-install) whenever a new TrailMix release is cut. TrailMix
+   itself never gains network access — Obtainium does all the fetching.
+
+Or just download the latest `.apk` from Releases and install it by hand (you'll need to
+allow your file manager to install unknown apps).
+
+### Build from source
 
 **Prerequisites:**
 - JDK 17
@@ -137,12 +156,15 @@ cd Android
    plain text — provenance tinting no longer applies — and is marked *edited*). **Resume**
    reopens capture seeded with this note's transcript and fragments, and re-merges back
    into the same note when you finish. A **Share** icon sends the note's Markdown export
-   through the standard Android share sheet. When the on-device AI produced a structured
-   summary, the body shows **Highlights**, expandable/collapsible **topic sections**, and
-   an **Action Items** checklist (owner/deadline when statable) instead of the flat text —
-   tap the small "ⓘ" next to any bullet to see the transcript/fragment sentence it came
-   from, and use **Reorder sections** to move topic sections up/down (the new order
-   persists and carries into exports).
+   through the standard Android share sheet. Notes are shown as a **structured summary** —
+   **Highlights**, expandable/collapsible **topic sections**, and an **Action Items**
+   checklist (owner/deadline when statable) — rather than a flat block of text. When the
+   on-device AI is available it groups the content by topic; when it isn't (or returns
+   something unusable), a rule-based fallback still lays the note out as *Your notes* /
+   *Key topics* bullets plus a detected *Action Items* list, so the default is readable
+   either way. Tap the small "ⓘ" next to any bullet to see the transcript/fragment sentence
+   it came from, and use **Reorder sections** to move topic sections up/down (the new order
+   persists and carries into exports). Very short notes stay as plain text.
    - **Upcoming meetings** — tap the calendar label on Home to see the next 7 days; tap a
      meeting to capture it (a meeting more than 5 minutes out asks first).
 4. **Transcript** — full-screen, timestamp-labeled lines (no speaker diarization on-device
