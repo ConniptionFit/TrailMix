@@ -36,7 +36,7 @@ class NoteDetailViewModel @Inject constructor(
      */
     val activeCapture: StateFlow<ActiveCaptureUi?> =
         combine(captureSessionManager.hasActiveSession, captureSessionManager.state) { active, state ->
-            if (active) ActiveCaptureUi(state.elapsedLabel, state.meetingTitle) else null
+            if (active) ActiveCaptureUi(state.elapsedLabel, state.meetingTitle, state.paused) else null
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     fun toggleShowSources() {

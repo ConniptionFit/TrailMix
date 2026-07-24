@@ -20,6 +20,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <!-- CAP-12: required on Android 13+ for the capture notification (timer,
+         pause/stop actions, and the "still recording?" nudge) to actually display —
+         requested at runtime when a capture starts. A denial doesn't block recording,
+         it just means no visible notification (the FGS keeps the mic alive either way). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:name=".TrailMixApp"

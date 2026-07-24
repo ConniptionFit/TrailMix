@@ -24,7 +24,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /** What the Home in-progress-transcription chip needs to render (CAP-10). */
-data class ActiveCaptureUi(val elapsedLabel: String, val meetingTitle: String?)
+data class ActiveCaptureUi(val elapsedLabel: String, val meetingTitle: String?, val paused: Boolean = false)
 
 @HiltViewModel
 class HomeViewModel @Inject constructor(
@@ -103,7 +103,7 @@ class HomeViewModel @Inject constructor(
     /** Non-null while a capture is recording/merging anywhere in the app — the chip source. */
     val activeCapture: StateFlow<ActiveCaptureUi?> =
         combine(captureSessionManager.hasActiveSession, captureSessionManager.state) { active, state ->
-            if (active) ActiveCaptureUi(state.elapsedLabel, state.meetingTitle) else null
+            if (active) ActiveCaptureUi(state.elapsedLabel, state.meetingTitle, state.paused) else null
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     private val _snackbarMessage = MutableSharedFlow<String>(extraBufferCapacity = 1)

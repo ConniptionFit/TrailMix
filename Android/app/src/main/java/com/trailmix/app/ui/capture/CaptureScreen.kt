@@ -3,6 +3,7 @@ package com.trailmix.app.ui.capture
 import android.Manifest
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -44,6 +45,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -93,7 +96,22 @@ fun CaptureScreen(
         if (granted) viewModel.startRecording() else onCancel()
     }
 
+    // CAP-12: the persistent capture notification (timer, pause/stop actions) needs
+    // POST_NOTIFICATIONS on Android 13+, or the foreground service runs with nothing
+    // visible — silently, which is exactly the "forgotten in the background" problem
+    // this feature exists to fix. Best-effort: a denial doesn't block starting the
+    // capture (mic access is the only hard requirement), it just means no notification.
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { }
+
     LaunchedEffect(Unit) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
         if (micGranted) {
             viewModel.startRecording()
         } else {
@@ -109,9 +127,10 @@ fun CaptureScreen(
     // Back while the transcript is expanded just collapses it — the recording
     // keeps running (it only stops on End & Merge or an explicit Discard).
     BackHandler(enabled = transcriptExpanded) { transcriptExpanded = false }
-    // Otherwise Back asks before discarding an in-progress recording.
+    // Otherwise Back asks before discarding an in-progress recording. A paused session
+    // still has an un-saved transcript sitting in memory, so it confirms too (CAP-12).
     BackHandler(enabled = !state.merging && !transcriptExpanded) {
-        if (state.recording) confirmDiscard = true else { viewModel.cancel(); onCancel() }
+        if (state.recording || state.paused) confirmDiscard = true else { viewModel.cancel(); onCancel() }
     }
 
     if (confirmDiscard) {
@@ -228,6 +247,51 @@ fun CaptureScreen(
         )
     }
 
+    // CAP-12: the call this capture started during just ended (AudioManager left
+    // call/communication mode). A matching notification fires from CaptureService in
+    // case the app isn't foregrounded when this happens — this dialog is the in-app
+    // echo of the same one-shot event.
+    if (state.callEndedPrompt) {
+        AlertDialog(
+            onDismissRequest = { viewModel.consumeCallEndedPrompt() },
+            containerColor = c.card,
+            title = { Text("Call ended", color = c.text, fontSize = 17.sp) },
+            text = {
+                Text(
+                    "The call this note was tracking just ended. Finish and save it now, " +
+                        "or keep it running — you can pause and come back to it later.",
+                    color = c.dim,
+                    fontSize = 13.5.sp,
+                    lineHeight = 19.sp,
+                )
+            },
+            confirmButton = {
+                Text(
+                    text = "Finish now",
+                    color = c.amber,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .clickable {
+                            viewModel.consumeCallEndedPrompt()
+                            viewModel.endAndMerge(onMerged)
+                        }
+                        .padding(8.dp),
+                )
+            },
+            dismissButton = {
+                Text(
+                    text = "Finish later",
+                    color = c.dim,
+                    fontSize = 14.sp,
+                    modifier = Modifier
+                        .clickable { viewModel.consumeCallEndedPrompt() }
+                        .padding(8.dp),
+                )
+            },
+        )
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -258,10 +322,20 @@ fun CaptureScreen(
                 modifier = Modifier
                     .size(9.dp)
                     .clip(CircleShape)
-                    .background(if (state.recording) c.recordingRed else c.dim),
+                    .background(
+                        when {
+                            state.recording -> c.recordingRed
+                            state.paused -> c.amber
+                            else -> c.dim
+                        },
+                    ),
             )
             Text(
-                text = if (state.merging) "Merging on-device…" else "Recording · ${state.elapsedLabel}",
+                text = when {
+                    state.merging -> "Merging on-device…"
+                    state.paused -> "Paused · ${state.elapsedLabel}"
+                    else -> "Recording · ${state.elapsedLabel}"
+                },
                 color = c.dim,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Medium,
@@ -277,6 +351,17 @@ fun CaptureScreen(
                 )
             }
             Spacer(modifier = Modifier.weight(1f))
+            // CAP-12: same pause/resume the notification's actions drive — releases the
+            // mic without ending the session. Hidden while merging (nothing to pause).
+            if (state.recording || state.paused) {
+                IconButton(onClick = { if (state.paused) viewModel.resume() else viewModel.pause() }) {
+                    Icon(
+                        imageVector = if (state.paused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                        contentDescription = if (state.paused) "Resume recording" else "Pause recording",
+                        tint = c.dim,
+                    )
+                }
+            }
             CaptureMenu(
                 state = state,
                 deviceAudioSupported = viewModel.deviceAudioSupported,
