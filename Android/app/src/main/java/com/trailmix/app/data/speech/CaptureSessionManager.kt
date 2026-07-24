@@ -25,9 +25,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -60,6 +63,7 @@ class CaptureSessionManager @Inject constructor(
     private val meetingSource: UpcomingMeetingSource,
 ) {
     private val scope = CoroutineScope(SupervisorJob())
+    private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
     private val _state = MutableStateFlow(CaptureUiState())
     val state: StateFlow<CaptureUiState> = _state.asStateFlow()
@@ -70,21 +74,37 @@ class CaptureSessionManager @Inject constructor(
     private val _liveLines = MutableStateFlow<List<TranscriptLine>>(emptyList())
     val liveLines: StateFlow<List<TranscriptLine>> = _liveLines.asStateFlow()
 
-    /** True while a session (recording or merging) is active — drives the Home chip. */
+    /** True while a session (recording, paused, or merging) is active — drives the Home chip. */
     val hasActiveSession: StateFlow<Boolean> = state
-        .map { it.recording || it.merging }
+        .map { it.recording || it.paused || it.merging }
         .stateIn(scope, SharingStarted.Eagerly, false)
+
+    /** CAP-12: fires while a capture has been actively recording (not paused) past
+     * [BUMP_INTERVAL_MS] — [CaptureService] turns each emission into a "still recording?"
+     * notification. Re-arms every interval as long as recording continues unpaused. */
+    private val _bumpNudge = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val bumpNudge: SharedFlow<Unit> = _bumpNudge.asSharedFlow()
+
+    /** CAP-12: fires once when the phone call this capture started during appears to have
+     * ended while still recording, so [CaptureService] can post a prompt even if the app
+     * isn't foregrounded. Deliberately reuses the same no-permission AudioManager.mode read
+     * [detectMeetingContext] already does for `capturedInCall` — never READ_PHONE_STATE. */
+    private val _callEndedEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val callEndedEvents: SharedFlow<Unit> = _callEndedEvents.asSharedFlow()
 
     private val transcriptLines = mutableListOf<TranscriptLine>()
     private var startedAtMs = 0L
     private var listenJob: Job? = null
     private var tickerJob: Job? = null
+    private var bumpJob: Job? = null
     private var capturedInCall = false
     private var silentSeconds = 0
     private var priorDurationMs = 0L
     private var resumeCreatedAt = 0L
     private var resumeNoteId = -1L
     private var attendees: List<String> = emptyList()
+    private var watchingForCallEnd = false
+    private var callEndedPromptFired = false
 
     // AI-03: the STORED template value — a SummaryTemplate enum name or "custom:<name>".
     // Resolved to its prompt-guidance sentence only at merge time (TemplateOptions.guidanceFor),
@@ -92,14 +112,15 @@ class CaptureSessionManager @Inject constructor(
     private var template: String = SummaryTemplate.NONE.name
 
     /** Which existing note (if any) the *currently active* session is attached to. */
-    val activeResumeNoteId: Long get() = resumeNoteId.takeIf { state.value.recording || state.value.merging } ?: -1L
+    val activeResumeNoteId: Long
+        get() = resumeNoteId.takeIf { state.value.recording || state.value.paused || state.value.merging } ?: -1L
 
     /**
      * Begin a brand-new session. No-ops if a session is already active — the caller
      * (CaptureViewModel) should treat that as "re-attach and just observe" instead.
      */
     fun beginSession(resumeNoteId: Long, meetingTitle: String?) {
-        if (_state.value.recording || _state.value.merging) return
+        if (_state.value.recording || _state.value.paused || _state.value.merging) return
         this.resumeNoteId = resumeNoteId
         fragments.value = ""
         transcriptLines.clear()
@@ -109,6 +130,7 @@ class CaptureSessionManager @Inject constructor(
         capturedInCall = false
         attendees = emptyList()
         template = SummaryTemplate.NONE.name
+        callEndedPromptFired = false
         _state.value = CaptureUiState(meetingTitle = meetingTitle)
         if (resumeNoteId <= 0) {
             // Fresh note: seed the template from the user's Settings default (UX-02);
@@ -117,16 +139,25 @@ class CaptureSessionManager @Inject constructor(
                 settingsRepository.defaultSummaryTemplate.first()?.let { template = it }
             }
         }
-        startRecording()
+        startRecording(applyPriorResume = true)
     }
 
-    private fun startRecording() {
+    /**
+     * [applyPriorResume] only replays a saved note's content into the in-memory buffers
+     * (CAP-07's resume-into-note flow) — it must be `false` when this is really [resume]
+     * waking a *paused* session back up, or the transcript/fragments captured since the
+     * pause would be overwritten with the stale on-disk copy.
+     */
+    private fun startRecording(applyPriorResume: Boolean) {
         startedAtMs = System.currentTimeMillis()
         refreshInputOptions()
-        _state.value = _state.value.copy(recording = true)
+        val mode = audioManager.mode
+        watchingForCallEnd = !callEndedPromptFired &&
+            (mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION)
+        _state.value = _state.value.copy(recording = true, paused = false)
         CaptureService.start(appContext)
         listenJob = scope.launch {
-            if (resumeNoteId > 0) applyResume()
+            if (applyPriorResume && resumeNoteId > 0) applyResume()
             detectMeetingContext()
             val selected = _state.value.inputOptions
                 .getOrNull(_state.value.selectedInputIndex)?.device
@@ -159,6 +190,15 @@ class CaptureSessionManager @Inject constructor(
                     peak < SILENCE_PEAK -> silentSeconds + 1
                     else -> 0
                 }
+                if (watchingForCallEnd) {
+                    val callMode = audioManager.mode
+                    if (callMode != AudioManager.MODE_IN_CALL && callMode != AudioManager.MODE_IN_COMMUNICATION) {
+                        watchingForCallEnd = false
+                        callEndedPromptFired = true
+                        _state.value = _state.value.copy(callEndedPrompt = true)
+                        _callEndedEvents.emit(Unit)
+                    }
+                }
                 _state.value = _state.value.copy(
                     elapsedLabel = elapsedLabel(),
                     deviceAudioActive = engine.deviceAudioActive.value,
@@ -167,6 +207,43 @@ class CaptureSessionManager @Inject constructor(
                 delay(1_000)
             }
         }
+        armBumpTimer()
+    }
+
+    /**
+     * CAP-12: releases the mic and freezes the elapsed timer without ending the
+     * session — the transcript so far, typed fragments, and note identity all stay in
+     * memory so [resume] can pick straight back up. Driven by the ongoing notification's
+     * Pause action (and an equivalent in-app control).
+     */
+    fun pause() {
+        if (!_state.value.recording) return
+        val frozenLabel = elapsedLabel()
+        priorDurationMs += System.currentTimeMillis() - startedAtMs
+        listenJob?.cancel()
+        listenJob = null
+        tickerJob?.cancel()
+        tickerJob = null
+        disarmBumpTimer()
+        engine.endInput()
+        engine.detachDeviceAudio()
+        silentSeconds = 0
+        _state.value = _state.value.copy(
+            recording = false,
+            paused = true,
+            livePartial = "",
+            elapsedLabel = frozenLabel,
+            deviceAudioActive = false,
+            deviceAudioSilent = false,
+        )
+    }
+
+    /** CAP-12: the Resume half of [pause] — restarts the mic/engine and the elapsed
+     * timer continues from where it was frozen (via `priorDurationMs`), reusing the same
+     * transcript/fragment buffers rather than starting a new session. */
+    fun resume() {
+        if (!_state.value.paused) return
+        startRecording(applyPriorResume = false)
     }
 
     fun requestDeviceAudio() {
@@ -207,7 +284,6 @@ class CaptureSessionManager @Inject constructor(
     }
 
     private fun detectMeetingContext() {
-        val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         capturedInCall = capturedInCall ||
             audioManager.mode == AudioManager.MODE_IN_CALL ||
             audioManager.mode == AudioManager.MODE_IN_COMMUNICATION
@@ -256,8 +332,10 @@ class CaptureSessionManager @Inject constructor(
 
     fun endAndMerge(onDone: (Long) -> Unit) {
         if (_state.value.merging) return
+        // Must read before flipping `recording` below — currentDurationMs() branches on
+        // it (paused vs. still-running) to avoid double-counting the paused gap.
+        val durationMs = currentDurationMs()
         _state.value = _state.value.copy(merging = true, recording = false)
-        val durationMs = priorDurationMs + (System.currentTimeMillis() - startedAtMs)
         scope.launch {
             engine.endInput()
             withTimeoutOrNull(5_000) { listenJob?.join() }
@@ -331,6 +409,12 @@ class CaptureSessionManager @Inject constructor(
         resumeNoteId = -1L
     }
 
+    /** CAP-12: clears the one-shot call-ended dialog/notification without ending the
+     * session — "finish later" just keeps recording. */
+    fun consumeCallEndedPrompt() {
+        _state.value = _state.value.copy(callEndedPrompt = false)
+    }
+
     private fun refreshInputOptions() {
         val options = buildList {
             add(InputOption("Auto (follow system)", null))
@@ -360,25 +444,56 @@ class CaptureSessionManager @Inject constructor(
         listenJob = null
         tickerJob?.cancel()
         tickerJob = null
+        disarmBumpTimer()
         engine.detachDeviceAudio()
         CaptureService.stop(appContext)
         silentSeconds = 0
         _state.value = _state.value.copy(
             recording = false,
+            paused = false,
             livePartial = "",
             deviceAudioActive = false,
             deviceAudioSilent = false,
         )
     }
 
+    /** Elapsed time in ms as of right now: frozen at `priorDurationMs` while paused
+     * (or merging, or idle) — only still-recording adds the live `(now - startedAtMs)`
+     * delta on top. Anything reading the timer (notification, End & Merge's saved
+     * duration, the elapsed label) goes through this single branch. */
+    private fun currentDurationMs(): Long =
+        if (_state.value.recording) priorDurationMs + (System.currentTimeMillis() - startedAtMs) else priorDurationMs
+
     fun elapsedLabel(): String {
-        val elapsed = priorDurationMs + (System.currentTimeMillis() - startedAtMs)
-        val sec = (elapsed / 1000).coerceAtLeast(0)
+        val sec = (currentDurationMs() / 1000).coerceAtLeast(0)
         return String.format(Locale.ROOT, "%d:%02d", sec / 60, sec % 60)
+    }
+
+    /** CAP-12: (re)starts the "still recording?" countdown. Called every time recording
+     * actually starts or resumes; [pause]/[stopCapture] cancel it — a paused or ended
+     * session should never nag. */
+    private fun armBumpTimer() {
+        bumpJob?.cancel()
+        bumpJob = scope.launch {
+            while (isActive) {
+                delay(BUMP_INTERVAL_MS)
+                _bumpNudge.emit(Unit)
+            }
+        }
+    }
+
+    private fun disarmBumpTimer() {
+        bumpJob?.cancel()
+        bumpJob = null
     }
 
     private companion object {
         const val SILENCE_PEAK = 64
         const val SILENT_HINT_AFTER_S = 5
+
+        // CAP-12: how long a capture can run unpaused before the "still recording?"
+        // nudge fires (and re-fires every interval after that). Not yet user-configurable
+        // — see the Future Improvements row for making this a Settings value.
+        const val BUMP_INTERVAL_MS = 60 * 60 * 1_000L
     }
 }

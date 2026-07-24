@@ -196,7 +196,8 @@ fun NoteDetailScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "Recording" + (active.meetingTitle?.let { " · $it" } ?: ""),
+                        text = (if (active.paused) "Paused" else "Recording") +
+                            (active.meetingTitle?.let { " · $it" } ?: ""),
                         color = Color.White,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,

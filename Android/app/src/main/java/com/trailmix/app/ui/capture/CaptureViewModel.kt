@@ -27,6 +27,10 @@ enum class DeviceAudioPrompt { NONE, EXPLAIN_THEN_ASK, ASK }
 
 data class CaptureUiState(
     val recording: Boolean = false,
+    /** CAP-12: mic/engine torn down but the session (transcript so far, fragments,
+     * elapsed time) is kept alive — distinct from [recording] so a paused session still
+     * counts as "active" everywhere that matters (Home chip, back-confirm, re-attach). */
+    val paused: Boolean = false,
     val elapsedLabel: String = "0:00",
     val livePartial: String = "",
     val lastFinalLine: String = "",
@@ -41,6 +45,10 @@ data class CaptureUiState(
     val deviceAudioPrompt: DeviceAudioPrompt = DeviceAudioPrompt.NONE,
     /** Calendar event this capture is for (from the Home card or detected live). */
     val meetingTitle: String? = null,
+    /** CAP-12: one-shot — the call this capture started during appears to have ended
+     * (AudioManager left call/communication mode) while still recording. Screen shows a
+     * "finish now or later?" dialog; [CaptureSessionManager.consumeCallEndedPrompt] clears it. */
+    val callEndedPrompt: Boolean = false,
 )
 
 /**
@@ -77,12 +85,14 @@ class CaptureViewModel @Inject constructor(
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TemplateOptions.builtIns())
 
     /** True if we're observing a session that was already running before this VM existed. */
-    val reattached: Boolean get() = manager.state.value.recording || manager.state.value.merging
+    val reattached: Boolean
+        get() = manager.state.value.recording || manager.state.value.paused || manager.state.value.merging
 
     fun startRecording() {
         // Already active (either a fresh call racing init, or we navigated back to an
-        // in-progress session) — nothing to start, just keep observing.
-        if (manager.state.value.recording || manager.state.value.merging) return
+        // in-progress — possibly paused (CAP-12) — session) — nothing to start, just
+        // keep observing.
+        if (manager.state.value.recording || manager.state.value.paused || manager.state.value.merging) return
         manager.beginSession(requestedResumeNoteId, requestedTitle)
     }
 
@@ -94,6 +104,13 @@ class CaptureViewModel @Inject constructor(
     fun selectInput(index: Int) = manager.selectInput(index)
     fun onProjectionGranted(resultCode: Int, data: Intent) = manager.onProjectionGranted(resultCode, data)
     fun disableDeviceAudio() = manager.disableDeviceAudio()
+
+    /** CAP-12: same pause/resume the notification's actions drive — releases the mic
+     * without ending the session so the elapsed timer freezes and transcript/fragments
+     * are kept for later. */
+    fun pause() = manager.pause()
+    fun resume() = manager.resume()
+    fun consumeCallEndedPrompt() = manager.consumeCallEndedPrompt()
 
     fun endAndMerge(onDone: (Long) -> Unit) = manager.endAndMerge(onDone)
 
