@@ -5,6 +5,7 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import com.trailmix.app.data.export.NoteExporter
 import com.trailmix.app.data.model.NoteSegment
+import com.trailmix.app.data.model.Provenance
 import com.trailmix.app.data.model.SegmentsJson
 import com.trailmix.app.data.model.StringListJson
 import com.trailmix.app.data.model.StructuredSummary
@@ -308,7 +309,16 @@ fun NoteEntity.toMarkdown(recipeOutputs: List<Pair<String, String>> = emptyList(
     val summary = structuredSummary
     when {
         override != null -> appendLine(override.trim())
-        summary != null -> appendStructuredSummary(summary)
+        summary != null -> {
+            // AI-05: the exported file is the copy the user actually reads weeks later, so
+            // provenance travels with it instead of living only as on-screen tinting.
+            // `showSources` (previously inert for structured notes) is the opt-out.
+            if (showSources && summary.hasAnnotations) {
+                appendLine(SOURCE_LEGEND)
+                appendLine()
+            }
+            appendStructuredSummary(summary, annotate = showSources)
+        }
         else -> segments.forEach { appendLine(it.text.trim()) }
     }
 
@@ -330,15 +340,46 @@ fun NoteEntity.toMarkdown(recipeOutputs: List<Pair<String, String>> = emptyList(
     }
 }.trim()
 
-private fun StringBuilder.appendStructuredSummary(summary: com.trailmix.app.data.model.StructuredSummary) {
+/**
+ * One-line key for the `[you]` / `[mm:ss]` markers, emitted above an annotated body so the
+ * exported file explains itself without the app.
+ */
+private const val SOURCE_LEGEND =
+    "> **Sources:** `[you]` = your typed note · `[mm:ss]` = spoken, at that point in the recording"
+
+/** True when anything in the summary can actually carry a marker worth explaining. */
+private val com.trailmix.app.data.model.StructuredSummary.hasAnnotations: Boolean
+    get() = highlights.isNotEmpty() || sections.any { it.bullets.isNotEmpty() } || actionItems.isNotEmpty()
+
+/**
+ * Provenance marker for one bullet (AI-05): the capture offset when it was spoken, `[you]`
+ * when it came from the user's own typed fragments, `[transcript]` when it was heard but
+ * couldn't be traced to a specific moment.
+ */
+private fun sourceTag(source: Provenance, timestampLabel: String?): String = when {
+    source == Provenance.FRAGMENT -> "**`[you]`** "
+    timestampLabel != null -> "**`[$timestampLabel]`** "
+    else -> "**`[transcript]`** "
+}
+
+private fun StringBuilder.appendStructuredSummary(
+    summary: com.trailmix.app.data.model.StructuredSummary,
+    annotate: Boolean,
+) {
+    fun tag(source: Provenance, label: String?) = if (annotate) sourceTag(source, label) else ""
+
     if (summary.highlights.isNotEmpty()) {
         appendLine("## Highlights")
-        summary.highlights.forEach { appendLine("- ${it.text.trim()}") }
+        summary.highlights.forEach {
+            appendLine("- ${tag(it.source, it.timestampLabel)}${it.text.trim()}")
+        }
         appendLine()
     }
     summary.sections.forEach { section ->
         appendLine("## ${section.heading}")
-        section.bullets.forEach { appendLine("- ${it.text.trim()}") }
+        section.bullets.forEach {
+            appendLine("- ${tag(it.source, it.timestampLabel)}${it.text.trim()}")
+        }
         appendLine()
     }
     if (summary.actionItems.isNotEmpty()) {
@@ -348,7 +389,7 @@ private fun StringBuilder.appendStructuredSummary(summary: com.trailmix.app.data
                 item.owner?.let { append(" — $it") }
                 item.deadline?.let { append(" (due $it)") }
             }
-            appendLine("- [ ] ${item.text.trim()}$suffix")
+            appendLine("- [ ] ${tag(item.source, item.timestampLabel)}${item.text.trim()}$suffix")
         }
     }
 }

@@ -74,6 +74,19 @@ object StringListJson {
 }
 
 /**
+ * How a session is shaped, which decides how the *deterministic* structurer treats it (AI-05).
+ *
+ * This is not cosmetic. In a [DISCUSSION] the participants commit to things, so imperative
+ * language ("we'll send that", "you need to") is genuinely an action item. In a
+ * [PRESENTATION] the same language is the speaker teaching — "you should index that column",
+ * "let's look at the next benchmark" — and treating it as a task both floods the action list
+ * and, because cue-matched sentences are lifted *out* of the topic sections, guts the notes.
+ * Under [PRESENTATION] only the listener's own typed commitments and explicit spoken markers
+ * ("action item", "to-do") count.
+ */
+enum class SummaryStyle { DISCUSSION, PRESENTATION }
+
+/**
  * Pre-generated structuring templates that steer [StructuredSummary] generation (UX-02).
  * UX-05 (v1.7.0): LEARNING replaced SALES_PITCH — old notes that stored "SALES_PITCH"
  * still load fine ([fromStored] falls back to NONE for any retired/unknown value; the
@@ -82,8 +95,16 @@ object StringListJson {
  * here from OnDeviceAiProcessor so Settings can show each template's actual logic, and
  * user-defined templates ([CustomSummaryTemplate]) now sit alongside these built-ins via
  * [TemplateOption].
+ * AI-05 (v1.10.0): [style] — templates now also steer the zero-AI deterministic path, so
+ * picking "Conference talk" changes the note even on a device with no Gemini Nano. Before
+ * this, `guidance` was spliced into the model prompt and nowhere else, which meant template
+ * choice was silently inert on exactly the fallback path the app promises to work on.
  */
-enum class SummaryTemplate(val label: String, val guidance: String) {
+enum class SummaryTemplate(
+    val label: String,
+    val guidance: String,
+    val style: SummaryStyle = SummaryStyle.DISCUSSION,
+) {
     NONE(
         "Flat (no template)",
         "Group the discussion into a few clearly-named topic sections and keep any tasks " +
@@ -101,6 +122,18 @@ enum class SummaryTemplate(val label: String, val guidance: String) {
         "Learning",
         "This is a learning session (talk, seminar, Lunch & Learn, vendor demo, deep dive) — " +
             "prefer sections like Speakers, Key Takeaways, Learning Points, Follow-up Resources.",
+        SummaryStyle.PRESENTATION,
+    ),
+    PRESENTATION(
+        "Conference talk",
+        "This is a conference talk or presentation with one speaker and an audience — the " +
+            "listener is taking notes, not participating. Track the argument as it develops: " +
+            "prefer sections named for the topic being covered, in the order the speaker " +
+            "covered them. Capture claims, numbers, definitions, and named tools or papers. " +
+            "Treat the speaker's instructional phrasing (\"you should\", \"let's look at\") as " +
+            "content, NOT as action items — only the listener's own typed commitments and " +
+            "explicitly announced action items belong in the Action Items list.",
+        SummaryStyle.PRESENTATION,
     ),
     USER_INTERVIEW(
         "User Interview",
@@ -183,6 +216,18 @@ object TemplateOptions {
         }
         return SummaryTemplate.fromStored(stored).guidance
     }
+
+    /**
+     * Resolve a stored template value to the [SummaryStyle] the deterministic structurer
+     * should use (AI-05). Custom templates are always [SummaryStyle.DISCUSSION]: their
+     * guidance is free text meant for the model, and inferring intent from it would be a
+     * guess. Unknown/retired values degrade to the built-in default, same contract as
+     * [guidanceFor].
+     */
+    fun styleFor(stored: String?, customs: List<CustomSummaryTemplate>): SummaryStyle {
+        if (stored != null && stored.startsWith(CUSTOM_PREFIX)) return SummaryStyle.DISCUSSION
+        return SummaryTemplate.fromStored(stored).style
+    }
 }
 
 /** One bullet in a structured summary, with the provenance excerpt it was attributed from. */
@@ -191,6 +236,13 @@ data class SummaryBullet(
     val source: Provenance,
     /** The original transcript/fragment sentence this bullet was distilled from, if found. */
     val sourceExcerpt: String? = null,
+    /**
+     * `mm:ss` capture offset of the transcript line this came from (AI-05) — null for bullets
+     * from typed fragments (which have no position in the audio) and for AI-distilled bullets
+     * that couldn't be traced to one line. Renders as a source annotation on screen and in the
+     * exported Markdown, and is what makes a claim in a 45-minute talk findable again.
+     */
+    val timestampLabel: String? = null,
 )
 
 /** A topic-grouped block of bullets in the structured summary body. */
@@ -206,6 +258,8 @@ data class ActionItem(
     val deadline: String? = null,
     val source: Provenance = Provenance.TRANSCRIPT,
     val sourceExcerpt: String? = null,
+    /** `mm:ss` capture offset of the originating transcript line, if any (AI-05). */
+    val timestampLabel: String? = null,
 )
 
 /**
@@ -236,12 +290,16 @@ object StructuredSummaryJson {
     private fun bulletToJson(b: SummaryBullet) = JSONObject()
         .put("t", b.text)
         .put("s", b.source.name)
-        .apply { b.sourceExcerpt?.let { put("e", it) } }
+        .apply {
+            b.sourceExcerpt?.let { put("e", it) }
+            b.timestampLabel?.let { put("ts", it) }
+        }
 
     private fun bulletFromJson(o: JSONObject) = SummaryBullet(
         text = o.getString("t"),
         source = runCatching { Provenance.valueOf(o.getString("s")) }.getOrDefault(Provenance.TRANSCRIPT),
         sourceExcerpt = o.optString("e").takeIf { it.isNotBlank() },
+        timestampLabel = o.optString("ts").takeIf { it.isNotBlank() },
     )
 
     fun encode(summary: StructuredSummary): String {
@@ -268,6 +326,7 @@ object StructuredSummaryJson {
                         item.owner?.let { put("owner", it) }
                         item.deadline?.let { put("deadline", it) }
                         item.sourceExcerpt?.let { put("e", it) }
+                        item.timestampLabel?.let { put("ts", it) }
                     },
             )
         }
@@ -303,6 +362,7 @@ object StructuredSummaryJson {
                         source = runCatching { Provenance.valueOf(o.getString("s")) }
                             .getOrDefault(Provenance.TRANSCRIPT),
                         sourceExcerpt = o.optString("e").takeIf { it.isNotBlank() },
+                        timestampLabel = o.optString("ts").takeIf { it.isNotBlank() },
                     )
                 }
             }.orEmpty()

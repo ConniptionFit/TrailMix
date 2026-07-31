@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  CAP-12: in-app pause glyph for the capture top bar. Separate from ic_stat_pause.xml,
+  which hardcodes android:tint="#FFFFFF" for the notification (harmless there — the system
+  re-tints status-bar icons anyway). This one carries no tint so the Compose `Icon` tint
+  wins and the glyph tracks the theme. Material's `Icons.Filled.Pause` is deliberately not
+  used: REL-02 swapped material-icons-extended for material-icons-core to cut ~30 MB off
+  the APK, and Pause is not in the core set.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M6,19h4L10,5L6,5v14zM14,5v14h4L18,5h-4z" />
+</vector>
