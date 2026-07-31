@@ -45,7 +45,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.runtime.Composable
@@ -59,6 +58,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -68,6 +68,7 @@ import androidx.core.content.ContextCompat
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.trailmix.app.R
 import com.trailmix.app.ui.theme.TrailMix
 
 @Composable
@@ -355,11 +356,21 @@ fun CaptureScreen(
             // mic without ending the session. Hidden while merging (nothing to pause).
             if (state.recording || state.paused) {
                 IconButton(onClick = { if (state.paused) viewModel.resume() else viewModel.pause() }) {
-                    Icon(
-                        imageVector = if (state.paused) Icons.Default.PlayArrow else Icons.Default.Pause,
-                        contentDescription = if (state.paused) "Resume recording" else "Pause recording",
-                        tint = c.dim,
-                    )
+                    // PlayArrow is in material-icons-core; Pause is not (REL-02), so the
+                    // pause glyph comes from a local drawable instead.
+                    if (state.paused) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = "Resume recording",
+                            tint = c.dim,
+                        )
+                    } else {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_pause),
+                            contentDescription = "Pause recording",
+                            tint = c.dim,
+                        )
+                    }
                 }
             }
             CaptureMenu(

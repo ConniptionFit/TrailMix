@@ -354,15 +354,16 @@ class CaptureSessionManager @Inject constructor(
                 withContext(Dispatchers.Main) { onDone(-1L) }
                 return@launch
             }
+            val customTemplates = settingsRepository.customSummaryTemplates.first()
             val result = aiProcessor.merge(
                 typedFragments = typed,
                 transcript = transcript,
                 createdAtEpochMs = createdAt,
                 attendees = attendees,
-                templateGuidance = TemplateOptions.guidanceFor(
-                    template,
-                    settingsRepository.customSummaryTemplates.first(),
-                ),
+                templateGuidance = TemplateOptions.guidanceFor(template, customTemplates),
+                // AI-05: the template also steers the zero-AI path now, so "Conference talk"
+                // shapes the note on a device with no Gemini Nano.
+                style = TemplateOptions.styleFor(template, customTemplates),
             )
             val id = if (resuming) {
                 notesRepository.updateMergedNote(

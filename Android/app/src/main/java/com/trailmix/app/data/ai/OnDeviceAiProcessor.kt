@@ -10,6 +10,7 @@ import com.trailmix.app.data.model.Provenance
 import com.trailmix.app.data.model.StructuredSummary
 import com.trailmix.app.data.model.SummaryBullet
 import com.trailmix.app.data.model.SummarySection
+import com.trailmix.app.data.model.SummaryStyle
 import com.trailmix.app.data.model.SummaryTemplate
 import com.trailmix.app.data.model.TranscriptLine
 import java.text.SimpleDateFormat
@@ -103,16 +104,20 @@ class OnDeviceAiProcessor @Inject constructor() {
         createdAtEpochMs: Long,
         attendees: List<String> = emptyList(),
         templateGuidance: String = SummaryTemplate.NONE.guidance,
+        style: SummaryStyle = SummaryStyle.DISCUSSION,
     ): MergeResult = withContext(Dispatchers.Default) {
         // CAP-11 (v1.8.0): no transcript → nothing to merge or summarize. The typed notes
         // are saved verbatim via the deterministic path; the model is never invoked.
         if (!MergePolicy.hasTranscript(transcript)) {
-            return@withContext fallbackMerge(typedFragments, transcript, createdAtEpochMs)
+            return@withContext fallbackMerge(typedFragments, transcript, createdAtEpochMs, style)
         }
-        val transcriptText = transcript.joinToString("\n") { it.text }.take(MAX_CONTEXT_CHARS)
+        // AI-05: sample evenly across the whole session rather than taking the first
+        // MAX_CONTEXT_CHARS. The old `.take()` meant a 45-minute talk was titled and
+        // summarized entirely from its first ~10 minutes, with nothing marking the loss.
+        val transcriptText = TranscriptCoverage.evenSample(transcript, MAX_CONTEXT_CHARS)
         val availability = ensureModelReady()
         if (availability !is AiAvailability.Available) {
-            return@withContext fallbackMerge(typedFragments, transcript, createdAtEpochMs)
+            return@withContext fallbackMerge(typedFragments, transcript, createdAtEpochMs, style)
         }
         try {
             val prompt = """
@@ -133,27 +138,28 @@ class OnDeviceAiProcessor @Inject constructor() {
 
             val output = generate(prompt)
             val lines = output.lines().map { it.trim() }.filter { it.isNotBlank() }
-            if (lines.size < 2) return@withContext fallbackMerge(typedFragments, transcript, createdAtEpochMs)
+            if (lines.size < 2) return@withContext fallbackMerge(typedFragments, transcript, createdAtEpochMs, style)
 
             val title = lines.first().removePrefix("#").trim().take(80)
             val body = lines.drop(1).joinToString(" ")
             val segments = attributeProvenance(splitSentences(body), typedFragments, transcriptText)
             // Structured summary from the model, or the deterministic structurer as a net so
             // a bad/non-JSON model reply still yields sectioned output, never a flat wall.
+            // The fallback reads the FULL transcript, not the sampled text the model saw.
             val structured = runCatching {
-                generateStructuredSummary(typedFragments, transcriptText, attendees, templateGuidance)
-            }.getOrNull() ?: DeterministicSummary.from(typedFragments, transcriptText)
+                generateStructuredSummary(typedFragments, transcript, attendees, templateGuidance)
+            }.getOrNull() ?: DeterministicSummary.from(typedFragments, transcript, style)
 
             MergeResult(
                 title = title.ifBlank { defaultTitle(createdAtEpochMs) },
                 segments = segments.ifEmpty {
-                    fallbackMerge(typedFragments, transcript, createdAtEpochMs).segments
+                    fallbackMerge(typedFragments, transcript, createdAtEpochMs, style).segments
                 },
                 usedOnDeviceAi = true,
                 structuredSummary = structured,
             )
         } catch (_: Exception) {
-            fallbackMerge(typedFragments, transcript, createdAtEpochMs)
+            fallbackMerge(typedFragments, transcript, createdAtEpochMs, style)
         }
     }
 
@@ -203,21 +209,46 @@ class OnDeviceAiProcessor @Inject constructor() {
 
     // ── Structured summary (UX-02) ───────────────────────────────────────────
 
+    /**
+     * AI-05: structure the note, reading the **whole** session rather than its first
+     * MAX_CONTEXT_CHARS. When the transcript fits one model context this is a single call, as
+     * before. When it doesn't — any talk over roughly ten minutes — it becomes map-reduce: each
+     * chunk is condensed to timestamped bullets ([condenseChunk]), and the condensed set is
+     * what gets structured. Per-chunk failures are skipped rather than fatal, so a session
+     * still summarizes if one call misbehaves; only a total wipeout returns null and lets the
+     * caller drop to [DeterministicSummary].
+     */
     private suspend fun generateStructuredSummary(
         typedFragments: String,
-        transcriptText: String,
+        transcript: List<TranscriptLine>,
         attendees: List<String>,
         templateGuidance: String,
     ): StructuredSummary? {
+        val chunks = TranscriptCoverage.chunks(transcript, CHUNK_CHARS)
+        val transcriptText = when {
+            chunks.isEmpty() -> ""
+            chunks.size == 1 -> labelled(chunks.single())
+            else -> {
+                val condensed = chunks.mapNotNull { chunk ->
+                    runCatching { condenseChunk(chunk, templateGuidance) }.getOrNull()?.takeIf { it.isNotBlank() }
+                }
+                if (condensed.isEmpty()) return null
+                condensed.joinToString("\n")
+            }
+        }
+
         val prompt = """
             You are structuring a meeting note into JSON. $templateGuidance
             ${if (attendees.isNotEmpty()) "Attendees: ${attendees.joinToString(", ")}." else ""}
+            The transcript lines are prefixed with [mm:ss] timestamps. Begin every bullet and
+            action item you produce with the [mm:ss] of the moment it came from, then the text.
             Respond with ONLY valid JSON, no markdown fences, matching exactly this shape:
-            {"highlights": ["short key decision or highlight", "..."],
-             "sections": [{"heading": "Topic name", "bullets": ["bullet text", "..."]}],
-             "actionItems": [{"text": "what needs doing", "owner": "name or null", "deadline": "date/phrase or null"}]}
+            {"highlights": ["[mm:ss] short key decision or highlight", "..."],
+             "sections": [{"heading": "Topic name", "bullets": ["[mm:ss] bullet text", "..."]}],
+             "actionItems": [{"text": "[mm:ss] what needs doing", "owner": "name or null", "deadline": "date/phrase or null"}]}
             Rules: factual only, no invented details, omit owner/deadline (use null) when not statable,
-            2-5 highlights, group remaining content into 2-5 topic sections, action items only when real.
+            2-5 highlights, cover the WHOLE session end to end in 2-6 topic sections ordered as they
+            occurred, action items only when real.
 
             Typed notes:
             ${typedFragments.ifBlank { "(none)" }}
@@ -231,14 +262,24 @@ class OnDeviceAiProcessor @Inject constructor() {
             .substringBeforeLast('}', "").let { if (it.isBlank()) raw else "$it}" }
         val root = JSONObject(jsonText)
 
-        val fragmentSentences = splitSentences(typedFragments)
-        val transcriptSentences = splitSentences(transcriptText)
+        // Tokenize the attribution corpora once — a long talk has hundreds of candidate
+        // sentences and this runs per produced bullet.
+        val fragmentSentences = splitSentences(typedFragments).map { it to tokenize(it) }
+        val transcriptUnits = transcript.flatMap { line ->
+            splitSentences(line.text).map { TranscriptLine(line.label, it) }
+        }.map { it to tokenize(it.text) }
         val fragWords = tokenize(typedFragments)
-        val transWords = tokenize(transcriptText)
+        val transWords = transcriptUnits.flatMapTo(mutableSetOf()) { it.second }
 
-        fun attribute(text: String): SummaryBullet {
-            val (source, excerpt) = classify(text, fragWords, transWords, fragmentSentences, transcriptSentences)
-            return SummaryBullet(text = text, source = source, sourceExcerpt = excerpt)
+        fun attribute(raw: String): SummaryBullet {
+            val (stamp, text) = splitTimestamp(raw)
+            val match = classify(text, fragWords, transWords, fragmentSentences, transcriptUnits)
+            return SummaryBullet(
+                text = text,
+                source = match.source,
+                sourceExcerpt = match.excerpt,
+                timestampLabel = stamp ?: match.label,
+            )
         }
 
         val highlights = root.optJSONArray("highlights")?.let { arr ->
@@ -258,14 +299,15 @@ class OnDeviceAiProcessor @Inject constructor() {
         val actionItems = root.optJSONArray("actionItems")?.let { arr ->
             (0 until arr.length()).map { i ->
                 val o = arr.getJSONObject(i)
-                val text = o.getString("text").trim()
-                val (source, excerpt) = classify(text, fragWords, transWords, fragmentSentences, transcriptSentences)
+                val (stamp, text) = splitTimestamp(o.getString("text").trim())
+                val match = classify(text, fragWords, transWords, fragmentSentences, transcriptUnits)
                 ActionItem(
                     text = text,
                     owner = o.optString("owner").takeIf { it.isNotBlank() && it != "null" },
                     deadline = o.optString("deadline").takeIf { it.isNotBlank() && it != "null" },
-                    source = source,
-                    sourceExcerpt = excerpt,
+                    source = match.source,
+                    sourceExcerpt = match.excerpt,
+                    timestampLabel = stamp ?: match.label,
                 )
             }
         }.orEmpty().filter { it.text.isNotBlank() }
@@ -274,25 +316,57 @@ class OnDeviceAiProcessor @Inject constructor() {
         return StructuredSummary(highlights = highlights, sections = sections, actionItems = actionItems)
     }
 
-    /** Same word-overlap logic as [attributeProvenance], plus the best-matching source excerpt. */
+    /** Map step: one chunk of a long session → a few timestamped factual bullets. */
+    private suspend fun condenseChunk(chunk: List<TranscriptLine>, templateGuidance: String): String {
+        val prompt = """
+            Condense this section of a transcript into at most $BULLETS_PER_CHUNK short factual
+            bullets. $templateGuidance
+            Start each bullet with the [mm:ss] timestamp it came from, then the point itself.
+            Plain text only, one bullet per line, no headings, no commentary.
+
+            Transcript section:
+            ${labelled(chunk)}
+        """.trimIndent()
+        return generate(prompt)
+    }
+
+    private fun labelled(lines: List<TranscriptLine>): String =
+        lines.joinToString("\n") { if (it.label.isBlank()) it.text else "[${it.label}] ${it.text}" }
+
+    /** Pull a leading `[mm:ss]` / `[h:mm:ss]` marker off a model-produced bullet. */
+    private fun splitTimestamp(text: String): Pair<String?, String> {
+        val match = LEADING_TIMESTAMP.find(text) ?: return null to text.removePrefix("-").trim()
+        return match.groupValues[1] to text.removeRange(match.range).removePrefix("-").trim()
+    }
+
+    private data class Attribution(val source: Provenance, val excerpt: String?, val label: String?)
+
+    /** Same word-overlap logic as [attributeProvenance], plus the best-matching source excerpt
+     *  and — for transcript matches — the `mm:ss` of the line it matched (AI-05). */
     private fun classify(
         text: String,
         fragWords: Set<String>,
         transWords: Set<String>,
-        fragmentSentences: List<String>,
-        transcriptSentences: List<String>,
-    ): Pair<Provenance, String?> {
+        fragmentSentences: List<Pair<String, Set<String>>>,
+        transcriptUnits: List<Pair<TranscriptLine, Set<String>>>,
+    ): Attribution {
         val words = tokenize(text)
         val fragScore = overlapScore(words, fragWords)
         val transScore = overlapScore(words, transWords)
-        val source = if (fragScore > transScore) Provenance.FRAGMENT else Provenance.TRANSCRIPT
-        val candidates = if (source == Provenance.FRAGMENT) fragmentSentences else transcriptSentences
-        val excerpt = candidates
-            .map { it to overlapScore(words, tokenize(it)) }
+        if (fragScore > transScore) {
+            val excerpt = fragmentSentences
+                .map { it.first to overlapScore(words, it.second) }
+                .maxByOrNull { it.second }
+                ?.takeIf { it.second > 0.0 }
+                ?.first
+            return Attribution(Provenance.FRAGMENT, excerpt, null)
+        }
+        val best = transcriptUnits
+            .map { it.first to overlapScore(words, it.second) }
             .maxByOrNull { it.second }
             ?.takeIf { it.second > 0.0 }
             ?.first
-        return source to excerpt
+        return Attribution(Provenance.TRANSCRIPT, best?.text, best?.label?.takeIf { it.isNotBlank() })
     }
 
     private fun overlapScore(words: Set<String>, against: Set<String>): Double =
@@ -313,23 +387,26 @@ class OnDeviceAiProcessor @Inject constructor() {
         typedFragments: String,
         transcript: List<TranscriptLine>,
         createdAtEpochMs: Long,
+        style: SummaryStyle = SummaryStyle.DISCUSSION,
     ): MergeResult {
         val segments = buildList {
             splitSentences(typedFragments).forEach { add(NoteSegment(it, Provenance.FRAGMENT)) }
-            transcript.map { it.text }.filter { it.isNotBlank() }.take(12).forEach {
-                add(NoteSegment(it.trim(), Provenance.TRANSCRIPT))
-            }
+            // AI-05: spread the flat body's transcript segments across the whole session
+            // instead of taking the first 12 lines (~2 minutes of a talk).
+            TranscriptCoverage.evenSampleLines(transcript, FLAT_BODY_CHARS)
+                .map { it.text }
+                .filter { it.isNotBlank() }
+                .forEach { add(NoteSegment(it.trim(), Provenance.TRANSCRIPT)) }
         }
         // Even with no AI, structure the content deterministically so the default note is
-        // Key Topics + Action Items rather than a flat block (null → flat only for tiny notes).
-        val transcriptText = transcript.joinToString("\n") { it.text }
+        // sectioned + Action Items rather than a flat block (null → flat only for tiny notes).
         return MergeResult(
             title = defaultTitle(createdAtEpochMs),
             segments = segments.ifEmpty {
                 listOf(NoteSegment("Empty capture.", Provenance.FRAGMENT))
             },
             usedOnDeviceAi = false,
-            structuredSummary = DeterministicSummary.from(typedFragments, transcriptText),
+            structuredSummary = DeterministicSummary.from(typedFragments, transcript, style),
         )
     }
 
@@ -372,16 +449,22 @@ class OnDeviceAiProcessor @Inject constructor() {
             .filter { it.length > 2 }
             .toSet()
 
-    private fun splitSentences(text: String): List<String> =
-        text.split(Regex("(?<=[.!?])\\s+|\\n+"))
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
+    private fun splitSentences(text: String): List<String> = SummaryText.splitSentences(text)
 
     private fun defaultTitle(epochMs: Long): String =
         "Note — " + SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(epochMs))
 
     companion object {
         private const val MAX_CONTEXT_CHARS = 8_000
+
+        /** Per-chunk budget for map-reduce; below MAX_CONTEXT_CHARS to leave room for the prompt. */
+        private const val CHUNK_CHARS = 6_000
+        private const val BULLETS_PER_CHUNK = 8
+
+        /** Cap on the flat (non-structured) body's transcript sample. */
+        private const val FLAT_BODY_CHARS = 2_000
+
+        private val LEADING_TIMESTAMP = Regex("^\\s*-?\\s*\\[(\\d{1,2}:\\d{2}(?::\\d{2})?)]\\s*")
         const val OFFLINE_ASSISTANT_REPLY =
             "On-device AI isn't available on this device yet, so I can't generate this. " +
                 "Your note and transcript are still saved locally."

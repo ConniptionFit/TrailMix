@@ -276,6 +276,7 @@ fun NoteDetailScreen(
                     }
                     summary != null -> StructuredSummaryBody(
                         summary = summary,
+                        showSources = current.showSources,
                         onMoveSection = viewModel::moveSummarySection,
                     )
                     else -> {
@@ -357,15 +358,24 @@ fun NoteDetailScreen(
  * rather than long-press drag — the sections are expandable/variable-height inside an
  * already-scrollable column, where drag reorder is jank-prone; the buttons deliver the
  * same user value deterministically. Each move persists immediately via [onMoveSection].
+ *
+ * AI-05: [showSources] now reaches this renderer. Before, the Sources pill was drawn on
+ * structured notes but wired only to the flat-body branch, so tapping it did nothing — and
+ * structured bullets carried no provenance signal at all. Each bullet's marker is now tinted
+ * by source (amber = typed, teal = spoken, matching the flat body's highlight colors) and
+ * transcript bullets lead with the `mm:ss` they were said at.
  */
 @Composable
 private fun StructuredSummaryBody(
     summary: com.trailmix.app.data.model.StructuredSummary,
+    showSources: Boolean,
     onMoveSection: (Int, Int) -> Unit,
 ) {
     val c = TrailMix.colors
     var reordering by remember { mutableStateOf(false) }
     Column {
+        if (showSources) SourceLegend()
+
         if (summary.highlights.isNotEmpty()) {
             Text(
                 text = "HIGHLIGHTS",
@@ -375,7 +385,7 @@ private fun StructuredSummaryBody(
                 letterSpacing = 0.4.sp,
                 modifier = Modifier.padding(bottom = 6.dp),
             )
-            summary.highlights.forEach { SummaryBulletRow(it) }
+            summary.highlights.forEach { SummaryBulletRow(it, showSources) }
             Spacer(modifier = Modifier.size(16.dp))
         }
 
@@ -446,7 +456,7 @@ private fun StructuredSummaryBody(
             }
             if (expanded && !reordering) {
                 Column(modifier = Modifier.padding(bottom = 10.dp)) {
-                    section.bullets.forEach { SummaryBulletRow(it) }
+                    section.bullets.forEach { SummaryBulletRow(it, showSources) }
                 }
             }
         }
@@ -465,10 +475,15 @@ private fun StructuredSummaryBody(
                 var showExcerpt by remember(item) { mutableStateOf(false) }
                 Column(modifier = Modifier.padding(bottom = 8.dp)) {
                     Row(verticalAlignment = Alignment.Top) {
-                        Text(text = "☐", color = c.amber, fontSize = 14.sp, modifier = Modifier.padding(end = 8.dp))
+                        Text(
+                            text = "☐",
+                            color = if (showSources) sourceColor(item.source) else c.amber,
+                            fontSize = 14.sp,
+                            modifier = Modifier.padding(end = 8.dp),
+                        )
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = item.text,
+                                text = withTimestamp(item.text, item.timestampLabel, showSources),
                                 color = c.text,
                                 fontSize = 14.5.sp,
                                 lineHeight = 20.sp,
@@ -507,15 +522,67 @@ private fun StructuredSummaryBody(
     }
 }
 
+/** Amber = the user's own typed words, teal = spoken — the same pairing the flat body uses. */
 @Composable
-private fun SummaryBulletRow(bullet: SummaryBullet) {
+private fun sourceColor(source: Provenance): Color = when (source) {
+    Provenance.FRAGMENT -> TrailMix.colors.amber
+    Provenance.TRANSCRIPT -> TrailMix.colors.teal
+}
+
+/** Prefix a bullet with its dimmed `mm:ss` capture offset, when there is one to show. */
+@Composable
+private fun withTimestamp(text: String, label: String?, showSources: Boolean) =
+    if (!showSources || label == null) {
+        buildAnnotatedString { append(text) }
+    } else {
+        buildAnnotatedString {
+            withStyle(SpanStyle(color = TrailMix.colors.dim, fontWeight = FontWeight.Medium)) {
+                append("$label  ")
+            }
+            append(text)
+        }
+    }
+
+/** Key for the bullet-marker colors, so the tinting is decipherable without prior knowledge. */
+@Composable
+private fun SourceLegend() {
+    val c = TrailMix.colors
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(bottom = 12.dp),
+    ) {
+        listOf(c.amber to "Your notes", c.teal to "From the recording").forEachIndexed { i, (color, label) ->
+            if (i > 0) Spacer(modifier = Modifier.size(12.dp))
+            Box(
+                modifier = Modifier
+                    .size(7.dp)
+                    .clip(RoundedCornerShape(100.dp))
+                    .background(color),
+            )
+            Text(
+                text = label,
+                color = c.dim,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(start = 5.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SummaryBulletRow(bullet: SummaryBullet, showSources: Boolean) {
     val c = TrailMix.colors
     var showExcerpt by remember(bullet) { mutableStateOf(false) }
     Column(modifier = Modifier.padding(bottom = 8.dp)) {
         Row(verticalAlignment = Alignment.Top) {
-            Text(text = "•", color = c.dim, fontSize = 14.sp, modifier = Modifier.padding(end = 8.dp))
             Text(
-                text = bullet.text,
+                text = "•",
+                color = if (showSources) sourceColor(bullet.source) else c.dim,
+                fontSize = 14.sp,
+                modifier = Modifier.padding(end = 8.dp),
+            )
+            Text(
+                text = withTimestamp(bullet.text, bullet.timestampLabel, showSources),
                 color = c.text,
                 fontSize = 14.5.sp,
                 lineHeight = 20.sp,

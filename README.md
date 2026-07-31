@@ -55,8 +55,13 @@ allow your file manager to install unknown apps).
 
 ```bash
 cd Android
-export JAVA_HOME=/path/to/jdk-17      # e.g. "$HOME/.jdks/jdk-17.0.19+10/Contents/Home"
-export ANDROID_HOME=/path/to/android-sdk   # e.g. "$HOME/Library/Android/sdk"
+# macOS
+export JAVA_HOME="$HOME/.jdks/jdk-17.0.19+10/Contents/Home"
+export ANDROID_HOME="$HOME/Library/Android/sdk"
+# Linux
+export JAVA_HOME="$HOME/.jdks/jdk-17.0.20+8"
+export ANDROID_HOME="$HOME/Android/Sdk"
+
 ./gradlew :app:assembleDebug
 ```
 
@@ -144,8 +149,13 @@ cd Android
    is running in the background — nothing about it depends on the Capture screen staying
    open. The 3-dot menu also has a **"What can be captured?"** help sheet summarizing all
    of the above limits honestly, in-app. Above *End & Merge*, a template row (Flat / 1:1 /
-   Weekly Standup / Learning / User Interview, plus any **custom templates** you've saved
-   in Settings) steers how the AI structures the summary for this capture. Ending a
+   Weekly Standup / Learning / **Conference talk** / User Interview, plus any **custom
+   templates** you've saved in Settings) steers how the summary is structured for this
+   capture. Pick **Conference talk** for a talk or presentation: it tells the summarizer
+   that one person is speaking to an audience, so the speaker's instructional phrasing
+   ("you should…", "let's look at…") is kept as content instead of being mistaken for your
+   to-do list. Unlike the other templates, the built-in styles now also steer the
+   **no-AI** path, so the choice matters even on a device without Gemini Nano. Ending a
    capture with **nothing typed and nothing transcribed saves no note at all**, and a
    typed-only capture is saved verbatim without invoking the AI.
 3. **Note detail** — the merged note; amber tint = from your typed fragments, teal tint =
@@ -160,11 +170,21 @@ cd Android
    **Highlights**, expandable/collapsible **topic sections**, and an **Action Items**
    checklist (owner/deadline when statable) — rather than a flat block of text. When the
    on-device AI is available it groups the content by topic; when it isn't (or returns
-   something unusable), a rule-based fallback still lays the note out as *Your notes* /
-   *Key topics* bullets plus a detected *Action Items* list, so the default is readable
-   either way. Tap the small "ⓘ" next to any bullet to see the transcript/fragment sentence
-   it came from, and use **Reorder sections** to move topic sections up/down (the new order
-   persists and carries into exports). Very short notes stay as plain text.
+   something unusable), a rule-based fallback still lays the note out as *Your notes*
+   bullets plus topic sections and a detected *Action Items* list, so the default is
+   readable either way. Tap the small "ⓘ" next to any bullet to see the transcript/fragment
+   sentence it came from, and use **Reorder sections** to move topic sections up/down (the
+   new order persists and carries into exports). Very short notes stay as plain text.
+   - **Long sessions are summarized end to end.** A talk or presentation is divided into
+     time windows, each becoming its own section headed by its range and topic (e.g.
+     `15:48 – 23:40 · routing, table`), so the last half hour of a conference session is
+     represented as well as the first ten minutes.
+   - **Every bullet says where it came from.** With *Sources shown* on, each bullet's marker
+     is tinted (amber = your typed notes, teal = spoken) with a legend above the note, and
+     spoken bullets lead with the `mm:ss` they were said at, so you can jump back to that
+     moment in the transcript. The exported Markdown carries the same annotation as
+     `` **`[you]`** `` / `` **`[12:30]`** `` tags plus a one-line key — turning the pill off
+     removes both the tinting and the export tags.
    - **Upcoming meetings** — tap the calendar label on Home to see the next 7 days; tap a
      meeting to capture it (a meeting more than 5 minutes out asks first).
 4. **Transcript** — full-screen, timestamp-labeled lines (no speaker diarization on-device
