@@ -19,15 +19,45 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    /**
+     * REL-07 (v1.10.0): a real, stable release key, replacing REL-02's debug-key placeholder.
+     *
+     * Why this had to change: the debug keystore is **auto-generated per machine**, so a
+     * release cut on one machine cannot update an install that came from another — Android
+     * rejects it as a signature mismatch, and the only workaround is an uninstall, which for
+     * this app means permanent note loss (`allowBackup=false`, local-only, no cloud copy).
+     * That directly threatened DIST-01/Obtainium, whose whole premise is in-place updates.
+     *
+     * Credentials live in the **Gradle home** (`~/.gradle/gradle.properties`), never in this
+     * repo, so key material cannot be committed. When they're absent the build falls back to
+     * the debug key so anyone can still clone and `assembleDebug`/`assembleRelease` — but the
+     * resulting release APK is NOT publishable, because it won't upgrade real installs.
+     * See [[Build and Deployment]] for the backup requirement.
+     */
+    val releaseStore = (findProperty("TRAILMIX_STORE_FILE") as String?)?.let(::file)
+    val hasReleaseKey = releaseStore?.exists() == true
+
+    signingConfigs {
+        if (hasReleaseKey) {
+            create("release") {
+                storeFile = releaseStore
+                storePassword = findProperty("TRAILMIX_STORE_PASSWORD") as String?
+                keyAlias = findProperty("TRAILMIX_KEY_ALIAS") as String?
+                keyPassword = findProperty("TRAILMIX_KEY_PASSWORD") as String?
+            }
+        }
+    }
+
     buildTypes {
         release {
             // REL-02: R8 shrink/obfuscate + resource shrinking for release, previously off.
             isMinifyEnabled = true
             isShrinkResources = true
-            // Placeholder signing (debug key) so `assembleRelease` still produces an
-            // installable APK before a real release keystore exists — swap when this app is
-            // actually distributed anywhere. Sideload/debug-only for now, see README.md.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (hasReleaseKey) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

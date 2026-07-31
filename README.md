@@ -40,6 +40,13 @@ watches a GitHub repo and installs new releases:
 Or just download the latest `.apk` from Releases and install it by hand (you'll need to
 allow your file manager to install unknown apps).
 
+> **Upgrading from v1.9.0 or earlier requires an uninstall, which erases your notes.**
+> Releases up to v1.9.0 were signed with a per-machine *debug* key, so they can't be
+> upgraded in place. v1.10.0 switches to a stable release key; from v1.10.0 onward,
+> updates install cleanly with no data loss. Before uninstalling anything, set
+> **Settings → Export location** — TrailMix then writes every note out as Markdown, so a
+> reinstall costs you nothing.
+
 ### Build from source
 
 **Prerequisites:**

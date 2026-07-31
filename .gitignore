@@ -10,3 +10,10 @@ build/
 *.apk
 *.aab
 .claude/
+
+# REL-07: release signing material must never enter the repo. The real key lives outside it
+# (see Build and Deployment); these patterns are a backstop against an accidental copy.
+*.jks
+*.keystore
+keystore.properties
+signing.properties
