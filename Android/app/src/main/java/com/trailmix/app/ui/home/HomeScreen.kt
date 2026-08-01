@@ -593,8 +593,15 @@ private fun NoteContextMenu(
             title = { Text("Delete this note?", color = c.text, fontSize = 17.sp) },
             text = {
                 Text(
-                    "This can't be undone. If it's been exported to your export location, " +
-                        "TrailMix will try to remove that copy too.",
+                    // UX-16: this said "This can't be undone", which stopped being true at
+                    // REL-06 (v1.8.0) when delete became a *soft* delete with a 1-day
+                    // recovery window. The multi-select dialog above was updated then and
+                    // this single-note one was missed, so the same action was described two
+                    // contradictory ways. Wording deliberately mirrors that dialog — the
+                    // scary-but-wrong version risks talking someone out of a reversible
+                    // action, and would be far worse if it ever made them trust it.
+                    "It'll move to Recently deleted and stay recoverable for 1 day. " +
+                        "Exported copies are removed now.",
                     color = c.dim,
                     fontSize = 13.5.sp,
                     lineHeight = 19.sp,
