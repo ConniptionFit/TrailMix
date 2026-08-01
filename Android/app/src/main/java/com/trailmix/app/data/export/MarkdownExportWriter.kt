@@ -35,6 +35,23 @@ object MarkdownExportWriter {
         write(context, folder, fileName, markdown, existingFileUri)
     }.getOrNull()
 
+    /**
+     * Display name of the file [existingFileUri] points at, or null if it isn't tracked, no
+     * longer resolves, or has been deleted outside the app.
+     *
+     * OBS-03: [write] reuses a tracked file *in place*, so that file keeps whatever name it
+     * was first created with even after the note is re-titled. Callers need to know that real
+     * name before rendering, because the Markdown embeds wiki-links to these files — deriving
+     * those from the current title instead produces links to a filename that was never
+     * created. A null answer means "nothing tracked yet", where the caller's title-derived
+     * name is correct, since that is what [write] will go on to create.
+     */
+    fun existingDisplayName(context: Context, existingFileUri: String?): String? =
+        existingFileUri
+            ?.let { runCatching { DocumentFile.fromSingleUri(context, Uri.parse(it)) }.getOrNull() }
+            ?.takeIf { it.exists() }
+            ?.name
+
     private fun write(
         context: Context,
         folder: DocumentFile,

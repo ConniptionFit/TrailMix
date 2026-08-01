@@ -3,6 +3,7 @@ package com.trailmix.app.data.db
 import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
+import com.trailmix.app.data.ai.NoteTitle
 import com.trailmix.app.data.export.NoteExporter
 import com.trailmix.app.data.export.NoteMarkdown
 import com.trailmix.app.data.model.NoteSegment
@@ -106,7 +107,12 @@ class NotesRepository @Inject constructor(
     ) {
         val existing = noteDao.getById(id) ?: return
         val updated = existing.copy(
-            title = title,
+            // AI-06: never let a re-merge downgrade a real title back to the auto-generated
+            // placeholder. The deterministic fallback can't name a note, so on any AI failure
+            // it emits `Note — <time>`; without this the note would visibly lose its name, and
+            // the exported filenames would desynchronise from the wiki-links inside them
+            // (OBS-03). A genuine re-title still wins — this only blocks default-over-real.
+            title = NoteTitle.preferExisting(incoming = title, existing = existing.title),
             segmentsJson = SegmentsJson.encode(segments),
             transcriptJson = TranscriptJson.encode(transcript),
             typedFragments = typedFragments,
@@ -319,14 +325,23 @@ class NotesRepository @Inject constructor(
  * [recipeOutputs] (OBS-01) — latest output per saved recipe — is rendered before the footer;
  * the ad-hoc Share flow passes none, keeping shares note-only.
  */
-fun NoteEntity.toMarkdown(recipeOutputs: List<Pair<String, String>> = emptyList()): String =
-    NoteMarkdown.buildNote(markdownSource(recipeOutputs))
+fun NoteEntity.toMarkdown(
+    recipeOutputs: List<Pair<String, String>> = emptyList(),
+    noteLinkBase: String? = null,
+    transcriptLinkBase: String? = null,
+): String = NoteMarkdown.buildNote(markdownSource(recipeOutputs, noteLinkBase, transcriptLinkBase))
 
 /** The verbatim transcript as its own standalone document (OBS-02). */
-fun NoteEntity.toTranscriptMarkdown(): String =
-    NoteMarkdown.buildTranscript(markdownSource(emptyList()))
+fun NoteEntity.toTranscriptMarkdown(
+    noteLinkBase: String? = null,
+    transcriptLinkBase: String? = null,
+): String = NoteMarkdown.buildTranscript(markdownSource(emptyList(), noteLinkBase, transcriptLinkBase))
 
-private fun NoteEntity.markdownSource(recipeOutputs: List<Pair<String, String>>) = NoteMarkdown.Source(
+private fun NoteEntity.markdownSource(
+    recipeOutputs: List<Pair<String, String>>,
+    noteLinkBase: String? = null,
+    transcriptLinkBase: String? = null,
+) = NoteMarkdown.Source(
     title = title,
     createdAtEpochMs = createdAtEpochMs,
     durationMs = durationMs,
@@ -340,4 +355,6 @@ private fun NoteEntity.markdownSource(recipeOutputs: List<Pair<String, String>>)
     transcript = transcript,
     recipeOutputs = recipeOutputs,
     showSources = showSources,
+    noteLinkBase = noteLinkBase,
+    transcriptLinkBase = transcriptLinkBase,
 )

@@ -14,8 +14,8 @@ android {
         applicationId = "com.trailmix.app"
         minSdk = 31
         targetSdk = 35
-        versionCode = 12
-        versionName = "1.11.0"
+        versionCode = 13
+        versionName = "1.11.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

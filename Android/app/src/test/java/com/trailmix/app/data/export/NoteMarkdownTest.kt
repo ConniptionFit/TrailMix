@@ -49,6 +49,8 @@ class NoteMarkdownTest {
         showSources: Boolean = true,
         bodyOverride: String? = null,
         recipeOutputs: List<Pair<String, String>> = emptyList(),
+        noteLinkBase: String? = null,
+        transcriptLinkBase: String? = null,
     ) = NoteMarkdown.Source(
         title = "Scaling Postgres",
         createdAtEpochMs = 1_785_000_000_000,
@@ -61,6 +63,8 @@ class NoteMarkdownTest {
         transcript = transcript,
         recipeOutputs = recipeOutputs,
         showSources = showSources,
+        noteLinkBase = noteLinkBase,
+        transcriptLinkBase = transcriptLinkBase,
     )
 
     // ── Frontmatter: what another model reads first ──────────────────────────
@@ -225,5 +229,75 @@ class NoteMarkdownTest {
         assertEquals("45m", NoteMarkdown.humanDuration(45 * 60_000L))
         assertEquals("1h", NoteMarkdown.humanDuration(60 * 60_000L))
         assertEquals("1h 30m", NoteMarkdown.humanDuration(90 * 60_000L))
+    }
+
+    // ── OBS-03: links must point at the files that actually exist ────────────
+    //
+    // The pair is only a pair if the links resolve. Filenames are pinned to whatever the
+    // file was first written as, while the title can drift afterwards, so the two must be
+    // allowed to disagree — and when they do, the *filename* wins. Found on-device
+    // 2026-08-01: a transcript whose back-link pointed at a note file that never existed.
+
+    @Test
+    fun `note links to the transcript's real filename, not one derived from the title`() {
+        val md = NoteMarkdown.buildNote(
+            source(
+                noteLinkBase = "2026-08-01-migration-test-on-v1-10-0",
+                transcriptLinkBase = "2026-08-01-migration-test-on-v1-10-0.transcript",
+            ),
+        )
+        assertTrue(md.contains("[[2026-08-01-migration-test-on-v1-10-0.transcript]]"))
+        // The title-derived name must not leak into either the footer or the frontmatter.
+        assertFalse(md.contains("scaling-postgres"))
+    }
+
+    @Test
+    fun `transcript links back to the note's real filename`() {
+        val md = NoteMarkdown.buildTranscript(
+            source(
+                noteLinkBase = "2026-08-01-migration-test-on-v1-10-0",
+                transcriptLinkBase = "2026-08-01-migration-test-on-v1-10-0.transcript",
+            ),
+        )
+        assertTrue(md.contains("note: \"[[2026-08-01-migration-test-on-v1-10-0]]\""))
+        assertTrue(md.contains("Summary: [[2026-08-01-migration-test-on-v1-10-0]]"))
+        assertFalse(md.contains("scaling-postgres"))
+    }
+
+    /** The two documents must name each other — this is the property that actually broke. */
+    @Test
+    fun `the pair's links resolve to each other`() {
+        val noteBase = "2026-08-01-note-aug-1-3-12-pm"
+        val transcriptBase = "$noteBase.transcript"
+        val src = source(noteLinkBase = noteBase, transcriptLinkBase = transcriptBase)
+
+        assertTrue(NoteMarkdown.buildNote(src).contains("[[$transcriptBase]]"))
+        assertTrue(NoteMarkdown.buildTranscript(src).contains("[[$noteBase]]"))
+    }
+
+    /** First export / Share: nothing tracked yet, so title-derived names are the right answer. */
+    @Test
+    fun `falls back to title-derived names when no file is tracked`() {
+        val expected = NoteMarkdown.baseName("Scaling Postgres", 1_785_000_000_000)
+        val note = NoteMarkdown.buildNote(source())
+        val transcript = NoteMarkdown.buildTranscript(source())
+
+        assertTrue(note.contains("[[$expected.transcript]]"))
+        assertTrue(transcript.contains("[[$expected]]"))
+    }
+
+    /** A re-title must not strand the links: the filename is what the reader can open. */
+    @Test
+    fun `a retitled note still links to its original filenames`() {
+        val md = NoteMarkdown.buildNote(
+            source(
+                noteLinkBase = "2026-07-15-original-name",
+                transcriptLinkBase = "2026-07-15-original-name.transcript",
+            ),
+        )
+        // Title in the body stays current…
+        assertTrue(md.contains("# Scaling Postgres"))
+        // …while the link keeps pointing at the file on disk.
+        assertTrue(md.contains("[[2026-07-15-original-name.transcript]]"))
     }
 }

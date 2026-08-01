@@ -46,12 +46,26 @@ class NoteExporter @Inject constructor(
         val folderName = settingsRepository.notesFolder.first()
         val tree = Uri.parse(locationUri)
 
+        // OBS-03: resolve the names these two files will ACTUALLY have before rendering
+        // either of them. A tracked file is rewritten in place and keeps its original name,
+        // which stops matching the title as soon as the note is re-titled; rendering
+        // title-derived wiki-links at that point yields links to files that don't exist.
+        // Untracked (first export) falls back to the title-derived name, which is precisely
+        // what the writer will create.
+        val noteFileName = MarkdownExportWriter.existingDisplayName(context, note.obsidianFileUri)
+            ?: NoteMarkdown.noteFileName(note.title, note.createdAtEpochMs)
+        val transcriptFileName =
+            MarkdownExportWriter.existingDisplayName(context, note.transcriptFileUri)
+                ?: NoteMarkdown.transcriptFileName(note.title, note.createdAtEpochMs)
+        val noteLinkBase = noteFileName.removeSuffix(".md")
+        val transcriptLinkBase = transcriptFileName.removeSuffix(".md")
+
         val noteUri = MarkdownExportWriter.writeIntoFolder(
             context = context,
             treeUri = tree,
             folderName = folderName,
-            fileName = NoteMarkdown.noteFileName(note.title, note.createdAtEpochMs),
-            markdown = note.toMarkdown(recipeOutputs),
+            fileName = noteFileName,
+            markdown = note.toMarkdown(recipeOutputs, noteLinkBase, transcriptLinkBase),
             existingFileUri = note.obsidianFileUri,
         ) ?: return@withContext null
 
@@ -60,8 +74,8 @@ class NoteExporter @Inject constructor(
                 context = context,
                 treeUri = tree,
                 folderName = folderName,
-                fileName = NoteMarkdown.transcriptFileName(note.title, note.createdAtEpochMs),
-                markdown = note.toTranscriptMarkdown(),
+                fileName = transcriptFileName,
+                markdown = note.toTranscriptMarkdown(noteLinkBase, transcriptLinkBase),
                 existingFileUri = note.transcriptFileUri,
             )
         } else {

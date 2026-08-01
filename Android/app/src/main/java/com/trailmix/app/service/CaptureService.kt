@@ -172,14 +172,25 @@ class CaptureService : Service() {
                 NotificationChannel(
                     CHANNEL_ID,
                     "Active capture",
-                    // CAP-13: IMPORTANCE_LOW, not MIN. MIN gets collapsed into the shade's
-                    // silent section with its actions hidden, which defeats the point of a
-                    // notification whose whole job is "you are still recording — here is
-                    // Pause/Stop". LOW is still silent and never a heads-up; it just stays
-                    // visible and expandable. Importance can't be raised on an existing
-                    // channel (the user owns it once created), which is why this is a NEW
-                    // channel id and the old one is deleted below.
-                    NotificationManager.IMPORTANCE_LOW,
+                    // CAP-14: IMPORTANCE_DEFAULT, explicitly silenced — not LOW, and not MIN.
+                    //
+                    // Android sorts the shade by importance: anything BELOW IMPORTANCE_DEFAULT
+                    // is filed under the collapsed "Silent" divider. So MIN and LOW are both
+                    // "silent tier" — CAP-13's MIN→LOW move fixed only half the symptom (LOW
+                    // stopped hiding the Pause/Stop actions) and left the notification exactly
+                    // where the user complained it was. Device-verified 2026-08-01: capture_v2
+                    // at LOW still rendered under "Silent".
+                    //
+                    // DEFAULT is the lowest importance that lands in the main list. It would
+                    // normally ping and vibrate, so both are turned off below — the result is
+                    // a notification that is visible and un-collapsed but makes no sound and
+                    // never heads-up. Do NOT "simplify" this back to LOW: the silence here
+                    // comes from setSound/enableVibration, not from the importance.
+                    //
+                    // Importance can't be raised on an existing channel (the user owns it once
+                    // created), so this needed a new id again. Both older ids are deleted below
+                    // so they stop showing as stale entries in system notification settings.
+                    NotificationManager.IMPORTANCE_DEFAULT,
                 ).apply {
                     description = "Shows while TrailMix is recording, with pause and stop controls."
                     setSound(null, null)
@@ -188,7 +199,7 @@ class CaptureService : Service() {
                     lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                 },
             )
-            manager.deleteNotificationChannel(LEGACY_CHANNEL_ID)
+            LEGACY_CHANNEL_IDS.forEach(manager::deleteNotificationChannel)
         }
         // CAP-12: deliberately a *separate*, actually-alerting channel — the ongoing
         // capture channel above stays silent by design, but a nudge that's easy to miss
@@ -244,7 +255,13 @@ class CaptureService : Service() {
             .setContentText(status)
             .setSubText(state.meetingTitle?.takeIf { it != state.noteTitle })
             .setOngoing(true)
-            .setSilent(true)
+            // CAP-14: NOT setSilent(true). Silence is a property of the channel now
+            // (IMPORTANCE_DEFAULT with sound/vibration off), and setSilent marks the
+            // notification itself as silent, which is exactly the classification that
+            // files it back under the shade's "Silent" divider — the bug being fixed.
+            // setOnlyAlertOnce keeps the "don't re-alert when it updates" benefit that
+            // setSilent was really providing here, without the placement side effect.
+            .setOnlyAlertOnce(true)
             .setShowWhen(recording)
             .setUsesChronometer(recording)
             .setWhen(System.currentTimeMillis() - state.elapsedMs)
@@ -295,10 +312,18 @@ class CaptureService : Service() {
     }
 
     companion object {
-        private const val CHANNEL_ID = "capture_v2"
+        private const val CHANNEL_ID = "capture_v3"
 
-        /** CAP-12's IMPORTANCE_MIN channel, replaced by [CHANNEL_ID] in CAP-13. */
-        private const val LEGACY_CHANNEL_ID = "capture"
+        /**
+         * Superseded ongoing-capture channels, deleted on first run of [ensureChannels] so
+         * they stop appearing as stale rows in system notification settings. In order:
+         * `capture` was CAP-12's `IMPORTANCE_MIN` channel; `capture_v2` was CAP-13's
+         * `IMPORTANCE_LOW` replacement, which still landed under the shade's "Silent"
+         * divider because LOW is itself a silent tier (CAP-14). Never reuse a retired id —
+         * importance cannot be raised on a channel the user already owns, which is the whole
+         * reason each of these needed a new one.
+         */
+        private val LEGACY_CHANNEL_IDS = listOf("capture", "capture_v2")
         private const val REMINDER_CHANNEL_ID = "capture_reminder"
         private const val NOTIFICATION_ID = 1
         private const val REMINDER_NOTIFICATION_ID = 2
