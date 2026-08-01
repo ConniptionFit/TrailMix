@@ -133,9 +133,12 @@ class CaptureService : Service() {
         val scope = serviceScope ?: return
 
         sessionManager.state
+            // CAP-13: elapsedLabel is deliberately NOT compared — the notification runs a
+            // native chronometer while recording, so a per-second re-post would be pure
+            // churn. Pausing freezes the label, and `paused` flipping already triggers here.
             .distinctUntilChanged { old, new ->
                 old.meetingTitle == new.meetingTitle &&
-                    old.elapsedLabel == new.elapsedLabel &&
+                    old.noteTitle == new.noteTitle &&
                     old.paused == new.paused &&
                     old.merging == new.merging &&
                     (old.recording || old.paused || old.merging) == (new.recording || new.paused || new.merging)
@@ -169,13 +172,23 @@ class CaptureService : Service() {
                 NotificationChannel(
                     CHANNEL_ID,
                     "Active capture",
-                    NotificationManager.IMPORTANCE_MIN,
+                    // CAP-13: IMPORTANCE_LOW, not MIN. MIN gets collapsed into the shade's
+                    // silent section with its actions hidden, which defeats the point of a
+                    // notification whose whole job is "you are still recording — here is
+                    // Pause/Stop". LOW is still silent and never a heads-up; it just stays
+                    // visible and expandable. Importance can't be raised on an existing
+                    // channel (the user owns it once created), which is why this is a NEW
+                    // channel id and the old one is deleted below.
+                    NotificationManager.IMPORTANCE_LOW,
                 ).apply {
+                    description = "Shows while TrailMix is recording, with pause and stop controls."
                     setSound(null, null)
                     enableVibration(false)
                     setShowBadge(false)
+                    lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                 },
             )
+            manager.deleteNotificationChannel(LEGACY_CHANNEL_ID)
         }
         // CAP-12: deliberately a *separate*, actually-alerting channel — the ongoing
         // capture channel above stays silent by design, but a nudge that's easy to miss
@@ -208,21 +221,36 @@ class CaptureService : Service() {
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 
+    /**
+     * The at-a-glance answer to "is this thing still recording, and into what?" (CAP-13).
+     *
+     * Title is the **note** being written into, not the calendar event — those differ, and
+     * on a resumed capture the note has a real name worth showing. While recording, the
+     * elapsed time is a native **chronometer**: Android advances it itself, so the timer is
+     * smooth without re-posting the notification once a second. A paused session freezes it
+     * to static text, because a chronometer that keeps counting while paused would be a lie.
+     */
     private fun buildOngoingNotification(state: CaptureUiState): Notification {
         ensureChannels()
-        val title = state.meetingTitle ?: "Capturing"
-        val text = when {
+        val recording = !state.merging && !state.paused
+        val status = when {
             state.merging -> "Merging on-device…"
             state.paused -> "Paused · ${state.elapsedLabel}"
-            else -> "${state.elapsedLabel} · transcribing on-device"
+            else -> "Recording · transcribing on-device"
         }
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_capture)
-            .setContentTitle(title)
-            .setContentText(text)
+            .setContentTitle(state.noteTitle)
+            .setContentText(status)
+            .setSubText(state.meetingTitle?.takeIf { it != state.noteTitle })
             .setOngoing(true)
             .setSilent(true)
+            .setShowWhen(recording)
+            .setUsesChronometer(recording)
+            .setWhen(System.currentTimeMillis() - state.elapsedMs)
             .setContentIntent(tapIntent())
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
         // No point offering Pause/Stop mid-merge — there's nothing left to control.
         if (!state.merging) {
@@ -231,7 +259,7 @@ class CaptureService : Service() {
             } else {
                 builder.addAction(R.drawable.ic_stat_pause, "Pause", actionIntent(ACTION_PAUSE, 1))
             }
-            builder.addAction(R.drawable.ic_stat_stop, "Stop & save", actionIntent(ACTION_STOP_AND_SAVE, 2))
+            builder.addAction(R.drawable.ic_stat_stop, "Stop", actionIntent(ACTION_STOP_AND_SAVE, 2))
         }
         return builder.build()
     }
@@ -267,7 +295,10 @@ class CaptureService : Service() {
     }
 
     companion object {
-        private const val CHANNEL_ID = "capture"
+        private const val CHANNEL_ID = "capture_v2"
+
+        /** CAP-12's IMPORTANCE_MIN channel, replaced by [CHANNEL_ID] in CAP-13. */
+        private const val LEGACY_CHANNEL_ID = "capture"
         private const val REMINDER_CHANNEL_ID = "capture_reminder"
         private const val NOTIFICATION_ID = 1
         private const val REMINDER_NOTIFICATION_ID = 2

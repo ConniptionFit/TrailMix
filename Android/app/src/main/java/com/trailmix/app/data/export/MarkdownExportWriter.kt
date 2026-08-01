@@ -3,9 +3,6 @@ package com.trailmix.app.data.export
 import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /**
  * SAF markdown-file writer behind [NoteExporter] — writes the per-note Markdown body into
@@ -59,26 +56,4 @@ object MarkdownExportWriter {
 
         return target.uri
     }
-
-    fun buildFileName(title: String, createdAtEpochMs: Long): String {
-        val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(createdAtEpochMs))
-        val slug = title.lowercase(Locale.US)
-            .replace(Regex("[^a-z0-9]+"), "-")
-            .trim('-')
-            .ifBlank { "note" }
-            .take(48)
-        return "$date-$slug.md"
-    }
-
-    fun frontmatteredBody(markdown: String, createdAtEpochMs: Long, durationMs: Long, source: String): String =
-        buildString {
-            appendLine("---")
-            appendLine("created: ${SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).format(Date(createdAtEpochMs))}")
-            appendLine("source: $source")
-            appendLine("duration_ms: $durationMs")
-            appendLine("---")
-            appendLine()
-            append(markdown.trim())
-            appendLine()
-        }
 }

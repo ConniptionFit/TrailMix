@@ -4,8 +4,8 @@ import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
 import com.trailmix.app.data.export.NoteExporter
+import com.trailmix.app.data.export.NoteMarkdown
 import com.trailmix.app.data.model.NoteSegment
-import com.trailmix.app.data.model.Provenance
 import com.trailmix.app.data.model.SegmentsJson
 import com.trailmix.app.data.model.StringListJson
 import com.trailmix.app.data.model.StructuredSummary
@@ -14,9 +14,6 @@ import com.trailmix.app.data.model.TranscriptJson
 import com.trailmix.app.data.model.moveSection
 import com.trailmix.app.data.model.TranscriptLine
 import dagger.hilt.android.qualifiers.ApplicationContext
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
@@ -193,6 +190,9 @@ class NotesRepository @Inject constructor(
 
         var filesOk = true
         note.obsidianFileUri?.let { if (!deleteDocument(it)) filesOk = false }
+        // OBS-02: the companion transcript file is part of the note, so it goes too —
+        // leaving it behind would strand an orphan .transcript.md in the export folder.
+        note.transcriptFileUri?.let { if (!deleteDocument(it)) filesOk = false }
         return DeleteResult(filesDeleted = filesOk)
     }
 
@@ -240,18 +240,33 @@ class NotesRepository @Inject constructor(
         var removeFailures = 0
         noteDao.getAll().filter { it.obsidianFileUri != null }.forEach { note ->
             val oldUri = note.obsidianFileUri!!
+            val oldTranscriptUri = note.transcriptFileUri
             val outputs = latestRecipeOutputs(note.id)
-            // Clearing the tracked URI forces a find-or-create in the new folder.
-            val newUri = runCatching {
-                noteExporter.exportNote(note.copy(obsidianFileUri = null), outputs)
+            // Clearing both tracked URIs forces a find-or-create in the new folder.
+            val written = runCatching {
+                noteExporter.exportNote(
+                    note.copy(obsidianFileUri = null, transcriptFileUri = null),
+                    outputs,
+                )
             }.getOrNull()
-            if (newUri == null) {
+            if (written == null) {
                 writeFailures++
                 return@forEach
             }
-            noteDao.update(note.copy(obsidianFileUri = newUri.toString()))
+            noteDao.update(
+                note.copy(
+                    obsidianFileUri = written.note.toString(),
+                    transcriptFileUri = written.transcript?.toString(),
+                ),
+            )
             moved++
-            if (newUri.toString() != oldUri && !deleteDocument(oldUri)) removeFailures++
+            if (written.note.toString() != oldUri && !deleteDocument(oldUri)) removeFailures++
+            // OBS-02: the transcript companion migrates with its note.
+            if (oldTranscriptUri != null && written.transcript?.toString() != oldTranscriptUri &&
+                !deleteDocument(oldTranscriptUri)
+            ) {
+                removeFailures++
+            }
         }
         return ExportMigrationResult(moved, writeFailures, removeFailures)
     }
@@ -278,118 +293,51 @@ class NotesRepository @Inject constructor(
      */
     private suspend fun exportIfConfigured(note: NoteEntity) {
         val outputs = latestRecipeOutputs(note.id)
-        val exportUri = runCatching { noteExporter.exportNote(note, outputs) }.getOrNull()
-        if (exportUri != null) {
-            noteDao.update(note.copy(obsidianFileUri = exportUri.toString()))
-        }
+        val written = runCatching { noteExporter.exportNote(note, outputs) }.getOrNull() ?: return
+        noteDao.update(
+            note.copy(
+                obsidianFileUri = written.note.toString(),
+                // OBS-02: keep any previously-tracked transcript URI if this export didn't
+                // produce one (e.g. a note whose transcript write failed) rather than
+                // dropping the reference and orphaning the file.
+                transcriptFileUri = written.transcript?.toString() ?: note.transcriptFileUri,
+            ),
+        )
     }
 }
 
 /**
- * Renders the note as Markdown. [recipeOutputs] (OBS-01) — the latest output per saved
- * recipe as name→text pairs — is appended as a "Recipe Outputs" section before the raw
- * transcript appendix; the ad-hoc Share flow passes none, keeping shares note-only.
+ * Renders the note as the exported/shared Markdown summary (OBS-02, v1.11.0).
+ *
+ * The raw transcript is **no longer appended here** — it lives in a companion
+ * `<name>.transcript.md` linked from the frontmatter and the footer. That split is the whole
+ * point of the format: this file is meant to be readable on a phone and pasteable into
+ * another model as context, and a 45-minute transcript is tens of thousands of characters
+ * that would crowd out everything worth reading. Use [toTranscriptMarkdown] for the verbatim
+ * record.
+ *
+ * [recipeOutputs] (OBS-01) — latest output per saved recipe — is rendered before the footer;
+ * the ad-hoc Share flow passes none, keeping shares note-only.
  */
-fun NoteEntity.toMarkdown(recipeOutputs: List<Pair<String, String>> = emptyList()): String = buildString {
-    appendLine("# $title")
-    appendLine()
+fun NoteEntity.toMarkdown(recipeOutputs: List<Pair<String, String>> = emptyList()): String =
+    NoteMarkdown.buildNote(markdownSource(recipeOutputs))
 
-    // Metadata header block (UX-02): date / meeting title / attendees, composes with CAL-02.
-    val metaLines = buildList {
-        add("- **Date:** ${SimpleDateFormat("MMM d, yyyy · h:mm a", Locale.getDefault()).format(Date(createdAtEpochMs))}")
-        meetingTitle?.let { add("- **Meeting:** $it") }
-        if (attendees.isNotEmpty()) add("- **Attendees:** ${attendees.joinToString(", ")}")
-    }
-    if (metaLines.isNotEmpty()) {
-        metaLines.forEach { appendLine(it) }
-        appendLine()
-    }
+/** The verbatim transcript as its own standalone document (OBS-02). */
+fun NoteEntity.toTranscriptMarkdown(): String =
+    NoteMarkdown.buildTranscript(markdownSource(emptyList()))
 
-    val override = bodyOverride
-    val summary = structuredSummary
-    when {
-        override != null -> appendLine(override.trim())
-        summary != null -> {
-            // AI-05: the exported file is the copy the user actually reads weeks later, so
-            // provenance travels with it instead of living only as on-screen tinting.
-            // `showSources` (previously inert for structured notes) is the opt-out.
-            if (showSources && summary.hasAnnotations) {
-                appendLine(SOURCE_LEGEND)
-                appendLine()
-            }
-            appendStructuredSummary(summary, annotate = showSources)
-        }
-        else -> segments.forEach { appendLine(it.text.trim()) }
-    }
-
-    if (recipeOutputs.isNotEmpty()) {
-        appendLine()
-        appendLine("## Recipe Outputs")
-        recipeOutputs.forEach { (name, text) ->
-            appendLine()
-            appendLine("### $name")
-            appendLine(text.trim())
-        }
-    }
-
-    val lines = transcript
-    if (lines.isNotEmpty()) {
-        appendLine()
-        appendLine("## Transcript")
-        lines.forEach { appendLine("- **${it.label}** ${it.text.trim()}") }
-    }
-}.trim()
-
-/**
- * One-line key for the `[you]` / `[mm:ss]` markers, emitted above an annotated body so the
- * exported file explains itself without the app.
- */
-private const val SOURCE_LEGEND =
-    "> **Sources:** `[you]` = your typed note · `[mm:ss]` = spoken, at that point in the recording"
-
-/** True when anything in the summary can actually carry a marker worth explaining. */
-private val com.trailmix.app.data.model.StructuredSummary.hasAnnotations: Boolean
-    get() = highlights.isNotEmpty() || sections.any { it.bullets.isNotEmpty() } || actionItems.isNotEmpty()
-
-/**
- * Provenance marker for one bullet (AI-05): the capture offset when it was spoken, `[you]`
- * when it came from the user's own typed fragments, `[transcript]` when it was heard but
- * couldn't be traced to a specific moment.
- */
-private fun sourceTag(source: Provenance, timestampLabel: String?): String = when {
-    source == Provenance.FRAGMENT -> "**`[you]`** "
-    timestampLabel != null -> "**`[$timestampLabel]`** "
-    else -> "**`[transcript]`** "
-}
-
-private fun StringBuilder.appendStructuredSummary(
-    summary: com.trailmix.app.data.model.StructuredSummary,
-    annotate: Boolean,
-) {
-    fun tag(source: Provenance, label: String?) = if (annotate) sourceTag(source, label) else ""
-
-    if (summary.highlights.isNotEmpty()) {
-        appendLine("## Highlights")
-        summary.highlights.forEach {
-            appendLine("- ${tag(it.source, it.timestampLabel)}${it.text.trim()}")
-        }
-        appendLine()
-    }
-    summary.sections.forEach { section ->
-        appendLine("## ${section.heading}")
-        section.bullets.forEach {
-            appendLine("- ${tag(it.source, it.timestampLabel)}${it.text.trim()}")
-        }
-        appendLine()
-    }
-    if (summary.actionItems.isNotEmpty()) {
-        appendLine("## Action Items")
-        summary.actionItems.forEach { item ->
-            val suffix = buildString {
-                item.owner?.let { append(" — $it") }
-                item.deadline?.let { append(" (due $it)") }
-            }
-            appendLine("- [ ] ${tag(item.source, item.timestampLabel)}${item.text.trim()}$suffix")
-        }
-    }
-}
+private fun NoteEntity.markdownSource(recipeOutputs: List<Pair<String, String>>) = NoteMarkdown.Source(
+    title = title,
+    createdAtEpochMs = createdAtEpochMs,
+    durationMs = durationMs,
+    meetingTitle = meetingTitle,
+    attendees = attendees,
+    template = template,
+    capturedInCall = capturedInCall,
+    summary = structuredSummary,
+    bodyOverride = bodyOverride,
+    flatBody = segments.joinToString(" ") { it.text },
+    transcript = transcript,
+    recipeOutputs = recipeOutputs,
+    showSources = showSources,
+)
