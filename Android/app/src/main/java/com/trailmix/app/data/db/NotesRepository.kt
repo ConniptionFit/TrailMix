@@ -233,6 +233,38 @@ class NotesRepository @Inject constructor(
     }
 
     /**
+     * OBS-04: how many live notes have no exported file behind them.
+     *
+     * Only meaningful once an export location is configured — with none set, nothing is
+     * expected to be exported and every note counts. Callers gate on the location.
+     */
+    fun observeUnexportedCount(): Flow<Int> = noteDao.observeUnexportedCount()
+
+    /**
+     * OBS-04: retry every live note that has no exported file.
+     *
+     * Exports were previously fire-and-forget: [exportIfConfigured] swallowed failures, and
+     * [migrateExports] only ever looked at notes that *already* had a tracked URI — so a note
+     * whose first export failed was skipped by the repair path too and silently never
+     * exported again. On a `allowBackup=false`, local-only app whose exported Markdown is the
+     * only copy that survives a wipe, that is the difference between having a backup and
+     * believing you do.
+     *
+     * Fail-soft per note: a single unwritable note never aborts the rest.
+     */
+    suspend fun exportMissing(): ExportRepairResult {
+        if (!noteExporter.isConfigured()) return ExportRepairResult(0, 0)
+        var exported = 0
+        var failures = 0
+        noteDao.getUnexported().forEach { note ->
+            val before = note.obsidianFileUri
+            exportIfConfigured(note)
+            if (noteDao.getById(note.id)?.obsidianFileUri != before) exported++ else failures++
+        }
+        return ExportRepairResult(exported = exported, failures = failures)
+    }
+
+    /**
      * Export-location migration (INT-02, v1.7.0): called right after the user picks a NEW
      * export location while notes are still tracked against the old one. For each note with
      * a tracked export file: write it into the new location (a forced fresh write — the
@@ -297,6 +329,32 @@ class NotesRepository @Inject constructor(
      * `content://` URI written back onto the note (update-in-place on the next export,
      * cascade-delete, migration) without re-triggering export again.
      */
+    /**
+     * OBS-04: after a note exports successfully, opportunistically retry anything still
+     * missing a file.
+     *
+     * A successful write is proof the export location is reachable *right now* — grant
+     * intact, folder present, storage writable — which is exactly the moment a note that
+     * failed during an earlier outage is most likely to succeed. So transient failures
+     * self-heal on the next merge without the user ever noticing, and only a persistent
+     * problem (a genuinely revoked grant) survives to be reported in Settings.
+     *
+     * Deliberately only runs after a success: retrying the whole backlog while the location
+     * is broken would just burn I/O failing repeatedly. Guarded against re-entry because
+     * [exportIfConfigured] is what calls it.
+     */
+    private var repairingExports = false
+
+    private suspend fun retryMissingExports() {
+        if (repairingExports) return
+        repairingExports = true
+        try {
+            noteDao.getUnexported().forEach { exportIfConfigured(it) }
+        } finally {
+            repairingExports = false
+        }
+    }
+
     private suspend fun exportIfConfigured(note: NoteEntity) {
         val outputs = latestRecipeOutputs(note.id)
         val written = runCatching { noteExporter.exportNote(note, outputs) }.getOrNull() ?: return
@@ -309,6 +367,29 @@ class NotesRepository @Inject constructor(
                 transcriptFileUri = written.transcript?.toString() ?: note.transcriptFileUri,
             ),
         )
+        retryMissingExports()
+    }
+}
+
+/**
+ * OBS-04 outcome of a repair pass. [failures] is the honest half: notes that are still not
+ * backed up after trying, which is what the user actually needs told.
+ */
+data class ExportRepairResult(val exported: Int, val failures: Int) {
+    /**
+     * User-facing summary. Pure so the wording can be unit-tested — this is the message that
+     * decides whether someone believes their notes are safe, and the failure count must never
+     * be rounded away by a cheerful partial success.
+     */
+    fun summary(): String {
+        val noun = { n: Int -> "$n note${if (n == 1) "" else "s"}" }
+        return when {
+            exported == 0 && failures == 0 -> "Nothing to export"
+            failures == 0 -> "Exported ${noun(exported)}"
+            exported == 0 ->
+                "Couldn't export ${noun(failures)} — check the folder is still available"
+            else -> "Exported ${noun(exported)}; ${noun(failures)} still couldn't be written"
+        }
     }
 }
 
