@@ -17,6 +17,7 @@ import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -104,6 +105,36 @@ class SettingsViewModel @Inject constructor(
                 } finally {
                     _migrating.value = false
                 }
+            }
+        }
+    }
+
+    /**
+     * OBS-04: live count of notes with no exported file behind them.
+     *
+     * Zero while no export location is set — with nothing configured, nothing is expected to
+     * be exported, and reporting every note as "not backed up" would be noise rather than
+     * information. Combined so the row appears only when it means something.
+     */
+    val unexportedCount: StateFlow<Int> =
+        combine(
+            notesRepository.observeUnexportedCount(),
+            settingsRepository.exportLocationUri,
+        ) { count, location -> if (location == null) 0 else count }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    private val _repairingExports = MutableStateFlow(false)
+    val repairingExports: StateFlow<Boolean> = _repairingExports.asStateFlow()
+
+    /** OBS-04: retry every note that has no exported file, and report honestly. */
+    fun exportMissingNotes() {
+        if (_repairingExports.value) return
+        viewModelScope.launch {
+            _repairingExports.value = true
+            try {
+                _snackbarMessage.tryEmit(notesRepository.exportMissing().summary())
+            } finally {
+                _repairingExports.value = false
             }
         }
     }

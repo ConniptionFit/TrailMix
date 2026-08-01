@@ -77,6 +77,8 @@ fun SettingsScreen(
     val darkOverride by viewModel.darkModeOverride.collectAsStateWithLifecycle()
     val exportLocationName by viewModel.exportLocationName.collectAsStateWithLifecycle()
     val exportLocationUri by viewModel.exportLocationUri.collectAsStateWithLifecycle()
+    val unexportedCount by viewModel.unexportedCount.collectAsStateWithLifecycle()
+    val repairingExports by viewModel.repairingExports.collectAsStateWithLifecycle()
     val defaultTemplate by viewModel.defaultTemplate.collectAsStateWithLifecycle()
     val asrLocaleTag by viewModel.asrLocaleTag.collectAsStateWithLifecycle()
     val customRecipes by viewModel.customRecipes.collectAsStateWithLifecycle()
@@ -362,6 +364,44 @@ fun SettingsScreen(
                 )
             }
         }
+        // OBS-04: notes with no exported file behind them. Only rendered when there is
+        // something wrong — a silent "you're backed up" is the failure mode this exists to
+        // prevent, but a permanent zero-state row would just be furniture.
+        if (unexportedCount > 0) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(top = 8.dp),
+            ) {
+                Text(
+                    text = "$unexportedCount note${if (unexportedCount == 1) "" else "s"} " +
+                        "${if (unexportedCount == 1) "isn't" else "aren't"} exported",
+                    color = c.amber,
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = if (repairingExports) "Exporting…" else "Export now",
+                    color = if (repairingExports) c.dim.copy(alpha = 0.5f) else c.amber,
+                    fontSize = 13.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(100.dp))
+                        .background(c.card)
+                        .clickable(enabled = !repairingExports) { viewModel.exportMissingNotes() }
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                )
+            }
+            Text(
+                text = "These notes live only inside TrailMix until they're exported — " +
+                    "uninstalling or clearing app data would lose them.",
+                color = c.dim,
+                fontSize = 12.sp,
+                lineHeight = 16.sp,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+
         // "Open folder" (UX-08) — replaces the long-press "Open file location" action.
         val hasLocation = exportLocationUri != null
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {

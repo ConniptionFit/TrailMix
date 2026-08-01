@@ -26,6 +26,26 @@ interface NoteDao {
     @Query("SELECT * FROM notes WHERE deletedAtEpochMs IS NOT NULL ORDER BY deletedAtEpochMs DESC")
     fun observeDeleted(): Flow<List<NoteEntity>>
 
+    /**
+     * OBS-04: live notes with no exported file behind them.
+     *
+     * `obsidianFileUri` is only ever set after a *successful* write, so a null here means the
+     * note is not backed up by anything outside app-private storage. Since the app is
+     * `allowBackup=false` and local-only, that is the difference between a note that survives
+     * a wipe and one that does not — worth counting, and worth being able to repair.
+     *
+     * Restored notes legitimately appear here: [restore] nulls the URI on purpose so the
+     * export is rewritten fresh rather than pointing at a file that was deleted with the note.
+     */
+    @Query("SELECT COUNT(*) FROM notes WHERE deletedAtEpochMs IS NULL AND obsidianFileUri IS NULL")
+    fun observeUnexportedCount(): Flow<Int>
+
+    @Query(
+        "SELECT * FROM notes WHERE deletedAtEpochMs IS NULL AND obsidianFileUri IS NULL " +
+            "ORDER BY createdAtEpochMs DESC",
+    )
+    suspend fun getUnexported(): List<NoteEntity>
+
     @Query("UPDATE notes SET deletedAtEpochMs = :deletedAt WHERE id = :id")
     suspend fun softDelete(id: Long, deletedAt: Long)
 

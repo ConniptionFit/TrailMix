@@ -32,6 +32,17 @@ class NoteExporter @Inject constructor(
     data class ExportedFiles(val note: Uri, val transcript: Uri?)
 
     /**
+     * Whether an export location is configured at all.
+     *
+     * OBS-04 needs this to tell two very different situations apart: "you have no export
+     * location, so nothing is expected to be backed up" versus "you have one and these notes
+     * failed to reach it". Reporting the first as a failure would be noise; reporting the
+     * second as fine would be a lie.
+     */
+    suspend fun isConfigured(): Boolean =
+        settingsRepository.exportLocationUri.first() != null
+
+    /**
      * Best-effort export/update-in-place into the configured export location. Writes the
      * summary note and, when there's a transcript, a companion `<name>.transcript.md`
      * beside it (OBS-02 — the transcript is split out so the note stays small enough to hand
