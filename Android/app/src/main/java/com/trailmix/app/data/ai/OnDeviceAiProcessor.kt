@@ -451,8 +451,8 @@ class OnDeviceAiProcessor @Inject constructor() {
 
     private fun splitSentences(text: String): List<String> = SummaryText.splitSentences(text)
 
-    private fun defaultTitle(epochMs: Long): String =
-        "Note — " + SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(epochMs))
+    /** Delegates to [NoteTitle] so generating and *recognising* a default stay in one place. */
+    private fun defaultTitle(epochMs: Long): String = NoteTitle.default(epochMs)
 
     companion object {
         private const val MAX_CONTEXT_CHARS = 8_000

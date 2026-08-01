@@ -45,7 +45,33 @@ object NoteMarkdown {
         val transcript: List<TranscriptLine> = emptyList(),
         val recipeOutputs: List<Pair<String, String>> = emptyList(),
         val showSources: Boolean = true,
-    )
+        /**
+         * OBS-03. Actual on-disk base names (no `.md`) of the two files this note owns, when
+         * they are already known — used verbatim for every wiki-link instead of re-deriving
+         * one from [title].
+         *
+         * They exist because the two can legitimately disagree. A file keeps the name it was
+         * first written under (the exporter rewrites it through its tracked URI), while
+         * [title] can change afterwards — an AI re-title, or a fallback that reverts to the
+         * placeholder. Deriving links from the title then points them at a filename that was
+         * never created, which is exactly the dangling back-link found on-device 2026-08-01.
+         *
+         * Null means "no file tracked yet", i.e. a first export, where deriving from the
+         * title is correct and is what the files will actually be called. The ad-hoc Share
+         * flow also leaves these null — it writes no files, so there is nothing to point at.
+         */
+        val noteLinkBase: String? = null,
+        val transcriptLinkBase: String? = null,
+    ) {
+        /** Link target for the summary note — the real filename when known. */
+        internal val noteLink: String
+            get() = noteLinkBase ?: noteFileName(title, createdAtEpochMs).removeSuffix(".md")
+
+        /** Link target for the companion transcript — the real filename when known. */
+        internal val transcriptLink: String
+            get() = transcriptLinkBase
+                ?: transcriptFileName(title, createdAtEpochMs).removeSuffix(".md")
+    }
 
     // ── File naming ─────────────────────────────────────────────────────────
 
@@ -113,8 +139,7 @@ object NoteMarkdown {
         if (source.transcript.any { it.text.isNotBlank() }) {
             appendLine("---")
             appendLine()
-            val link = transcriptFileName(source.title, source.createdAtEpochMs).removeSuffix(".md")
-            appendLine("📄 **Full transcript:** [[$link]]")
+            appendLine("📄 **Full transcript:** [[${source.transcriptLink}]]")
             appendLine()
         }
     }.trimEnd() + "\n"
@@ -151,7 +176,7 @@ object NoteMarkdown {
         appendLine("transcript_lines: $lines")
         if (lines > 0) {
             appendLine(
-                "transcript: \"[[${transcriptFileName(source.title, source.createdAtEpochMs).removeSuffix(".md")}]]\"",
+                "transcript: \"[[${source.transcriptLink}]]\"",
             )
         }
         appendLine("source: trailmix")
@@ -264,7 +289,7 @@ object NoteMarkdown {
         appendLine("date: ${SimpleDateFormat("yyyy-MM-dd", Locale.US).format(created)}")
         appendLine("duration: ${humanDuration(source.durationMs)}")
         source.meetingTitle?.let { appendLine("meeting: ${yaml(it)}") }
-        appendLine("note: \"[[${noteFileName(source.title, source.createdAtEpochMs).removeSuffix(".md")}]]\"")
+        appendLine("note: \"[[${source.noteLink}]]\"")
         appendLine("type: transcript")
         appendLine("source: trailmix")
         appendLine("tags: [trailmix/transcript]")
@@ -272,7 +297,7 @@ object NoteMarkdown {
         appendLine()
         appendLine("# ${source.title} — transcript")
         appendLine()
-        appendLine("*Verbatim, on-device. Summary: [[${noteFileName(source.title, source.createdAtEpochMs).removeSuffix(".md")}]]*")
+        appendLine("*Verbatim, on-device. Summary: [[${source.noteLink}]]*")
         appendLine()
         appendLine("| Time | Text |")
         appendLine("|---|---|")
