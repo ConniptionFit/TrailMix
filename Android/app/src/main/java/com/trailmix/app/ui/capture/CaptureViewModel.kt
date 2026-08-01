@@ -32,6 +32,9 @@ data class CaptureUiState(
      * counts as "active" everywhere that matters (Home chip, back-confirm, re-attach). */
     val paused: Boolean = false,
     val elapsedLabel: String = "0:00",
+    /** CAP-13: same elapsed time in ms — lets the notification drive a native
+     *  chronometer instead of being re-posted once a second just to advance a string. */
+    val elapsedMs: Long = 0L,
     val livePartial: String = "",
     val lastFinalLine: String = "",
     val merging: Boolean = false,
@@ -45,6 +48,13 @@ data class CaptureUiState(
     val deviceAudioPrompt: DeviceAudioPrompt = DeviceAudioPrompt.NONE,
     /** Calendar event this capture is for (from the Home card or detected live). */
     val meetingTitle: String? = null,
+    /**
+     * CAP-13: the name of the note this capture is writing into, for the ongoing
+     * notification. A resumed capture (CAP-07) carries the existing note's real title; a
+     * fresh one has no title until the merge names it, so it falls back to the meeting name
+     * and finally to "New note" — the same label the Capture screen shows.
+     */
+    val noteTitle: String = "New note",
     /** CAP-12: one-shot — the call this capture started during appears to have ended
      * (AudioManager left call/communication mode) while still recording. Screen shows a
      * "finish now or later?" dialog; [CaptureSessionManager.consumeCallEndedPrompt] clears it. */

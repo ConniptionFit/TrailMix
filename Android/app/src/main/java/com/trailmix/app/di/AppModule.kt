@@ -81,13 +81,27 @@ object AppModule {
         }
     }
 
+    /**
+     * OBS-02 (v1.11.0): the transcript moved out of the note file into a companion
+     * `<name>.transcript.md`, so its `content://` URI needs tracking for exactly the reasons
+     * the note's own `obsidianFileUri` is tracked — update-in-place across title changes,
+     * cascade-delete, and the INT-02 export-location migration. Without it, renaming a note
+     * would orphan its old transcript file. Nullable/additive: existing notes simply have no
+     * transcript file yet and get one on their next export.
+     */
+    private val MIGRATION_8_9 = object : Migration(8, 9) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE notes ADD COLUMN transcriptFileUri TEXT")
+        }
+    }
+
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): TrailMixDatabase =
         Room.databaseBuilder(context, TrailMixDatabase::class.java, "trailmix.db")
             .addMigrations(
                 MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
-                MIGRATION_7_8,
+                MIGRATION_7_8, MIGRATION_8_9,
             )
             .build()
 

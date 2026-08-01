@@ -64,6 +64,15 @@ data class NoteEntity(
      * removes the row for real. Null = live note.
      */
     val deletedAtEpochMs: Long? = null,
+    /**
+     * OBS-02 (v1.11.0): `content://` URI of this note's companion `<name>.transcript.md` in
+     * the Export location. The transcript was split out of the note file so the note stays
+     * small enough to paste into another model as context — a 45-minute transcript is tens of
+     * thousands of characters that crowd out everything else. Tracked for the same reasons as
+     * [obsidianFileUri]: update-in-place, cascade-delete, and export-location migration.
+     * Null until the note has been exported with a non-empty transcript.
+     */
+    val transcriptFileUri: String? = null,
 ) {
     val segments: List<NoteSegment> get() = SegmentsJson.decode(segmentsJson)
     val transcript: List<TranscriptLine> get() = TranscriptJson.decode(transcriptJson)

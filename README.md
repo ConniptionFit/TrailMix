@@ -192,6 +192,18 @@ cd Android
      moment in the transcript. The exported Markdown carries the same annotation as
      `` **`[you]`** `` / `` **`[12:30]`** `` tags plus a one-line key — turning the pill off
      removes both the tinting and the export tags.
+
+### Exported notes are built to be handed to another tool
+
+Each note exports as **two files**: the summary, and a companion `<name>.transcript.md`
+holding the verbatim record. They link to each other, so the summary stays short enough to
+paste into another LLM as context without a 45-minute transcript eating the whole window —
+and the transcript can be moved, archived, or parsed separately whenever you want it.
+
+The summary carries YAML frontmatter (`title`, `date`, `duration`, `meeting`, `attendees`,
+`topics`, `action_items`, a link to the transcript, `tags`), then a `TL;DR` callout, your own
+typed notes, time-windowed `Key points`, and `- [ ]` action items. That means it's queryable
+from Obsidian Dataview, scannable on a phone, and unambiguous to a model reading it cold.
    - **Upcoming meetings** — tap the calendar label on Home to see the next 7 days; tap a
      meeting to capture it (a meeting more than 5 minutes out asks first).
 4. **Transcript** — full-screen, timestamp-labeled lines (no speaker diarization on-device

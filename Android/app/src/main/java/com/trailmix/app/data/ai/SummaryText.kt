@@ -192,5 +192,10 @@ object SummaryText {
         "while", "above", "below", "under", "again", "always", "never", "often", "usually",
         "another", "though", "however", "something", "anything", "everything", "little",
         "entire", "whole", "turned", "means", "meant", "using", "used", "gives", "given",
+        // Units and bare quantities: frequent in technical talks, long enough to clear the
+        // keyword length bar, and useless as a topic ("topics: [milliseconds, percent]").
+        "percent", "seconds", "second", "minutes", "minute", "hours", "hour", "milliseconds",
+        "millisecond", "megabytes", "gigabytes", "kilobytes", "terabytes", "bytes", "times",
+        "number", "numbers", "amount", "total", "average", "roughly", "about",
     )
 }

@@ -131,7 +131,10 @@ class CaptureSessionManager @Inject constructor(
         attendees = emptyList()
         template = SummaryTemplate.NONE.name
         callEndedPromptFired = false
-        _state.value = CaptureUiState(meetingTitle = meetingTitle)
+        _state.value = CaptureUiState(
+            meetingTitle = meetingTitle,
+            noteTitle = meetingTitle ?: "New note",
+        )
         if (resumeNoteId <= 0) {
             // Fresh note: seed the template from the user's Settings default (UX-02);
             // a resumed note keeps whatever template it was created with (see applyResume).
@@ -201,6 +204,7 @@ class CaptureSessionManager @Inject constructor(
                 }
                 _state.value = _state.value.copy(
                     elapsedLabel = elapsedLabel(),
+                    elapsedMs = currentDurationMs(),
                     deviceAudioActive = engine.deviceAudioActive.value,
                     deviceAudioSilent = silentSeconds >= SILENT_HINT_AFTER_S,
                 )
@@ -233,6 +237,9 @@ class CaptureSessionManager @Inject constructor(
             paused = true,
             livePartial = "",
             elapsedLabel = frozenLabel,
+            // priorDurationMs was just advanced above and `recording` is still true here,
+            // so currentDurationMs() would double-count the final delta.
+            elapsedMs = priorDurationMs,
             deviceAudioActive = false,
             deviceAudioSilent = false,
         )
@@ -271,6 +278,8 @@ class CaptureSessionManager @Inject constructor(
         template = note.template ?: SummaryTemplate.NONE.name
         _state.value = _state.value.copy(
             meetingTitle = note.meetingTitle ?: _state.value.meetingTitle,
+            // CAP-13: resuming into a real note — the notification should name it.
+            noteTitle = note.title,
             lastFinalLine = transcriptLines.lastOrNull()?.text ?: "",
         )
     }
@@ -291,7 +300,11 @@ class CaptureSessionManager @Inject constructor(
             val current = meetingSource.currentEvent()
             if (current != null && _state.value.recording) {
                 if (_state.value.meetingTitle == null) {
-                    _state.value = _state.value.copy(meetingTitle = current.title)
+                    _state.value = _state.value.copy(
+                        meetingTitle = current.title,
+                        // Only name the note after the meeting if nothing better is known.
+                        noteTitle = _state.value.noteTitle.takeIf { it != "New note" } ?: current.title,
+                    )
                 }
                 if (attendees.isEmpty()) {
                     attendees = meetingSource.attendeesFor(current.eventId)
