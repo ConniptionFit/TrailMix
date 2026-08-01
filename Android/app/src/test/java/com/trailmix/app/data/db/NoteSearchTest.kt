@@ -1,5 +1,7 @@
 package com.trailmix.app.data.db
 
+import com.trailmix.app.data.model.TranscriptJson
+import com.trailmix.app.data.model.TranscriptLine
 import java.util.Calendar
 import java.util.Locale
 import org.junit.After
@@ -37,10 +39,11 @@ class NoteSearchTest {
         body: String = "Discussed the roadmap and next steps",
         meetingTitle: String? = null,
         attendeesJson: String? = null,
+        transcriptJson: String = "[]",
     ) = NoteEntity(
         title = title,
         segmentsJson = "[]",
-        transcriptJson = "[]",
+        transcriptJson = transcriptJson,
         typedFragments = "",
         durationMs = 60_000,
         createdAtEpochMs = epoch(),
@@ -92,5 +95,72 @@ class NoteSearchTest {
     fun `date and keyword compose`() {
         assertTrue(NoteSearch.matches(note(), "roadmap 7/18"))
         assertFalse(NoteSearch.matches(note(), "budget 7/18"))
+    }
+
+    // ── UX-17: the verbatim transcript is searchable too ─────────────────────
+    //
+    // The body is a condensed summary, so a name said once in a long call is very often
+    // absent from it. In an app whose whole job is capturing what was said, not being able
+    // to find your own words is the worse failure.
+
+    /**
+     * A note whose transcript says things the summary never mentions. Built through the real
+     * [TranscriptJson] encoder rather than hand-written JSON, so the fixture can't drift from
+     * the codec's actual key names.
+     */
+    private fun withTranscript(vararg lines: String) = note(
+        transcriptJson = TranscriptJson.encode(
+            lines.mapIndexed { i, text -> TranscriptLine(label = "0:${10 + i}", text = text) },
+        ),
+    )
+
+    @Test
+    fun `finds a word that is only in the transcript`() {
+        val n = withTranscript("We should call the Henderson contract done by Friday.")
+        assertFalse("precondition: not in the summary", NoteSearch.matches(note(), "henderson"))
+        assertTrue(NoteSearch.matches(n, "henderson"))
+    }
+
+    @Test
+    fun `transcript search is case-insensitive`() {
+        val n = withTranscript("The Henderson contract.")
+        assertTrue(NoteSearch.matches(n, "HENDERSON"))
+    }
+
+    /** The mixed case: one token from the summary, one only from the transcript. */
+    @Test
+    fun `tokens may be satisfied across body and transcript together`() {
+        val n = withTranscript("The Henderson contract needs a signature.")
+        assertTrue(NoteSearch.matches(n, "roadmap henderson"))
+        assertTrue(NoteSearch.matches(n, "henderson roadmap"))
+    }
+
+    @Test
+    fun `a token in neither body nor transcript still fails`() {
+        val n = withTranscript("The Henderson contract needs a signature.")
+        assertFalse(NoteSearch.matches(n, "henderson budget"))
+        assertFalse(NoteSearch.matches(n, "kubernetes"))
+    }
+
+    @Test
+    fun `transcript composes with date search`() {
+        val n = withTranscript("The Henderson contract.")
+        assertTrue(NoteSearch.matches(n, "henderson 7/18"))
+        assertFalse(NoteSearch.matches(n, "henderson 7/19"))
+    }
+
+    /** Multi-line transcripts must not let a match straddle two separate lines. */
+    @Test
+    fun `separate transcript lines are not concatenated into false matches`() {
+        val n = withTranscript("ending with alpha", "beta starts here")
+        assertTrue(NoteSearch.matches(n, "alpha"))
+        assertTrue(NoteSearch.matches(n, "beta"))
+        assertFalse(NoteSearch.matches(n, "alphabeta"))
+    }
+
+    @Test
+    fun `an empty transcript is harmless`() {
+        assertFalse(NoteSearch.matches(note(), "henderson"))
+        assertTrue(NoteSearch.matches(note(), "roadmap"))
     }
 }
