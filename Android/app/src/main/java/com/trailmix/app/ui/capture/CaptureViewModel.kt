@@ -54,12 +54,37 @@ data class CaptureUiState(
      * fresh one has no title until the merge names it, so it falls back to the meeting name
      * and finally to "New note" — the same label the Capture screen shows.
      */
-    val noteTitle: String = "New note",
+    val noteTitle: String = UNTITLED,
+    /**
+     * CAP-15: wall-clock instant the elapsed timer counts up from — i.e.
+     * `now - elapsedMs` — which is what the notification's native chronometer needs as its
+     * base.
+     *
+     * It is a separate field rather than something the notification derives, because it is
+     * *stable* while recording (both `now` and `elapsedMs` advance together) and only moves
+     * when the timeline itself is redefined: resuming into an existing note adopts that
+     * note's prior duration, and pausing freezes it. That makes it the right thing to
+     * compare when deciding whether the notification must be re-posted — comparing
+     * `elapsedMs` instead would re-post every second and defeat the chronometer.
+     */
+    val elapsedBaseMs: Long = 0L,
     /** CAP-12: one-shot — the call this capture started during appears to have ended
      * (AudioManager left call/communication mode) while still recording. Screen shows a
      * "finish now or later?" dialog; [CaptureSessionManager.consumeCallEndedPrompt] clears it. */
     val callEndedPrompt: Boolean = false,
-)
+) {
+    companion object {
+        /**
+         * Placeholder shown (and stored in [noteTitle]) until something better is known.
+         *
+         * It is also used as a *sentinel*: `CaptureSessionManager` checks against it to decide
+         * whether a live-detected meeting may claim the note's name, so this must stay a
+         * single shared constant. When it was duplicated as a literal across four sites, any
+         * edit to one copy would have silently stopped that check from ever matching.
+         */
+        const val UNTITLED = "New note"
+    }
+}
 
 /**
  * Thin UI-state adapter over [CaptureSessionManager] (CAP-10). The manager — not this

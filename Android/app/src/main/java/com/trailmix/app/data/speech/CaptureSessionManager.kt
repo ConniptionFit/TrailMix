@@ -133,7 +133,7 @@ class CaptureSessionManager @Inject constructor(
         callEndedPromptFired = false
         _state.value = CaptureUiState(
             meetingTitle = meetingTitle,
-            noteTitle = meetingTitle ?: "New note",
+            noteTitle = meetingTitle ?: CaptureUiState.UNTITLED,
         )
         if (resumeNoteId <= 0) {
             // Fresh note: seed the template from the user's Settings default (UX-02);
@@ -205,6 +205,7 @@ class CaptureSessionManager @Inject constructor(
                 _state.value = _state.value.copy(
                     elapsedLabel = elapsedLabel(),
                     elapsedMs = currentDurationMs(),
+                    elapsedBaseMs = elapsedBaseMs(),
                     deviceAudioActive = engine.deviceAudioActive.value,
                     deviceAudioSilent = silentSeconds >= SILENT_HINT_AFTER_S,
                 )
@@ -240,6 +241,7 @@ class CaptureSessionManager @Inject constructor(
             // priorDurationMs was just advanced above and `recording` is still true here,
             // so currentDurationMs() would double-count the final delta.
             elapsedMs = priorDurationMs,
+            elapsedBaseMs = System.currentTimeMillis() - priorDurationMs,
             deviceAudioActive = false,
             deviceAudioSilent = false,
         )
@@ -303,7 +305,8 @@ class CaptureSessionManager @Inject constructor(
                     _state.value = _state.value.copy(
                         meetingTitle = current.title,
                         // Only name the note after the meeting if nothing better is known.
-                        noteTitle = _state.value.noteTitle.takeIf { it != "New note" } ?: current.title,
+                        noteTitle = _state.value.noteTitle.takeIf { it != CaptureUiState.UNTITLED }
+                            ?: current.title,
                     )
                 }
                 if (attendees.isEmpty()) {
@@ -477,6 +480,11 @@ class CaptureSessionManager @Inject constructor(
      * duration, the elapsed label) goes through this single branch. */
     private fun currentDurationMs(): Long =
         if (_state.value.recording) priorDurationMs + (System.currentTimeMillis() - startedAtMs) else priorDurationMs
+
+    /** CAP-15: the instant the timer counts up from — the chronometer's base. Stable while
+     * recording; moves only when the timeline is redefined (resume adopts a note's prior
+     * duration, pause freezes it), which is exactly when the notification must be re-posted. */
+    private fun elapsedBaseMs(): Long = System.currentTimeMillis() - currentDurationMs()
 
     fun elapsedLabel(): String {
         val sec = (currentDurationMs() / 1000).coerceAtLeast(0)

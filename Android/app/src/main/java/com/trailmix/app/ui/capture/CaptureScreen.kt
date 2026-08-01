@@ -383,7 +383,13 @@ fun CaptureScreen(
         }
 
         Text(
-            text = state.meetingTitle ?: "New note",
+            // UX-15: show the note being recorded INTO, not the calendar event. This read
+            // `meetingTitle ?: "New note"`, so resuming into an existing note (CAP-07)
+            // displayed "New note" on screen while the CAP-13 notification — which already
+            // reads noteTitle — correctly showed the note's real name. noteTitle already
+            // encodes the same fallback chain (note title → meeting title → "New note"),
+            // so this is strictly more informative, never less.
+            text = state.noteTitle,
             color = c.text,
             fontSize = 19.sp,
             fontWeight = FontWeight.SemiBold,

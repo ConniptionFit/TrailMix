@@ -141,7 +141,16 @@ class CaptureService : Service() {
                     old.noteTitle == new.noteTitle &&
                     old.paused == new.paused &&
                     old.merging == new.merging &&
-                    (old.recording || old.paused || old.merging) == (new.recording || new.paused || new.merging)
+                    (old.recording || old.paused || old.merging) == (new.recording || new.paused || new.merging) &&
+                    // CAP-15: re-post when the timer's ORIGIN moves, not when it ticks.
+                    // Resuming into an existing note (CAP-07) adopts that note's prior
+                    // duration a moment after the session starts, so the chronometer had
+                    // already been posted counting from zero and nothing above changed to
+                    // correct it — the notification then under-reported elapsed time for the
+                    // whole session and visibly jumped on the first pause. The base is stable
+                    // while recording (now and elapsedMs advance together), so comparing it
+                    // costs no extra posts; the tolerance just absorbs scheduling jitter.
+                    kotlin.math.abs(old.elapsedBaseMs - new.elapsedBaseMs) < BASE_DRIFT_TOLERANCE_MS
             }
             .onEach { state ->
                 // A stray final "everything false" emission (right after the session
@@ -264,7 +273,9 @@ class CaptureService : Service() {
             .setOnlyAlertOnce(true)
             .setShowWhen(recording)
             .setUsesChronometer(recording)
-            .setWhen(System.currentTimeMillis() - state.elapsedMs)
+            // CAP-15: the session's own timeline origin, not a value re-derived here. See
+            // CaptureUiState.elapsedBaseMs.
+            .setWhen(state.elapsedBaseMs)
             .setContentIntent(tapIntent())
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
@@ -312,6 +323,13 @@ class CaptureService : Service() {
     }
 
     companion object {
+        /**
+         * CAP-15: how far the chronometer's base may drift before the notification is
+         * re-posted. Comfortably above per-tick jitter, far below any real timeline change
+         * (a resume adopts minutes of prior duration).
+         */
+        private const val BASE_DRIFT_TOLERANCE_MS = 2_000L
+
         private const val CHANNEL_ID = "capture_v3"
 
         /**
