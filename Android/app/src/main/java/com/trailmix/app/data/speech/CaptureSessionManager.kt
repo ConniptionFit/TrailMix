@@ -61,6 +61,7 @@ class CaptureSessionManager @Inject constructor(
     private val notesRepository: NotesRepository,
     private val settingsRepository: SettingsRepository,
     private val meetingSource: UpcomingMeetingSource,
+    private val journal: CaptureJournalStore,
 ) {
     private val scope = CoroutineScope(SupervisorJob())
     private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -92,11 +93,34 @@ class CaptureSessionManager @Inject constructor(
     private val _callEndedEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val callEndedEvents: SharedFlow<Unit> = _callEndedEvents.asSharedFlow()
 
+    /**
+     * REL-09: a journal left behind by a capture that never reached End & Merge — the process
+     * died mid-session. Non-null means the Home screen should offer to continue or complete
+     * it. Populated once at construction, i.e. on the first launch after the crash.
+     */
+    private val _pendingRecovery = MutableStateFlow<PendingJournal?>(null)
+    val pendingRecovery: StateFlow<PendingJournal?> = _pendingRecovery.asStateFlow()
+
+    /** REL-09: true while [completeRecovered] is merging a recovered session into a note. */
+    private val _recovering = MutableStateFlow(false)
+    val recovering: StateFlow<Boolean> = _recovering.asStateFlow()
+
     private val transcriptLines = mutableListOf<TranscriptLine>()
     private var startedAtMs = 0L
     private var listenJob: Job? = null
     private var tickerJob: Job? = null
     private var bumpJob: Job? = null
+    private var journalJob: Job? = null
+
+    /** REL-09: last values written to the journal, so each flush only records what moved. */
+    private var journaled = JournalSnapshot()
+
+    /**
+     * REL-09: creation timestamp a *recovered* fresh note should carry — the moment the lost
+     * capture actually started, read back from its journal. Normal sessions leave this at 0
+     * and keep the existing behaviour of stamping the note when the merge runs.
+     */
+    private var recoveredCreatedAtMs = 0L
     private var capturedInCall = false
     private var silentSeconds = 0
     private var priorDurationMs = 0L
@@ -127,6 +151,7 @@ class CaptureSessionManager @Inject constructor(
         _liveLines.value = emptyList()
         priorDurationMs = 0L
         resumeCreatedAt = 0L
+        recoveredCreatedAtMs = 0L
         capturedInCall = false
         attendees = emptyList()
         template = SummaryTemplate.NONE.name
@@ -135,6 +160,11 @@ class CaptureSessionManager @Inject constructor(
             meetingTitle = meetingTitle,
             noteTitle = meetingTitle ?: CaptureUiState.UNTITLED,
         )
+        // REL-09: open the crash journal before anything can be captured, so there is no
+        // window where an utterance exists only in memory.
+        journaled = JournalSnapshot()
+        journal.begin(System.currentTimeMillis(), resumeNoteId)
+        startJournalFlush()
         if (resumeNoteId <= 0) {
             // Fresh note: seed the template from the user's Settings default (UX-02);
             // a resumed note keeps whatever template it was created with (see applyResume).
@@ -171,10 +201,14 @@ class CaptureSessionManager @Inject constructor(
             )
             events.collect { event ->
                 if (event.finalizedUtterance.isNotBlank()) {
-                    transcriptLines += TranscriptLine(
+                    val finalized = TranscriptLine(
                         label = elapsedLabel(),
                         text = event.finalizedUtterance,
                     )
+                    transcriptLines += finalized
+                    // REL-09: journal it before it is anything but a value in RAM. Everything
+                    // else here is display state that can be rebuilt; this line cannot.
+                    journal.line(finalized)
                     _liveLines.value = transcriptLines.toList()
                     _state.value = _state.value.copy(
                         lastFinalLine = event.finalizedUtterance,
@@ -245,6 +279,9 @@ class CaptureSessionManager @Inject constructor(
             deviceAudioActive = false,
             deviceAudioSilent = false,
         )
+        // REL-09: the timeline just froze — pin the final duration now rather than leaving
+        // the journal to report whatever the last periodic flush happened to catch.
+        flushJournal()
     }
 
     /** CAP-12: the Resume half of [pause] — restarts the mic/engine and the elapsed
@@ -357,73 +394,120 @@ class CaptureSessionManager @Inject constructor(
             withTimeoutOrNull(5_000) { listenJob?.join() }
             stopCapture()
             val resuming = resumeNoteId > 0
-            val createdAt = if (resuming) resumeCreatedAt else System.currentTimeMillis()
-            val typed = fragments.value
-            val transcript = transcriptLines.toList()
-            // CAP-11: an entirely empty session — nothing typed, nothing transcribed —
-            // saves nothing at all. -1 tells the caller no note was created.
-            if (MergePolicy.nothingToSave(typed, transcript)) {
-                resumeNoteId = -1L
-                _state.value = _state.value.copy(merging = false)
-                // The caller navigates from this callback — NavController is main-thread-only
-                // (this scope's default dispatcher crashed popBackStack when first shipped).
-                withContext(Dispatchers.Main) { onDone(-1L) }
-                return@launch
+            val createdAt = when {
+                // resumeCreatedAt is normally filled in by applyResume(), but a session
+                // *recovered* into an existing note (REL-09) never runs it — and neither
+                // does a resume whose note has since vanished. Re-read rather than stamping
+                // the note with epoch zero.
+                resuming -> resumeCreatedAt.takeIf { it > 0 }
+                    ?: notesRepository.getNote(resumeNoteId)?.createdAtEpochMs
+                    ?: System.currentTimeMillis()
+                // REL-09: a recovered session is stamped with when the capture really began,
+                // not when it was rescued — the two can be a day apart.
+                recoveredCreatedAtMs > 0 -> recoveredCreatedAtMs
+                else -> System.currentTimeMillis()
             }
-            val customTemplates = settingsRepository.customSummaryTemplates.first()
-            val result = aiProcessor.merge(
-                typedFragments = typed,
-                transcript = transcript,
+            val id = mergeAndSave(
+                noteId = resumeNoteId,
+                typed = fragments.value,
+                transcript = transcriptLines.toList(),
+                durationMs = durationMs,
                 createdAtEpochMs = createdAt,
+                meetingTitle = _state.value.meetingTitle,
+                capturedInCall = capturedInCall,
                 attendees = attendees,
-                templateGuidance = TemplateOptions.guidanceFor(template, customTemplates),
-                // AI-05: the template also steers the zero-AI path now, so "Conference talk"
-                // shapes the note on a device with no Gemini Nano.
-                style = TemplateOptions.styleFor(template, customTemplates),
+                template = template,
             )
-            val id = if (resuming) {
-                notesRepository.updateMergedNote(
-                    id = resumeNoteId,
-                    title = result.title,
-                    segments = result.segments,
-                    transcript = transcript,
-                    typedFragments = typed,
-                    durationMs = durationMs,
-                    createdAtEpochMs = createdAt,
-                    mergedWithAi = result.usedOnDeviceAi,
-                    meetingTitle = _state.value.meetingTitle,
-                    capturedInCall = capturedInCall,
-                    attendees = attendees,
-                    structuredSummary = result.structuredSummary,
-                    template = template,
-                )
-                resumeNoteId
-            } else {
-                notesRepository.saveMergedNote(
-                    title = result.title,
-                    segments = result.segments,
-                    transcript = transcript,
-                    typedFragments = typed,
-                    durationMs = durationMs,
-                    createdAtEpochMs = createdAt,
-                    mergedWithAi = result.usedOnDeviceAi,
-                    meetingTitle = _state.value.meetingTitle,
-                    capturedInCall = capturedInCall,
-                    attendees = attendees,
-                    structuredSummary = result.structuredSummary,
-                    template = template,
-                )
-            }
+            // REL-09: the capture is now durably a note (or was empty and deliberately not
+            // saved), so the journal has done its job. Only now — a crash at any point
+            // before this line still leaves the transcript recoverable.
+            journal.finish()
             resumeNoteId = -1L
+            recoveredCreatedAtMs = 0L
             _state.value = _state.value.copy(merging = false)
+            // The caller navigates from this callback — NavController is main-thread-only
+            // (this scope's default dispatcher crashed popBackStack when first shipped).
             withContext(Dispatchers.Main) { onDone(id) }
         }
+    }
+
+    /**
+     * Merge a captured session into a note and return its id, or -1 when there was nothing
+     * worth saving (CAP-11).
+     *
+     * Split out of [endAndMerge] for REL-09: a session recovered from a crash journal has to
+     * travel exactly the same path — same template resolution, same AI-05 style steering,
+     * same AI-06 title protection on re-merge, same automatic export — and a second copy of
+     * this that drifted would mean recovered notes were quietly second-class.
+     */
+    @Suppress("LongParameterList")
+    private suspend fun mergeAndSave(
+        noteId: Long,
+        typed: String,
+        transcript: List<TranscriptLine>,
+        durationMs: Long,
+        createdAtEpochMs: Long,
+        meetingTitle: String?,
+        capturedInCall: Boolean,
+        attendees: List<String>,
+        template: String,
+    ): Long {
+        // CAP-11: an entirely empty session — nothing typed, nothing transcribed —
+        // saves nothing at all. -1 tells the caller no note was created.
+        if (MergePolicy.nothingToSave(typed, transcript)) return -1L
+        val customTemplates = settingsRepository.customSummaryTemplates.first()
+        val result = aiProcessor.merge(
+            typedFragments = typed,
+            transcript = transcript,
+            createdAtEpochMs = createdAtEpochMs,
+            attendees = attendees,
+            templateGuidance = TemplateOptions.guidanceFor(template, customTemplates),
+            // AI-05: the template also steers the zero-AI path now, so "Conference talk"
+            // shapes the note on a device with no Gemini Nano.
+            style = TemplateOptions.styleFor(template, customTemplates),
+        )
+        if (noteId > 0) {
+            notesRepository.updateMergedNote(
+                id = noteId,
+                title = result.title,
+                segments = result.segments,
+                transcript = transcript,
+                typedFragments = typed,
+                durationMs = durationMs,
+                createdAtEpochMs = createdAtEpochMs,
+                mergedWithAi = result.usedOnDeviceAi,
+                meetingTitle = meetingTitle,
+                capturedInCall = capturedInCall,
+                attendees = attendees,
+                structuredSummary = result.structuredSummary,
+                template = template,
+            )
+            return noteId
+        }
+        return notesRepository.saveMergedNote(
+            title = result.title,
+            segments = result.segments,
+            transcript = transcript,
+            typedFragments = typed,
+            durationMs = durationMs,
+            createdAtEpochMs = createdAtEpochMs,
+            mergedWithAi = result.usedOnDeviceAi,
+            meetingTitle = meetingTitle,
+            capturedInCall = capturedInCall,
+            attendees = attendees,
+            structuredSummary = result.structuredSummary,
+            template = template,
+        )
     }
 
     fun cancel() {
         engine.endInput()
         stopCapture()
+        // REL-09: an explicit discard is the user saying they don't want this capture. That
+        // is the one case where the journal should go without being offered back to them.
+        journal.discardCurrent()
         resumeNoteId = -1L
+        recoveredCreatedAtMs = 0L
     }
 
     /** CAP-12: clears the one-shot call-ended dialog/notification without ending the
@@ -461,6 +545,11 @@ class CaptureSessionManager @Inject constructor(
         listenJob = null
         tickerJob?.cancel()
         tickerJob = null
+        // REL-09: one last flush before the periodic writer stops, so the journal's duration
+        // and typed fragments match the session that is about to be merged.
+        flushJournal()
+        journalJob?.cancel()
+        journalJob = null
         disarmBumpTimer()
         engine.detachDeviceAudio()
         CaptureService.stop(appContext)
@@ -509,9 +598,198 @@ class CaptureSessionManager @Inject constructor(
         bumpJob = null
     }
 
+    // ── REL-09: crash journal ──────────────────────────────────────────────
+
+    /** Everything the journal tracks besides the transcript itself, as last written. */
+    private data class JournalSnapshot(
+        val durationMs: Long = -1L,
+        val fragments: String? = null,
+        val title: String? = null,
+        val meeting: String? = null,
+        val template: String? = null,
+        val attendees: List<String>? = null,
+        val inCall: Boolean? = null,
+        val resumeNoteId: Long? = null,
+    )
+
+    /**
+     * Periodically record the session's non-transcript state.
+     *
+     * Runs for the whole session rather than only while recording, deliberately: typing into
+     * the fragments box is a normal thing to do while *paused*, and losing that to a crash
+     * would be just as annoying as losing speech. Utterances are journaled the instant they
+     * are recognized, so this timer only governs how stale the metadata can be — a few
+     * seconds of elapsed duration, at the cost of one small append instead of one per
+     * keystroke.
+     */
+    private fun startJournalFlush() {
+        journalJob?.cancel()
+        journalJob = scope.launch {
+            while (isActive) {
+                delay(JOURNAL_FLUSH_INTERVAL_MS)
+                flushJournal()
+            }
+        }
+    }
+
+    /** Append a delta for whatever changed since the last flush; writes nothing if nothing did. */
+    private fun flushJournal() {
+        val snapshot = _state.value
+        val duration = currentDurationMs()
+        val typed = fragments.value
+        journal.delta(
+            CaptureJournal.deltaRecord(
+                durationMs = duration.takeIf { it != journaled.durationMs },
+                typedFragments = typed.takeIf { it != journaled.fragments },
+                noteTitle = snapshot.noteTitle.takeIf { it != journaled.title },
+                meetingTitle = snapshot.meetingTitle?.takeIf { it != journaled.meeting },
+                template = template.takeIf { it != journaled.template },
+                attendees = attendees.takeIf { it != journaled.attendees },
+                capturedInCall = capturedInCall.takeIf { it != journaled.inCall },
+                resumeNoteId = resumeNoteId.takeIf { it != journaled.resumeNoteId },
+            ),
+        )
+        journaled = JournalSnapshot(
+            durationMs = duration,
+            fragments = typed,
+            title = snapshot.noteTitle,
+            meeting = snapshot.meetingTitle,
+            template = template,
+            attendees = attendees,
+            inCall = capturedInCall,
+            resumeNoteId = resumeNoteId,
+        )
+    }
+
+    /**
+     * Look for a capture the app never got to finish. Runs once at construction — i.e. on the
+     * first launch after the process died — and again after each recovery is resolved, so a
+     * device that crashed twice surfaces both, one prompt at a time.
+     */
+    private suspend fun refreshRecovery() {
+        if (_state.value.recording || _state.value.paused || _state.value.merging) return
+        _pendingRecovery.value = journal.pending().firstOrNull()
+    }
+
+    /**
+     * Pick the recovered capture back up and keep recording into it (REL-09).
+     *
+     * The buffers are restored exactly as [applyResume] restores a saved note's, and the
+     * *same* journal file is adopted rather than started fresh, so a second crash recovers a
+     * second time with no special case.
+     */
+    fun continueRecovered() {
+        val pending = _pendingRecovery.value ?: return
+        if (_state.value.recording || _state.value.paused || _state.value.merging) return
+        _pendingRecovery.value = null
+        val recovered = pending.session
+
+        resumeNoteId = recovered.resumeNoteId
+        fragments.value = recovered.typedFragments
+        transcriptLines.clear()
+        transcriptLines.addAll(recovered.transcript)
+        _liveLines.value = transcriptLines.toList()
+        priorDurationMs = recovered.durationMs
+        resumeCreatedAt = 0L
+        recoveredCreatedAtMs = recovered.startedAtEpochMs
+        capturedInCall = recovered.capturedInCall
+        attendees = recovered.attendees
+        template = recovered.template
+        callEndedPromptFired = false
+        _state.value = CaptureUiState(
+            meetingTitle = recovered.meetingTitle,
+            noteTitle = recovered.noteTitle.ifBlank {
+                recovered.meetingTitle ?: CaptureUiState.UNTITLED
+            },
+            lastFinalLine = transcriptLines.lastOrNull()?.text ?: "",
+        )
+
+        journaled = JournalSnapshot()
+        journal.adopt(pending.id)
+        startJournalFlush()
+        // false: the in-memory buffers ARE the recovered content — the CAP-12 trap applies
+        // here for the same reason it applies to waking a paused session.
+        startRecording(applyPriorResume = false)
+    }
+
+    /**
+     * Finish the recovered capture as it stands: merge it into a note without recording any
+     * more (REL-09). [onDone] receives the note id on the main thread, or -1 if the journal
+     * turned out to hold nothing mergeable.
+     *
+     * This can take minutes on a long session — it is the same chunked on-device merge End &
+     * Merge runs — which is why [recovering] exists for the UI to show progress against.
+     */
+    fun completeRecovered(onDone: (Long) -> Unit) {
+        val pending = _pendingRecovery.value ?: return
+        if (_recovering.value || _state.value.recording || _state.value.paused || _state.value.merging) return
+        _pendingRecovery.value = null
+        _recovering.value = true
+        scope.launch {
+            val recovered = pending.session
+            val createdAt = if (recovered.resumeNoteId > 0) {
+                notesRepository.getNote(recovered.resumeNoteId)?.createdAtEpochMs
+                    ?: recovered.startedAtEpochMs
+            } else {
+                recovered.startedAtEpochMs
+            }
+            val id = runCatching {
+                mergeAndSave(
+                    noteId = recovered.resumeNoteId,
+                    typed = recovered.typedFragments,
+                    transcript = recovered.transcript,
+                    durationMs = recovered.durationMs,
+                    createdAtEpochMs = createdAt,
+                    meetingTitle = recovered.meetingTitle,
+                    capturedInCall = recovered.capturedInCall,
+                    attendees = recovered.attendees,
+                    template = recovered.template,
+                )
+            }.getOrElse { -1L }
+            // Only discard the journal once the note exists. If the merge threw, the
+            // transcript stays on disk and is offered again rather than being thrown away
+            // on the strength of a failed rescue.
+            if (id > 0) journal.discard(pending.id)
+            _recovering.value = false
+            withContext(Dispatchers.Main) { onDone(id) }
+            refreshRecovery()
+        }
+    }
+
+    /** Throw the recovered capture away for good (REL-09) — the UI confirms first. */
+    fun discardRecovered() {
+        val pending = _pendingRecovery.value ?: return
+        _pendingRecovery.value = null
+        scope.launch {
+            journal.discard(pending.id)
+            refreshRecovery()
+        }
+    }
+
+    /**
+     * Not now: hide the prompt but keep the journal, so it is offered again next launch.
+     * Dismissing a dialog must never be a destructive act on an hour of transcript.
+     */
+    fun dismissRecovery() {
+        _pendingRecovery.value = null
+    }
+
+    init {
+        scope.launch { refreshRecovery() }
+    }
+
     private companion object {
         const val SILENCE_PEAK = 64
         const val SILENT_HINT_AFTER_S = 5
+
+        /**
+         * REL-09: how often the session's metadata (elapsed duration, typed fragments,
+         * detected meeting) is appended to the crash journal. Transcript lines do NOT wait
+         * for this — they are written as they are recognized. Short enough that a crash
+         * costs seconds of elapsed time, long enough that a 90-minute session adds ~540
+         * tiny records rather than one per keystroke.
+         */
+        const val JOURNAL_FLUSH_INTERVAL_MS = 10_000L
 
         // CAP-12: how long a capture can run unpaused before the "still recording?"
         // nudge fires (and re-fires every interval after that). Not yet user-configurable
