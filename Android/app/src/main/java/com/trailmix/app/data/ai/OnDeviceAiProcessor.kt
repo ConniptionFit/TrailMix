@@ -126,7 +126,9 @@ class OnDeviceAiProcessor @Inject constructor() {
                 Rules:
                 - Prefer the typed notes when they conflict with the transcript.
                 - Keep it factual and short; no invented details.
-                - First line: a short title (max 8 words), no markdown.
+                - First line: a title of at most 8 words naming what this was about.
+                  No markdown, no "Title:" label, no trailing period. Name the topic —
+                  do not copy the transcript's opening sentence.
                 - Then the note body as plain sentences, one thought per sentence.
 
                 Typed notes:
@@ -140,7 +142,10 @@ class OnDeviceAiProcessor @Inject constructor() {
             val lines = output.lines().map { it.trim() }.filter { it.isNotBlank() }
             if (lines.size < 2) return@withContext fallbackMerge(typedFragments, transcript, createdAtEpochMs, style)
 
-            val title = lines.first().removePrefix("#").trim().take(80)
+            // AI-07: the prompt's "max 8 words, no markdown" is a request, not a constraint.
+            // NoteTitle.clean is the constraint — it also falls back to the default title,
+            // so no separate ifBlank guard is needed below.
+            val title = NoteTitle.clean(lines.first(), createdAtEpochMs)
             val body = lines.drop(1).joinToString(" ")
             val segments = attributeProvenance(splitSentences(body), typedFragments, transcriptText)
             // Structured summary from the model, or the deterministic structurer as a net so
@@ -151,7 +156,7 @@ class OnDeviceAiProcessor @Inject constructor() {
             }.getOrNull() ?: DeterministicSummary.from(typedFragments, transcript, style)
 
             MergeResult(
-                title = title.ifBlank { defaultTitle(createdAtEpochMs) },
+                title = title,
                 segments = segments.ifEmpty {
                     fallbackMerge(typedFragments, transcript, createdAtEpochMs, style).segments
                 },
