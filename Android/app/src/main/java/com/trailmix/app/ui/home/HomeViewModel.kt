@@ -9,6 +9,7 @@ import com.trailmix.app.data.db.NoteSearch
 import com.trailmix.app.data.db.NotesRepository
 import com.trailmix.app.data.db.toMarkdown
 import com.trailmix.app.data.speech.CaptureSessionManager
+import com.trailmix.app.data.speech.PendingJournal
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -108,6 +109,32 @@ class HomeViewModel @Inject constructor(
 
     private val _snackbarMessage = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val snackbarMessage: SharedFlow<String> = _snackbarMessage
+
+    // ── Crash recovery (REL-09) ─────────────────────────────────────────────
+
+    /** Non-null when a previous capture died with the process and is still on disk. */
+    val pendingRecovery: StateFlow<PendingJournal?> = captureSessionManager.pendingRecovery
+
+    /** True while a recovered capture is being merged into a note — can take minutes. */
+    val recovering: StateFlow<Boolean> = captureSessionManager.recovering
+
+    /** Emits the note id once [completeRecovered] finishes, so Home can open it. */
+    private val _recoveredNoteId = MutableSharedFlow<Long>(extraBufferCapacity = 1)
+    val recoveredNoteId: SharedFlow<Long> = _recoveredNoteId
+
+    fun continueRecovered() = captureSessionManager.continueRecovered()
+
+    fun completeRecovered() = captureSessionManager.completeRecovered { id ->
+        if (id > 0) {
+            _recoveredNoteId.tryEmit(id)
+        } else {
+            _snackbarMessage.tryEmit("That capture had nothing in it — nothing was saved")
+        }
+    }
+
+    fun discardRecovered() = captureSessionManager.discardRecovered()
+
+    fun dismissRecovery() = captureSessionManager.dismissRecovery()
 
     init {
         refreshUpcoming()

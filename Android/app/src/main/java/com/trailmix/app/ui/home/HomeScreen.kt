@@ -92,6 +92,9 @@ fun HomeScreen(
     val upcoming by viewModel.upcoming.collectAsStateWithLifecycle()
     val calendarGranted by viewModel.calendarGranted.collectAsStateWithLifecycle()
     val activeCapture by viewModel.activeCapture.collectAsStateWithLifecycle()
+    // REL-09: a capture the app never got to finish, still on disk.
+    val pendingRecovery by viewModel.pendingRecovery.collectAsStateWithLifecycle()
+    val recovering by viewModel.recovering.collectAsStateWithLifecycle()
 
     // UX-10: non-null selectedIds = selection mode. Back exits it instead of the app.
     val selecting = selectedIds != null
@@ -111,6 +114,11 @@ fun HomeScreen(
         viewModel.snackbarMessage.collect { message ->
             snackbarHostState.showSnackbar(message)
         }
+    }
+
+    // REL-09: a recovered capture merged into a note — open it, same as End & Merge does.
+    LaunchedEffect(Unit) {
+        viewModel.recoveredNoteId.collect { id -> onOpenNote(id) }
     }
 
     // Long-press context menu state (CAP-05): which note's menu is open. Since v1.7.0
@@ -516,6 +524,25 @@ fun HomeScreen(
         ) { data -> Snackbar(snackbarData = data) }
     }
 
+    // REL-09: offer back a capture that died with the process. Suppressed while a recovery
+    // merge is already running so the two dialogs can't stack.
+    pendingRecovery?.takeIf { !recovering }?.let { pending ->
+        CrashRecoveryDialog(
+            pending = pending,
+            onContinue = {
+                viewModel.continueRecovered()
+                onOpenActiveCapture()
+            },
+            onComplete = { viewModel.completeRecovered() },
+            onDiscard = { viewModel.discardRecovered() },
+            onLater = { viewModel.dismissRecovery() },
+        )
+    }
+
+    if (recovering) {
+        RecoveryProgressDialog()
+    }
+
     // Long-press context menu (CAP-05, slimmed by INT-02/UX-08 in v1.7.0): Delete / Share.
     // UX-10 adds Select multiple, which enters selection mode seeded with this note.
     contextMenuNote?.let { note ->
@@ -540,6 +567,165 @@ fun HomeScreen(
                 context.startActivity(Intent.createChooser(sendIntent, "Share note"))
             },
         )
+    }
+}
+
+/**
+ * REL-09: the first thing you see after TrailMix died mid-capture.
+ *
+ * The tone is deliberate. A crash during a recording is alarming precisely because the user
+ * has no way to know whether their hour of notes still exists, so the dialog leads with the
+ * answer — it was saved as it ran — before offering anything. The two real choices are the
+ * ones the situation actually poses: the meeting is still going (Continue), or it isn't
+ * (Save as note).
+ *
+ * Discard is present but last and destructive-coloured, behind its own confirm. Dismissing
+ * the dialog is **Later**, not a decision: it keeps the journal and re-offers it next launch,
+ * because an accidental tap outside must never be how someone loses a transcript.
+ */
+@Composable
+private fun CrashRecoveryDialog(
+    pending: com.trailmix.app.data.speech.PendingJournal,
+    onContinue: () -> Unit,
+    onComplete: () -> Unit,
+    onDiscard: () -> Unit,
+    onLater: () -> Unit,
+) {
+    val c = TrailMix.colors
+    var confirmDiscard by remember { mutableStateOf(false) }
+    val session = pending.session
+
+    if (confirmDiscard) {
+        AlertDialog(
+            onDismissRequest = { confirmDiscard = false },
+            containerColor = c.card,
+            title = { Text("Discard this capture?", color = c.text, fontSize = 17.sp) },
+            text = {
+                Text(
+                    // No Recently deleted safety net here: this transcript was never a note,
+                    // so there is nothing to restore it from. Say so plainly.
+                    "The recovered transcript will be deleted permanently. It was never " +
+                        "saved as a note, so this can't be undone.",
+                    color = c.dim,
+                    fontSize = 13.5.sp,
+                    lineHeight = 19.sp,
+                )
+            },
+            confirmButton = {
+                Text(
+                    text = "Discard",
+                    color = c.recordingRed,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.clickable { confirmDiscard = false; onDiscard() }.padding(8.dp),
+                )
+            },
+            dismissButton = {
+                Text(
+                    text = "Keep it",
+                    color = c.dim,
+                    fontSize = 14.sp,
+                    modifier = Modifier.clickable { confirmDiscard = false }.padding(8.dp),
+                )
+            },
+        )
+        return
+    }
+
+    Dialog(onDismissRequest = onLater) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(c.card)
+                .padding(vertical = 8.dp),
+        ) {
+            Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
+                Text(
+                    text = "Unfinished capture recovered",
+                    color = c.text,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = recoverySummary(session),
+                    color = c.amber,
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+                Text(
+                    text = "TrailMix closed before this capture was saved. The transcript " +
+                        "was written as it ran, so it's all still here.",
+                    color = c.dim,
+                    fontSize = 13.5.sp,
+                    lineHeight = 19.sp,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(c.border))
+            ContextMenuRow(
+                label = "Continue capture",
+                hint = "Pick up recording where it left off",
+            ) { onContinue() }
+            ContextMenuRow(
+                label = "Save as note",
+                hint = "Merge what was captured and finish now",
+            ) { onComplete() }
+            ContextMenuRow(label = "Later", hint = "Ask again next time you open TrailMix") { onLater() }
+            ContextMenuRow(label = "Discard", destructive = true) { confirmDiscard = true }
+        }
+    }
+}
+
+/** e.g. "Jul 31, 3:04 PM · 42:15 · 318 lines" — enough to recognise which session this was. */
+private fun recoverySummary(session: com.trailmix.app.data.speech.CaptureJournal.RecoveredSession): String {
+    val parts = mutableListOf<String>()
+    if (session.startedAtEpochMs > 0) {
+        parts += SimpleDateFormat("MMM d, h:mm a", Locale.getDefault())
+            .format(Date(session.startedAtEpochMs))
+    }
+    if (session.durationMs > 0) {
+        parts += com.trailmix.app.data.ai.TranscriptCoverage.formatSeconds(
+            (session.durationMs / 1000).toInt(),
+        )
+    }
+    val lines = session.transcript.size
+    if (lines > 0) parts += "$lines line${if (lines == 1) "" else "s"}"
+    if (session.typedFragments.isNotBlank()) parts += "typed notes"
+    return parts.joinToString(" · ")
+}
+
+/**
+ * REL-09: shown while a recovered capture is merging. Deliberately not dismissable — the
+ * merge is a chunked on-device model pass that can run for minutes on a long session, and
+ * letting the dialog close would leave no sign that anything was happening.
+ */
+@Composable
+private fun RecoveryProgressDialog() {
+    val c = TrailMix.colors
+    Dialog(onDismissRequest = {}) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .background(c.card)
+                .padding(24.dp),
+        ) {
+            Text(
+                text = "Rebuilding your note…",
+                color = c.text,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = "Summarizing on-device. A long capture can take a few minutes.",
+                color = c.dim,
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        }
     }
 }
 
