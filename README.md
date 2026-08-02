@@ -99,7 +99,8 @@ cd Android
 - **No network permission.** The OS itself prevents this app from transmitting anything.
 - **Zero-retention audio.** No audio file is ever created; captured PCM flows through an
   in-memory pipe straight into the on-device recognizer. There is nothing to delete
-  because nothing is stored.
+  because nothing is stored. The crash journal below is no exception — it records
+  **recognized text only**, never audio.
 - **On-device recognition only.** Primary: ML Kit GenAI speech recognition via AICore.
   Fallback: `SpeechRecognizer.createOnDeviceSpeechRecognizer()` (API 31+) — never the
   network-capable system recognizer.
@@ -109,6 +110,11 @@ cd Android
 - **On-device LLM only.** Merge, chat, and recipes run on Gemini Nano through AICore.
   Every AI feature has a deterministic fallback — the app works with no model present.
 - **`allowBackup="false"`** — notes don't leave the device via cloud backup.
+- **Crash journal.** A capture in progress is written to an append-only journal in
+  app-private storage (`filesDir`), so an app crash or a low-memory kill can't take an
+  unsaved transcript with it — the next launch offers it back. It holds the same
+  recognized text a saved note would, under the same app-private protection as the
+  database, and it is deleted the moment the capture is saved or discarded.
 - **Opt-in calendar.** `READ_CALENDAR` is requested only when you tap the Upcoming card,
   and is read-only. The same grant covers reading attendee names for a matched meeting —
   no separate permission — and those names never leave the device.
@@ -130,7 +136,11 @@ cd Android
    Share), Delete (also removes the exported copy), and Share. Deleting is safe: notes
    move to **Recently deleted** (an entry row appears at the bottom of the list) and stay
    restorable for 1 day before being removed for good — open it to restore a note or
-   delete it immediately.
+   delete it immediately. If TrailMix ever dies mid-capture (a crash, or Android killing
+   it for memory while you're in another app), the next launch says so here and offers
+   the transcript back: **Continue capture**, **Save as note**, **Later**, or Discard.
+   Nothing is lost in the meantime — the transcript is written to disk as it's recognized,
+   not held in memory until you press End & Merge.
 2. **Live capture** — recording status, live transcript preview, free-typing fragment area,
    red *End & Merge* button. Tap the live-transcript card to **expand** it into a
    scrolling view of recent lines. A 3-dot menu (upper right) picks the input mic
