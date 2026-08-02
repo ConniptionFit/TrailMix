@@ -96,4 +96,116 @@ class NoteTitleTest {
     fun `blank incoming never wipes a real title`() {
         assertEquals("Roadmap review", NoteTitle.preferExisting(incoming = "", existing = "Roadmap review"))
     }
+
+    // ── AI-07: cleaning the model's first line ──────────────────────────────
+
+    private val createdAt = 1_785_000_000_000L
+
+    /**
+     * The exact string a real merge produced on the Pixel 9 Pro (2026-08-01): the model
+     * ignored "max 8 words" and echoed the transcript's opening, and the old blind
+     * `.take(80)` sliced the second sentence mid-clause. This is the regression test.
+     */
+    @Test
+    fun `the observed run-on title is cut at the sentence, not at 80 characters`() {
+        val raw = "Crash recovery verification for trail mix. The identity platform keynote begins with token lifetimes."
+
+        assertEquals("Crash recovery verification for trail mix", NoteTitle.clean(raw, createdAt))
+    }
+
+    @Test
+    fun `a good title is passed through untouched`() {
+        assertEquals("Identity platform keynote", NoteTitle.clean("Identity platform keynote", createdAt))
+    }
+
+    /** Markdown, labels, list markers and quotes are all things a model plausibly emits. */
+    @Test
+    fun `model formatting noise is stripped`() {
+        listOf(
+            "# Q3 planning",
+            "## Q3 planning",
+            "**Q3 planning**",
+            "Title: Q3 planning",
+            "title - Q3 planning",
+            "1. Q3 planning",
+            "- Q3 planning",
+            "> Q3 planning",
+            "\"Q3 planning\"",
+            "“Q3 planning”",
+            "`Q3 planning`",
+            "  Q3 planning  ",
+            "Q3 planning.",
+        ).forEach { raw ->
+            assertEquals(raw, "Q3 planning", NoteTitle.clean(raw, createdAt))
+        }
+    }
+
+    /** A blanket strip of `_`/`*` would mangle real identifiers — only paired markers go. */
+    @Test
+    fun `underscores inside a word survive`() {
+        assertEquals("user_id mapping rollout", NoteTitle.clean("user_id mapping rollout", createdAt))
+    }
+
+    /**
+     * The sentence split must require whitespace after the period, or every version number
+     * and decimal in a title becomes a truncation point.
+     */
+    @Test
+    fun `decimals and version numbers are not sentence boundaries`() {
+        assertEquals("99.9% uptime regressions", NoteTitle.clean("99.9% uptime regressions", createdAt))
+        assertEquals("v1.13.0 release notes", NoteTitle.clean("v1.13.0 release notes", createdAt))
+    }
+
+    /** A long clause with no punctuation still has to be capped — on a word boundary. */
+    @Test
+    fun `a run-on with no punctuation is capped at whole words`() {
+        val raw = "quarterly identity governance and provisioning latency review with the platform team and partners"
+
+        val title = NoteTitle.clean(raw, createdAt)
+
+        assertTrue(title, title.endsWith("…"))
+        assertTrue("must not end mid-word: $title", raw.startsWith(title.removeSuffix("…")))
+        assertTrue("$title is still too long", title.length <= 62)
+    }
+
+    /** One pathological unbroken token must still terminate rather than pass through. */
+    @Test
+    fun `a single enormous token is still cut`() {
+        val title = NoteTitle.clean("x".repeat(200), createdAt)
+
+        assertTrue(title, title.endsWith("…"))
+        assertTrue("$title is still too long", title.length <= 62)
+    }
+
+    /**
+     * Nothing usable must fall back to the placeholder — not to an empty string, which would
+     * leave the note, the Home row, and the exported *filename* unnamed.
+     */
+    @Test
+    fun `nothing usable falls back to the default title`() {
+        listOf("", "   ", "#", "**", "\"\"", ".", "-").forEach { raw ->
+            assertTrue(raw, NoteTitle.isDefault(NoteTitle.clean(raw, createdAt)))
+        }
+    }
+
+    /** Multi-line model output: only the first non-blank line is the title. */
+    @Test
+    fun `only the first non-blank line is used`() {
+        val raw = "\n\n  Session revocation design  \nThe team agreed to ship it next sprint."
+
+        assertEquals("Session revocation design", NoteTitle.clean(raw, createdAt))
+    }
+
+    /** clean() must keep producing values isDefault can classify, or AI-06 silently breaks. */
+    @Test
+    fun `a cleaned real title is never mistaken for a placeholder`() {
+        assertFalse(NoteTitle.isDefault(NoteTitle.clean("Identity platform keynote", createdAt)))
+        assertEquals(
+            "Identity platform keynote",
+            NoteTitle.preferExisting(
+                incoming = NoteTitle.clean("", createdAt),
+                existing = NoteTitle.clean("Identity platform keynote", createdAt),
+            ),
+        )
+    }
 }
