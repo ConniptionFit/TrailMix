@@ -339,6 +339,15 @@ class CaptureService : Service() {
             .setSmallIcon(R.drawable.ic_stat_capture)
             .setContentTitle(status.title)
             .setContentText(status.label())
+            // The label is ALSO the subtext, which is not redundant — it is the fix for a
+            // real defect found on-device (2026-08-10). Android's collapsed notification
+            // template renders the progress bar *in place of* the content-text line, so with
+            // only setContentText the shade showed the note name and a bar and nothing else:
+            // the "Summarizing 3 of 6…" count — the entire reason progress exists — was
+            // invisible unless the user expanded the notification. Subtext renders in the
+            // collapsed header beside the app name, so the count is visible either way, and
+            // contentText still carries it into the expanded view.
+            .setSubText(status.label())
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
