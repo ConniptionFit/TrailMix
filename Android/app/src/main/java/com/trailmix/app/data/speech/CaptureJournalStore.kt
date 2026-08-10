@@ -1,9 +1,11 @@
 package com.trailmix.app.data.speech
 
 import android.content.Context
+import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.io.FileOutputStream
+import java.io.RandomAccessFile
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
@@ -39,16 +41,30 @@ data class PendingJournal(val id: String, val session: CaptureJournal.RecoveredS
  * Each record is flushed and `fsync`ed before the call returns. At roughly one utterance
  * every few seconds that cost is irrelevant, and it is the difference between surviving a
  * process kill (which a plain flush already handles) and surviving the phone dying outright.
+ *
+ * ## Record boundaries (REL-13)
+ *
+ * Replay's whole guarantee — damage costs at most the record it happened in — rests on every
+ * record occupying exactly one line. A write that lands only part way breaks that: the next
+ * record is appended straight onto the fragment, and the resulting line parses as neither, so
+ * the damage spreads to a record that was written perfectly. Both places where a stream can
+ * be positioned mid-record therefore close it first: after a failed write, and before
+ * appending to a journal recovered from a crash. See [appendRecord] and [ensureRecordBoundary].
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 @Singleton
-class CaptureJournalStore @Inject constructor(
-    @ApplicationContext private val context: Context,
-) {
+class CaptureJournalStore internal constructor(private val dir: File) {
+
+    /**
+     * The real one. Journals live beside the database in app-private storage; the directory
+     * is a constructor parameter only so the file logic can be exercised on a temp dir
+     * without a device, which is where [CaptureJournalStoreTest] runs.
+     */
+    @Inject
+    constructor(@ApplicationContext context: Context) : this(File(context.filesDir, DIR_NAME))
+
     private val dispatcher = Dispatchers.IO.limitedParallelism(1)
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
-
-    private val dir: File get() = File(context.filesDir, DIR_NAME)
 
     /** The journal being appended to right now. Only ever touched on [dispatcher]. */
     private var current: FileOutputStream? = null
@@ -75,7 +91,14 @@ class CaptureJournalStore @Inject constructor(
     fun adopt(id: String) = scope.launch {
         closeCurrent()
         val file = File(dir, id)
-        if (file.exists()) openAndWrite(file, record = null, append = true)
+        if (!file.exists()) {
+            Log.w(TAG, "journal $id vanished before it could be adopted")
+            return@launch
+        }
+        // REL-13: this file is being reopened *because* it was cut short, so it is the one
+        // place a mid-record tail is expected rather than exceptional.
+        ensureRecordBoundary(file)
+        openAndWrite(file, record = null, append = true)
     }
 
     fun line(line: com.trailmix.app.data.model.TranscriptLine) = write(CaptureJournal.lineRecord(line))
@@ -94,13 +117,7 @@ class CaptureJournalStore @Inject constructor(
      * unsaved crash — prompting someone to "recover" a note they already have.
      */
     fun finish() = scope.launch {
-        runCatching {
-            current?.let {
-                it.write((CaptureJournal.endRecord() + "\n").toByteArray())
-                it.flush()
-                it.fd.sync()
-            }
-        }
+        current?.let { appendRecord(it, CaptureJournal.endRecord()) }
         val file = currentFile
         closeCurrent()
         runCatching { file?.delete() }
@@ -135,8 +152,19 @@ class CaptureJournalStore @Inject constructor(
             if (file.name == open) return@mapNotNull null
             val session = runCatching {
                 file.useLines { CaptureJournal.replay(it, startedAtFromName(file.name)) }
-            }.getOrNull()
-            if (session == null || !session.hasContent) {
+            }.getOrElse { failure ->
+                // REL-13: a journal that could not be *read* is not a journal known to be
+                // empty, and this branch used to treat the two the same and delete it. The
+                // failures that land here are exactly the ones that correlate with size —
+                // an I/O error, or replay running out of memory folding a very long
+                // transcript — so the rule was at its most destructive on the longest
+                // session, the one whose loss actually costs something. Keep the file: it
+                // stays invisible this launch, and costs only the bytes it occupies, while
+                // deleting it is unrecoverable and cannot be justified from here.
+                Log.w(TAG, "could not replay journal ${file.name}; keeping it: $failure")
+                return@mapNotNull null
+            }
+            if (!session.hasContent) {
                 runCatching { file.delete() }
                 null
             } else {
@@ -154,32 +182,76 @@ class CaptureJournalStore @Inject constructor(
     // ── Internals ──────────────────────────────────────────────────────────
 
     private fun write(record: String) {
-        scope.launch {
+        scope.launch { current?.let { appendRecord(it, record) } }
+    }
+
+    /**
+     * Append one record and its terminator, durably. The single place a record is written.
+     *
+     * REL-13: the recovery on failure is the point. A `write` that throws part way through
+     * (a full disk being the realistic cause, and a full disk during a long capture being
+     * precisely when the journal is load-bearing) leaves the stream sitting mid-line. The
+     * next record would then be appended onto that fragment, producing one line that parses
+     * as neither and silently destroying a record that was itself written perfectly.
+     * Terminating the fragment costs one byte and confines the damage to the record that
+     * actually failed — which is the guarantee the whole append-only format is built on.
+     */
+    private fun appendRecord(out: FileOutputStream, record: String) {
+        runCatching {
+            out.write((record + "\n").toByteArray())
+            out.flush()
+            out.fd.sync()
+        }.onFailure { failure ->
+            Log.w(TAG, "journal write failed: $failure")
             runCatching {
-                val out = current ?: return@launch
-                out.write((record + "\n").toByteArray())
+                out.write(NEWLINE)
                 out.flush()
                 out.fd.sync()
             }
         }
     }
 
-    private fun openAndWrite(file: File, record: String?, append: Boolean) {
+    /**
+     * REL-13: leave [file] ending on a record boundary before anything is appended to it.
+     *
+     * Only ever needed by [adopt], and only because that path reopens a journal a crash cut
+     * short. A file already ending in a newline — the overwhelmingly common case — is left
+     * untouched; otherwise one byte closes the partial record, so replay discards the
+     * fragment as it already would and the first utterance after recovery survives.
+     */
+    private fun ensureRecordBoundary(file: File) {
         runCatching {
-            val out = FileOutputStream(file, append)
-            current = out
-            currentFile = file
-            if (record != null) {
-                out.write((record + "\n").toByteArray())
-                out.flush()
-                out.fd.sync()
+            val length = file.length()
+            if (length == 0L) return@runCatching
+            val last = RandomAccessFile(file, "r").use { it.seek(length - 1); it.read() }
+            if (last == '\n'.code) return@runCatching
+            Log.w(TAG, "journal ${file.name} ended mid-record; closing it before appending")
+            FileOutputStream(file, true).use {
+                it.write(NEWLINE)
+                it.flush()
+                it.fd.sync()
             }
-        }.onFailure {
+        }
+    }
+
+    private fun openAndWrite(file: File, record: String?, append: Boolean) {
+        val out = runCatching { FileOutputStream(file, append) }.getOrNull()
+        if (out == null) {
             // A journal we can't open must not take the capture down with it — recording
             // without a safety net is strictly better than not recording.
+            Log.w(TAG, "could not open journal ${file.name}; capturing without a safety net")
             current = null
             currentFile = null
+            return
         }
+        current = out
+        currentFile = file
+        // REL-13: a header that fails to write is *not* a reason to abandon the journal.
+        // Replay already falls back to the start time encoded in the filename, so a session
+        // whose first record was lost is still recovered in full — where dropping the
+        // journal here would have cost every utterance that followed. appendRecord has
+        // already closed the record boundary either way.
+        if (record != null) appendRecord(out, record)
     }
 
     private fun closeCurrent() {
@@ -192,9 +264,18 @@ class CaptureJournalStore @Inject constructor(
     private fun startedAtFromName(name: String): Long =
         name.removePrefix(FILE_PREFIX).removeSuffix(FILE_SUFFIX).toLongOrNull() ?: 0L
 
+    /**
+     * Test seam: suspend until every queued write has actually run. Exact rather than a
+     * poll, because the dispatcher is single-threaded and FIFO — the same property the
+     * ordering guarantee in this class's header depends on.
+     */
+    internal suspend fun awaitIdle() = withContext(dispatcher) { }
+
     private companion object {
+        const val TAG = "TrailMixJournal"
         const val DIR_NAME = "capture-journal"
         const val FILE_PREFIX = "session-"
         const val FILE_SUFFIX = ".jsonl"
+        val NEWLINE = "\n".toByteArray()
     }
 }

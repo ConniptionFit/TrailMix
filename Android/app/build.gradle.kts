@@ -14,8 +14,8 @@ android {
         applicationId = "com.trailmix.app"
         minSdk = 31
         targetSdk = 35
-        versionCode = 19
-        versionName = "1.16.0"
+        versionCode = 20
+        versionName = "1.17.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -81,6 +81,17 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
+
+    testOptions {
+        unitTests {
+            // REL-13: without this, any call into the android.jar stubs throws "not mocked",
+            // which in practice meant a class became untestable the moment it logged a
+            // warning — a bad trade when the classes worth testing hardest are the ones with
+            // failure paths worth logging. Returning defaults affects only calls that
+            // previously threw, so it cannot mask a passing assertion.
+            isReturnDefaultValues = true
         }
     }
 }
