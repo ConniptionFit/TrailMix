@@ -29,6 +29,15 @@ import kotlin.concurrent.thread
  * hears media apps (YouTube, podcasts, videos) but not the far end of a
  * Teams/Zoom call. That is an OS policy boundary, not a setting.
  */
+/**
+ * REL-11: the mic could not be opened — almost always because something else holds it
+ * (an in-progress call, another recorder, the assistant), occasionally because the device
+ * refused the buffer size. Typed as its own exception so [CaptureEngine] can treat it as a
+ * *recoverable* start failure rather than letting it escape as a raw `IllegalStateException`.
+ */
+class AudioUnavailableException(message: String, cause: Throwable? = null) :
+    IllegalStateException(message, cause)
+
 class AudioPipeline {
 
     private val chunkFrames = Pcm.SAMPLE_RATE / 10 // 100 ms of 16 kHz mono
@@ -78,10 +87,35 @@ class AudioPipeline {
             AudioFormat.ENCODING_PCM_16BIT,
             maxOf(minBuf * 4, chunkFrames * 2 * 4),
         )
+        // REL-11: the mic lane must be checked exactly like the device-audio lane below it —
+        // it never was, and that asymmetry was a crash. `AudioRecord` does NOT throw when it
+        // fails to acquire the mic: it constructs in STATE_UNINITIALIZED, and the throw comes
+        // later from startRecording(). That escaped through CaptureEngine.begin() into an
+        // unguarded `scope.launch`, which on Android means the process dies. The trigger is
+        // ordinary — anything else holding the mic (a call, another recorder, the assistant),
+        // and "start a capture during a call" is a scenario this app explicitly supports.
+        //
+        // Cleanup on failure matters as much as the check: `running` was set before
+        // startRecording(), so a throw left it true forever and every later start() hit
+        // `check(!running)` — the pipeline was bricked for the rest of the process, with the
+        // AudioRecord and both pipe fds leaked.
+        if (record.state != AudioRecord.STATE_INITIALIZED) {
+            record.release()
+            abandonPipe(readSide, out)
+            throw AudioUnavailableException("microphone unavailable (uninitialized recorder)")
+        }
         record.preferredDevice = preferredDevice
         micRecord = record
         running = true
-        record.startRecording()
+        try {
+            record.startRecording()
+        } catch (e: IllegalStateException) {
+            running = false
+            micRecord = null
+            runCatching { record.release() }
+            abandonPipe(readSide, out)
+            throw AudioUnavailableException("microphone could not be started", e)
+        }
 
         micThread = thread(name = "trailmix-mic-pump") {
             val mic = ShortArray(chunkFrames)
@@ -106,6 +140,18 @@ class AudioPipeline {
             }
         }
         return readSide
+    }
+
+    /**
+     * REL-11: release both ends of a pipe whose pump thread will never run. Closing the
+     * wrapping stream closes the write-side fd, so the two are not closed separately — that
+     * would be a double close. Leaving these open leaks two file descriptors per failed
+     * start attempt, and a user retrying a capture against a busy mic retries often.
+     */
+    private fun abandonPipe(readSide: ParcelFileDescriptor, out: OutputStream) {
+        writeSide = null
+        runCatching { out.close() }
+        runCatching { readSide.close() }
     }
 
     /** Reroute the mic mid-session; null returns to automatic routing. */

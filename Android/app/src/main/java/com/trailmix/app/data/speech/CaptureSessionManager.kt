@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.util.Log
 import com.trailmix.app.data.ai.MergePolicy
 import com.trailmix.app.data.ai.OnDeviceAiProcessor
 import com.trailmix.app.data.calendar.UpcomingMeetingSource
@@ -20,6 +21,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -63,11 +66,34 @@ class CaptureSessionManager @Inject constructor(
     private val meetingSource: UpcomingMeetingSource,
     private val journal: CaptureJournalStore,
 ) {
-    private val scope = CoroutineScope(SupervisorJob())
     private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
     private val _state = MutableStateFlow(CaptureUiState())
     val state: StateFlow<CaptureUiState> = _state.asStateFlow()
+
+    /**
+     * REL-11: the process-level backstop for this singleton's ~15 `scope.launch` sites.
+     *
+     * A `CoroutineScope(SupervisorJob())` with no handler in its context sends any uncaught
+     * exception to the thread's default handler — which on Android means **the app dies**.
+     * SupervisorJob only stops siblings being cancelled; it does not make the scope
+     * fail-tolerant, which is easy to assume and was assumed here. Every capture session runs
+     * on this scope, so a single unexpected throw anywhere in it took the whole session down
+     * with the process.
+     *
+     * This is a backstop, not an excuse: the paths that can realistically fail (mic acquisition
+     * REL-11, the merge REL-10) handle their own errors and leave the UI in an honest state.
+     * What this adds is the guarantee that an *unanticipated* one degrades to a logged error
+     * and a stopped capture rather than a killed process — which on an `allowBackup=false`,
+     * local-only app is the difference between a bad session and a lost one. REL-09's journal
+     * still covers the transcript either way.
+     */
+    private val crashGuard = CoroutineExceptionHandler { _, throwable ->
+        Log.e(TAG, "capture coroutine failed", throwable)
+        _state.value = _state.value.copy(recording = false, livePartial = "")
+    }
+
+    private val scope = CoroutineScope(SupervisorJob() + crashGuard)
 
     /** The user's own typed fragments — a live textarea buffer. */
     val fragments = MutableStateFlow("")
@@ -187,6 +213,43 @@ class CaptureSessionManager @Inject constructor(
     }
 
     /**
+     * The listening half of a session: open the engine, then fold recognized speech into the
+     * transcript. Extracted from [startRecording] for REL-11 so the whole thing sits inside
+     * one error boundary — previously any throw in here (most plausibly the mic being busy)
+     * escaped an unguarded `launch` and killed the process.
+     */
+    private suspend fun runListenSession(applyPriorResume: Boolean) {
+        if (applyPriorResume && resumeNoteId > 0) applyResume()
+        detectMeetingContext()
+        val selected = _state.value.inputOptions
+            .getOrNull(_state.value.selectedInputIndex)?.device
+        val events = engine.begin(selected)
+        _state.value = _state.value.copy(
+            engineKind = engine.kind.value,
+            speechAvailable = engine.kind.value != EngineKind.NONE,
+        )
+        events.collect { event ->
+            if (event.finalizedUtterance.isNotBlank()) {
+                val finalized = TranscriptLine(
+                    label = elapsedLabel(),
+                    text = event.finalizedUtterance,
+                )
+                transcriptLines += finalized
+                // REL-09: journal it before it is anything but a value in RAM. Everything
+                // else here is display state that can be rebuilt; this line cannot.
+                journal.line(finalized)
+                _liveLines.value = transcriptLines.toList()
+                _state.value = _state.value.copy(
+                    lastFinalLine = event.finalizedUtterance,
+                    livePartial = "",
+                )
+            } else if (event.partialText.isNotBlank()) {
+                _state.value = _state.value.copy(livePartial = event.partialText)
+            }
+        }
+    }
+
+    /**
      * [applyPriorResume] only replays a saved note's content into the in-memory buffers
      * (CAP-07's resume-into-note flow) — it must be `false` when this is really [resume]
      * waking a *paused* session back up, or the transcript/fragments captured since the
@@ -198,36 +261,29 @@ class CaptureSessionManager @Inject constructor(
         val mode = audioManager.mode
         watchingForCallEnd = !callEndedPromptFired &&
             (mode == AudioManager.MODE_IN_CALL || mode == AudioManager.MODE_IN_COMMUNICATION)
-        _state.value = _state.value.copy(recording = true, paused = false)
+        // REL-11: captureError is cleared here, not only set on failure — resuming a paused
+        // session re-runs this, and a mic that was busy last time is very often free now.
+        // Leaving a stale "couldn't start the microphone" on a session that is transcribing
+        // fine would be its own lie.
+        _state.value = _state.value.copy(recording = true, paused = false, captureError = null)
         CaptureService.start(appContext)
         listenJob = scope.launch {
-            if (applyPriorResume && resumeNoteId > 0) applyResume()
-            detectMeetingContext()
-            val selected = _state.value.inputOptions
-                .getOrNull(_state.value.selectedInputIndex)?.device
-            val events = engine.begin(selected)
-            _state.value = _state.value.copy(
-                engineKind = engine.kind.value,
-                speechAvailable = engine.kind.value != EngineKind.NONE,
-            )
-            events.collect { event ->
-                if (event.finalizedUtterance.isNotBlank()) {
-                    val finalized = TranscriptLine(
-                        label = elapsedLabel(),
-                        text = event.finalizedUtterance,
-                    )
-                    transcriptLines += finalized
-                    // REL-09: journal it before it is anything but a value in RAM. Everything
-                    // else here is display state that can be rebuilt; this line cannot.
-                    journal.line(finalized)
-                    _liveLines.value = transcriptLines.toList()
-                    _state.value = _state.value.copy(
-                        lastFinalLine = event.finalizedUtterance,
-                        livePartial = "",
-                    )
-                } else if (event.partialText.isNotBlank()) {
-                    _state.value = _state.value.copy(livePartial = event.partialText)
-                }
+            try {
+                runListenSession(applyPriorResume)
+            } catch (e: CancellationException) {
+                // Ordinary teardown — stopCapture()/pause() cancel this job, and endAndMerge
+                // joins it. Swallowing this would break that handshake.
+                throw e
+            } catch (e: Exception) {
+                // REL-11: a capture that cannot listen is still a capture the user can type
+                // into and save. Say so plainly and keep the session alive rather than
+                // crashing or sitting on "Listening…" forever while nothing arrives.
+                Log.w(TAG, "capture listen session failed", e)
+                _state.value = _state.value.copy(
+                    speechAvailable = false,
+                    captureError = MIC_UNAVAILABLE,
+                    livePartial = "",
+                )
             }
         }
         tickerJob = scope.launch {
@@ -852,6 +908,18 @@ class CaptureSessionManager @Inject constructor(
     }
 
     private companion object {
+        const val TAG = "TrailMixSession"
+
+        /**
+         * REL-11: shown when the engine could not listen for a *situational* reason — the mic
+         * is held by a call or another app. Deliberately says the session still works, because
+         * it does: typed notes save exactly as normal, and losing what you typed because the
+         * screen implied the session was dead would be the worse failure.
+         */
+        const val MIC_UNAVAILABLE =
+            "Couldn't start the microphone — another app or a call may be using it. " +
+                "Typed notes still save."
+
         const val SILENCE_PEAK = 64
         const val SILENT_HINT_AFTER_S = 5
 

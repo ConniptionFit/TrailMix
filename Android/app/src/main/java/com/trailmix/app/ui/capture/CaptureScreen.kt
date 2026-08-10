@@ -489,7 +489,14 @@ fun CaptureScreen(
                     }
                 }
             } else {
+                // Bound to a local: `state` is a delegated property, so it can't smart-cast.
+                val captureError = state.captureError
                 val liveLine = when {
+                    // REL-11: a situational failure (mic held by a call or another app) is
+                    // reported as itself. It is checked first because the generic
+                    // "not available on this device" below would be actively misleading —
+                    // the device is fine, and retrying in a minute will work.
+                    captureError != null -> captureError
                     !state.speechAvailable ->
                         "On-device speech recognition isn't available on this device."
                     state.livePartial.isNotBlank() -> "“…${state.livePartial}”"
