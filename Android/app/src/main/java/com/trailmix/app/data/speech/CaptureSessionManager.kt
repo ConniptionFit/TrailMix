@@ -105,6 +105,17 @@ class CaptureSessionManager @Inject constructor(
     private val _recovering = MutableStateFlow(false)
     val recovering: StateFlow<Boolean> = _recovering.asStateFlow()
 
+    /**
+     * REL-10: non-null for exactly as long as a merge is running — from either [endAndMerge]
+     * or [completeRecovered], which is why it is its own flow rather than a field on
+     * [CaptureUiState] (a recovered merge has no capture session state to hang off).
+     *
+     * [CaptureService] keeps the process in the foreground and shows this while it is
+     * non-null; it going null is the signal to stand the service down.
+     */
+    private val _mergeStatus = MutableStateFlow<MergeStatus?>(null)
+    val mergeStatus: StateFlow<MergeStatus?> = _mergeStatus.asStateFlow()
+
     private val transcriptLines = mutableListOf<TranscriptLine>()
     private var startedAtMs = 0L
     private var listenJob: Job? = null
@@ -389,46 +400,69 @@ class CaptureSessionManager @Inject constructor(
         // it (paused vs. still-running) to avoid double-counting the paused gap.
         val durationMs = currentDurationMs()
         _state.value = _state.value.copy(merging = true, recording = false)
+        _mergeStatus.value = MergeStatus(_state.value.noteTitle)
         scope.launch {
-            engine.endInput()
-            withTimeoutOrNull(5_000) { listenJob?.join() }
-            stopCapture()
-            val resuming = resumeNoteId > 0
-            val createdAt = when {
-                // resumeCreatedAt is normally filled in by applyResume(), but a session
-                // *recovered* into an existing note (REL-09) never runs it — and neither
-                // does a resume whose note has since vanished. Re-read rather than stamping
-                // the note with epoch zero.
-                resuming -> resumeCreatedAt.takeIf { it > 0 }
-                    ?: notesRepository.getNote(resumeNoteId)?.createdAtEpochMs
-                    ?: System.currentTimeMillis()
-                // REL-09: a recovered session is stamped with when the capture really began,
-                // not when it was rescued — the two can be a day apart.
-                recoveredCreatedAtMs > 0 -> recoveredCreatedAtMs
-                else -> System.currentTimeMillis()
-            }
-            val id = mergeAndSave(
-                noteId = resumeNoteId,
-                typed = fragments.value,
-                transcript = transcriptLines.toList(),
-                durationMs = durationMs,
-                createdAtEpochMs = createdAt,
-                meetingTitle = _state.value.meetingTitle,
-                capturedInCall = capturedInCall,
-                attendees = attendees,
-                template = template,
-            )
-            // REL-09: the capture is now durably a note (or was empty and deliberately not
-            // saved), so the journal has done its job. Only now — a crash at any point
-            // before this line still leaves the transcript recoverable.
-            journal.finish()
+            // REL-10: everything from here to the note existing runs inside runCatching, and
+            // the teardown after it is unconditional. Before this, a throw anywhere in the
+            // merge (a Room write, the DataStore read, the export) left `merging` stuck true
+            // forever — and every entry point (startCapture, resume, endAndMerge,
+            // completeRecovered) early-returns on `merging`, so a single failed merge made
+            // the app unable to record again until it was force-stopped. onDone was never
+            // called either, so the Capture screen sat on "Merging on-device…" with no way
+            // out. completeRecovered already guarded itself this way; this path did not.
+            val id = runCatching { runMerge(durationMs) }.getOrElse { -1L }
             resumeNoteId = -1L
             recoveredCreatedAtMs = 0L
+            _mergeStatus.value = null
             _state.value = _state.value.copy(merging = false)
+            // Only now — the foreground service carried the merge (see stopCapture). Guarded
+            // because `startService` throws if the service has already gone away while the app
+            // sits in the background: standing the service down must never be the thing that
+            // swallows the caller's callback below.
+            runCatching { CaptureService.stop(appContext) }
             // The caller navigates from this callback — NavController is main-thread-only
             // (this scope's default dispatcher crashed popBackStack when first shipped).
             withContext(Dispatchers.Main) { onDone(id) }
         }
+    }
+
+    /** The body of [endAndMerge]'s merge, extracted so the teardown around it is unconditional. */
+    private suspend fun runMerge(durationMs: Long): Long {
+        engine.endInput()
+        withTimeoutOrNull(5_000) { listenJob?.join() }
+        stopCapture(handOffToMerge = true)
+        val resuming = resumeNoteId > 0
+        val createdAt = when {
+            // resumeCreatedAt is normally filled in by applyResume(), but a session
+            // *recovered* into an existing note (REL-09) never runs it — and neither
+            // does a resume whose note has since vanished. Re-read rather than stamping
+            // the note with epoch zero.
+            resuming -> resumeCreatedAt.takeIf { it > 0 }
+                ?: notesRepository.getNote(resumeNoteId)?.createdAtEpochMs
+                ?: System.currentTimeMillis()
+            // REL-09: a recovered session is stamped with when the capture really began,
+            // not when it was rescued — the two can be a day apart.
+            recoveredCreatedAtMs > 0 -> recoveredCreatedAtMs
+            else -> System.currentTimeMillis()
+        }
+        val id = mergeAndSave(
+            noteId = resumeNoteId,
+            typed = fragments.value,
+            transcript = transcriptLines.toList(),
+            durationMs = durationMs,
+            createdAtEpochMs = createdAt,
+            meetingTitle = _state.value.meetingTitle,
+            capturedInCall = capturedInCall,
+            attendees = attendees,
+            template = template,
+        )
+        // REL-09: the capture is now durably a note (or was empty and deliberately not
+        // saved), so the journal has done its job. Only now — a crash at any point
+        // before this line still leaves the transcript recoverable. It stays inside the
+        // caller's runCatching for the same reason: a merge that threw must leave the
+        // journal on disk to be offered back, not delete it on the strength of a failure.
+        journal.finish()
+        return id
     }
 
     /**
@@ -465,6 +499,9 @@ class CaptureSessionManager @Inject constructor(
             // AI-05: the template also steers the zero-AI path now, so "Conference talk"
             // shapes the note on a device with no Gemini Nano.
             style = TemplateOptions.styleFor(template, customTemplates),
+            // REL-10: a keynote merge is a dozen sequential model calls. Feed the count
+            // through to the foreground notification so the wait reads as work, not a hang.
+            onProgress = ::publishMergeProgress,
         )
         if (noteId > 0) {
             notesRepository.updateMergedNote(
@@ -540,7 +577,22 @@ class CaptureSessionManager @Inject constructor(
         }
     }
 
-    private fun stopCapture() {
+    /**
+     * REL-10: only the *recording* is torn down here. When [handOffToMerge] is set the
+     * foreground service is kept alive — re-typed to `dataSync` now the mic is released — so
+     * the merge that follows still runs behind a foreground component.
+     *
+     * It used to always call [CaptureService.stop], which meant `stopForeground(REMOVE)` +
+     * `stopSelf()` fired one line before a merge that can take minutes. Two consequences, both
+     * real: the process had no foreground component for the whole merge and was ordinary
+     * low-memory-killer fodder the moment the user left the app (REL-09's journal made that
+     * survivable rather than fatal, but the merge itself — a dozen model calls — was lost and
+     * the user got a "recover?" prompt for a note they thought they had already saved); and
+     * the notification vanished, so TrailMix disappeared from the shade while doing minutes of
+     * work. The service already knew how to render "Merging on-device…"; it was simply being
+     * destroyed before it could.
+     */
+    private fun stopCapture(handOffToMerge: Boolean = false) {
         listenJob?.cancel()
         listenJob = null
         tickerJob?.cancel()
@@ -552,7 +604,7 @@ class CaptureSessionManager @Inject constructor(
         journalJob = null
         disarmBumpTimer()
         engine.detachDeviceAudio()
-        CaptureService.stop(appContext)
+        if (handOffToMerge) CaptureService.merge(appContext) else CaptureService.stop(appContext)
         silentSeconds = 0
         _state.value = _state.value.copy(
             recording = false,
@@ -725,6 +777,15 @@ class CaptureSessionManager @Inject constructor(
         if (_recovering.value || _state.value.recording || _state.value.paused || _state.value.merging) return
         _pendingRecovery.value = null
         _recovering.value = true
+        // REL-10: this merge is the same chunked on-device work End & Merge runs, so it needs
+        // the same protection — previously it ran with no foreground component at all, and
+        // backgrounding the app during a long rescue could have the process killed mid-way.
+        _mergeStatus.value = MergeStatus(
+            pending.session.noteTitle.ifBlank {
+                pending.session.meetingTitle ?: CaptureUiState.UNTITLED
+            },
+        )
+        CaptureService.merge(appContext)
         scope.launch {
             val recovered = pending.session
             val createdAt = if (recovered.resumeNoteId > 0) {
@@ -750,10 +811,22 @@ class CaptureSessionManager @Inject constructor(
             // transcript stays on disk and is offered again rather than being thrown away
             // on the strength of a failed rescue.
             if (id > 0) journal.discard(pending.id)
+            _mergeStatus.value = null
+            runCatching { CaptureService.stop(appContext) }
             _recovering.value = false
             withContext(Dispatchers.Main) { onDone(id) }
             refreshRecovery()
         }
+    }
+
+    /**
+     * REL-10: fold chunk progress into whichever merge is currently running. Deliberately a
+     * `copy` of the existing status rather than a fresh one — the title was set by the caller
+     * that started the merge and must survive, and a null status means the merge already
+     * finished, in which case a late callback must not resurrect the notification.
+     */
+    private fun publishMergeProgress(done: Int, total: Int) {
+        _mergeStatus.value = _mergeStatus.value?.copy(chunksDone = done, chunksTotal = total)
     }
 
     /** Throw the recovered capture away for good (REL-09) — the UI confirms first. */

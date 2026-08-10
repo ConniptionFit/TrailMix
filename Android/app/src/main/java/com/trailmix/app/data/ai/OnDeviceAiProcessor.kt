@@ -105,6 +105,13 @@ class OnDeviceAiProcessor @Inject constructor() {
         attendees: List<String> = emptyList(),
         templateGuidance: String = SummaryTemplate.NONE.guidance,
         style: SummaryStyle = SummaryStyle.DISCUSSION,
+        /**
+         * REL-10: called as each transcript chunk finishes condensing, with the number done
+         * and the total. A keynote-scale merge is a dozen sequential model calls; the caller
+         * turns this into the progress the foreground notification shows so the wait doesn't
+         * look like a hang. Called from a background dispatcher — never touch UI directly.
+         */
+        onProgress: (done: Int, total: Int) -> Unit = { _, _ -> },
     ): MergeResult = withContext(Dispatchers.Default) {
         // CAP-11 (v1.8.0): no transcript → nothing to merge or summarize. The typed notes
         // are saved verbatim via the deterministic path; the model is never invoked.
@@ -152,7 +159,7 @@ class OnDeviceAiProcessor @Inject constructor() {
             // a bad/non-JSON model reply still yields sectioned output, never a flat wall.
             // The fallback reads the FULL transcript, not the sampled text the model saw.
             val structured = runCatching {
-                generateStructuredSummary(typedFragments, transcript, attendees, templateGuidance)
+                generateStructuredSummary(typedFragments, transcript, attendees, templateGuidance, onProgress)
             }.getOrNull() ?: DeterministicSummary.from(typedFragments, transcript, style)
 
             MergeResult(
@@ -228,14 +235,24 @@ class OnDeviceAiProcessor @Inject constructor() {
         transcript: List<TranscriptLine>,
         attendees: List<String>,
         templateGuidance: String,
+        onProgress: (done: Int, total: Int) -> Unit = { _, _ -> },
     ): StructuredSummary? {
         val chunks = TranscriptCoverage.chunks(transcript, CHUNK_CHARS)
+        // REL-10: publish the shape of the work before any of it is done, so the notification
+        // can switch from "merging" to a real N-of-M count immediately rather than after the
+        // first chunk — which on a keynote is already a minute in.
+        onProgress(0, chunks.size)
         val transcriptText = when {
             chunks.isEmpty() -> ""
             chunks.size == 1 -> labelled(chunks.single())
             else -> {
-                val condensed = chunks.mapNotNull { chunk ->
-                    runCatching { condenseChunk(chunk, templateGuidance) }.getOrNull()?.takeIf { it.isNotBlank() }
+                val condensed = chunks.mapIndexedNotNull { index, chunk ->
+                    runCatching { condenseChunk(chunk, templateGuidance) }.getOrNull()
+                        ?.takeIf { it.isNotBlank() }
+                        // Reported for failed chunks too: a skipped chunk is still work
+                        // finished, and a progress line that stalls on the one call that
+                        // misbehaved is the hang it is meant to rule out.
+                        .also { onProgress(index + 1, chunks.size) }
                 }
                 if (condensed.isEmpty()) return null
                 condensed.joinToString("\n")

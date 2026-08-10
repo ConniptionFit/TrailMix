@@ -69,6 +69,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.trailmix.app.R
+import com.trailmix.app.data.speech.MergeStatus
 import com.trailmix.app.ui.theme.TrailMix
 
 @Composable
@@ -80,6 +81,7 @@ fun CaptureScreen(
     viewModel: CaptureViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val mergeStatus by viewModel.mergeStatus.collectAsStateWithLifecycle()
     val fragments by viewModel.fragments.collectAsStateWithLifecycle()
     val c = TrailMix.colors
     val context = LocalContext.current
@@ -333,7 +335,9 @@ fun CaptureScreen(
             )
             Text(
                 text = when {
-                    state.merging -> "Merging on-device…"
+                    // REL-10: the same label the foreground notification is showing, chunk
+                    // count and all — a long merge must not look identical to a stuck one.
+                    state.merging -> mergeStatus?.label() ?: MergeStatus.MERGING
                     state.paused -> "Paused · ${state.elapsedLabel}"
                     else -> "Recording · ${state.elapsedLabel}"
                 },

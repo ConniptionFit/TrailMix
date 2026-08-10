@@ -20,6 +20,15 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <!--
+        REL-10: the post-capture merge keeps the service foreground after the mic is released,
+        so a keynote-scale summarization (minutes of on-device model calls) isn't killed when
+        the user leaves the app. Normal-protection, no user prompt, and NOT a network
+        capability — "data sync" here means processing the user's own transcript on-device.
+        The mic/mediaProjection types are dropped at that point so the privacy indicator
+        stops implying TrailMix is still listening.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <!-- CAP-12: required on Android 13+ for the capture notification (timer,
          pause/stop actions, and the "still recording?" nudge) to actually display —
          requested at runtime when a capture starts. A denial doesn't block recording,
@@ -48,6 +57,6 @@
         <service
             android:name=".service.CaptureService"
             android:exported="false"
-            android:foregroundServiceType="microphone|mediaProjection" />
+            android:foregroundServiceType="microphone|mediaProjection|dataSync" />
     </application>
 </manifest>
