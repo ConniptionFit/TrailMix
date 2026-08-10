@@ -16,6 +16,7 @@ import com.trailmix.app.MainActivity
 import com.trailmix.app.R
 import com.trailmix.app.data.speech.CaptureEngine
 import com.trailmix.app.data.speech.CaptureSessionManager
+import com.trailmix.app.data.speech.MergeStatus
 import com.trailmix.app.ui.capture.CaptureUiState
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
@@ -67,7 +68,7 @@ class CaptureService : Service() {
                 ServiceCompat.startForeground(
                     this,
                     NOTIFICATION_ID,
-                    buildOngoingNotification(sessionManager.state.value),
+                    buildCaptureNotification(sessionManager.state.value),
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
                 )
                 startObservers()
@@ -79,7 +80,7 @@ class CaptureService : Service() {
                 ServiceCompat.startForeground(
                     this,
                     NOTIFICATION_ID,
-                    buildOngoingNotification(sessionManager.state.value),
+                    buildCaptureNotification(sessionManager.state.value),
                     ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or
                         ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
                 )
@@ -105,6 +106,22 @@ class CaptureService : Service() {
             ACTION_DISMISS_CALL_ENDED -> {
                 notificationManager().cancel(CALL_ENDED_NOTIFICATION_ID)
                 sessionManager.consumeCallEndedPrompt()
+            }
+
+            // REL-10: the recording is over but the merge isn't. Re-type the service to
+            // dataSync — the mic is already released, and staying microphone-typed would keep
+            // the privacy indicator implying TrailMix is still listening, which would be a
+            // lie. Keeping *some* foreground type is the point: the merge behind it is a
+            // dozen sequential model calls on a long session, and an ordinary background
+            // process doing minutes of work is exactly what the low-memory killer takes.
+            ACTION_MERGE -> {
+                ServiceCompat.startForeground(
+                    this,
+                    NOTIFICATION_ID,
+                    buildMergeNotification(currentMergeStatus()),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+                )
+                startObservers()
             }
 
             ACTION_STOP -> {
@@ -140,8 +157,9 @@ class CaptureService : Service() {
                 old.meetingTitle == new.meetingTitle &&
                     old.noteTitle == new.noteTitle &&
                     old.paused == new.paused &&
-                    old.merging == new.merging &&
-                    (old.recording || old.paused || old.merging) == (new.recording || new.paused || new.merging) &&
+                    // REL-10: `merging` no longer appears here — the merge phase is driven by
+                    // mergeStatus, on its own collector.
+                    (old.recording || old.paused) == (new.recording || new.paused) &&
                     // CAP-15: re-post when the timer's ORIGIN moves, not when it ticks.
                     // Resuming into an existing note (CAP-07) adopts that note's prior
                     // duration a moment after the session starts, so the chronometer had
@@ -155,9 +173,22 @@ class CaptureService : Service() {
             .onEach { state ->
                 // A stray final "everything false" emission (right after the session
                 // actually ends) shouldn't resurrect the notification — ACTION_STOP
-                // already tore it down.
-                if (state.recording || state.paused || state.merging) {
-                    notificationManager().notify(NOTIFICATION_ID, buildOngoingNotification(state))
+                // already tore it down. REL-10: `merging` is deliberately NOT a reason to
+                // post here — mergeStatus below owns that phase, and both writing to the
+                // same id would race.
+                if (state.recording || state.paused) {
+                    notificationManager().notify(NOTIFICATION_ID, buildCaptureNotification(state))
+                }
+            }
+            .launchIn(scope)
+
+        // REL-10: the merge phase. Non-null for exactly the life of a merge, from either
+        // End & Merge or a crash-recovery rescue, and it carries chunk progress so a
+        // multi-minute wait visibly moves instead of looking wedged.
+        sessionManager.mergeStatus
+            .onEach { status ->
+                if (status != null) {
+                    notificationManager().notify(NOTIFICATION_ID, buildMergeNotification(status))
                 }
             }
             .launchIn(scope)
@@ -250,13 +281,13 @@ class CaptureService : Service() {
      * smooth without re-posting the notification once a second. A paused session freezes it
      * to static text, because a chronometer that keeps counting while paused would be a lie.
      */
-    private fun buildOngoingNotification(state: CaptureUiState): Notification {
+    private fun buildCaptureNotification(state: CaptureUiState): Notification {
         ensureChannels()
-        val recording = !state.merging && !state.paused
-        val status = when {
-            state.merging -> "Merging on-device…"
-            state.paused -> "Paused · ${state.elapsedLabel}"
-            else -> "Recording · transcribing on-device"
+        val recording = !state.paused
+        val status = if (state.paused) {
+            "Paused · ${state.elapsedLabel}"
+        } else {
+            "Recording · transcribing on-device"
         }
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_capture)
@@ -280,17 +311,53 @@ class CaptureService : Service() {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-        // No point offering Pause/Stop mid-merge — there's nothing left to control.
-        if (!state.merging) {
-            if (state.paused) {
-                builder.addAction(R.drawable.ic_stat_play, "Resume", actionIntent(ACTION_RESUME, 1))
-            } else {
-                builder.addAction(R.drawable.ic_stat_pause, "Pause", actionIntent(ACTION_PAUSE, 1))
-            }
-            builder.addAction(R.drawable.ic_stat_stop, "Stop", actionIntent(ACTION_STOP_AND_SAVE, 2))
+        if (state.paused) {
+            builder.addAction(R.drawable.ic_stat_play, "Resume", actionIntent(ACTION_RESUME, 1))
+        } else {
+            builder.addAction(R.drawable.ic_stat_pause, "Pause", actionIntent(ACTION_PAUSE, 1))
         }
+        builder.addAction(R.drawable.ic_stat_stop, "Stop", actionIntent(ACTION_STOP_AND_SAVE, 2))
         return builder.build()
     }
+
+    /**
+     * REL-10: the merge phase's own notification — the thing the user sees while a keynote is
+     * being summarized, which can be minutes.
+     *
+     * No actions, because there is genuinely nothing left to control: the recording is over
+     * and cancelling the merge would only throw the work away. What it does carry is a
+     * **progress bar** — determinate once the chunk count is known — because a static line
+     * for several minutes reads as a hang, and the user's response to a hang is to force-stop
+     * the app, killing the very merge this service exists to protect.
+     *
+     * No chronometer either: it would be counting up from the capture's start, which is not
+     * what is being waited on here.
+     */
+    private fun buildMergeNotification(status: MergeStatus): Notification {
+        ensureChannels()
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_capture)
+            .setContentTitle(status.title)
+            .setContentText(status.label())
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setShowWhen(false)
+            .setProgress(status.chunksTotal, status.chunksDone, status.indeterminate)
+            .setContentIntent(tapIntent())
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .build()
+    }
+
+    /**
+     * The status to open the merge notification with. Normally the manager has already
+     * published one before starting us; the fallback covers the service being (re)created
+     * with the flow not yet readable, so `startForeground` always has something to show
+     * within its deadline.
+     */
+    private fun currentMergeStatus(): MergeStatus =
+        sessionManager.mergeStatus.value ?: MergeStatus(sessionManager.state.value.noteTitle)
 
     private fun postReminderNotification() {
         ensureChannels()
@@ -352,6 +419,7 @@ class CaptureService : Service() {
         private const val ACTION_PAUSE = "com.trailmix.app.capture.PAUSE"
         private const val ACTION_RESUME = "com.trailmix.app.capture.RESUME"
         private const val ACTION_STOP_AND_SAVE = "com.trailmix.app.capture.STOP_AND_SAVE"
+        private const val ACTION_MERGE = "com.trailmix.app.capture.MERGE"
         private const val ACTION_DISMISS_REMINDER = "com.trailmix.app.capture.DISMISS_REMINDER"
         private const val ACTION_DISMISS_CALL_ENDED = "com.trailmix.app.capture.DISMISS_CALL_ENDED"
         private const val EXTRA_RESULT_CODE = "resultCode"
@@ -369,6 +437,20 @@ class CaptureService : Service() {
                     .setAction(ACTION_ATTACH_PROJECTION)
                     .putExtra(EXTRA_RESULT_CODE, resultCode)
                     .putExtra(EXTRA_RESULT_DATA, resultData),
+            )
+        }
+
+        /**
+         * REL-10: hand the service over to the merge phase — re-typed to `dataSync`, showing
+         * progress, no capture controls. Safe to call whether or not the service is already
+         * running: End & Merge arrives with a live capture service to re-type, a crash-recovery
+         * rescue starts one from cold. `startForegroundService` in both cases because the cold
+         * start must become foreground, and it is always triggered by a user action with the
+         * app in front, so the background-start restriction doesn't apply.
+         */
+        fun merge(context: Context) {
+            context.startForegroundService(
+                Intent(context, CaptureService::class.java).setAction(ACTION_MERGE),
             )
         }
 

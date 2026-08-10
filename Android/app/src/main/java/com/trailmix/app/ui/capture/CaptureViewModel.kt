@@ -11,6 +11,7 @@ import com.trailmix.app.data.model.TranscriptLine
 import com.trailmix.app.data.settings.SettingsRepository
 import com.trailmix.app.data.speech.CaptureSessionManager
 import com.trailmix.app.data.speech.EngineKind
+import com.trailmix.app.data.speech.MergeStatus
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -108,6 +109,10 @@ class CaptureViewModel @Inject constructor(
     val state: StateFlow<CaptureUiState> = manager.state
     val fragments: MutableStateFlow<String> get() = manager.fragments
     val liveLines: StateFlow<List<TranscriptLine>> = manager.liveLines
+
+    /** REL-10: chunk progress while the merge runs, so the screen shows the same "N of M"
+     * the foreground notification does rather than a static "Merging on-device…". */
+    val mergeStatus: StateFlow<MergeStatus?> = manager.mergeStatus
     val deviceAudioSupported: Boolean get() = manager.deviceAudioSupported
 
     /** The active session's stored template value (enum name or `custom:<name>`, AI-03). */
