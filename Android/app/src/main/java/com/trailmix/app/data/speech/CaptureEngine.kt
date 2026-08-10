@@ -73,12 +73,25 @@ class CaptureEngine @Inject constructor(
     suspend fun begin(preferredDevice: AudioDeviceInfo?): Flow<SpeechEvent> {
         when (transcriber.status()) {
             FeatureStatus.AVAILABLE -> {
-                _kind.value = EngineKind.MLKIT
                 val pipe = AudioPipeline()
                 pipeline = pipe
-                val pfd = pipe.start(preferredDevice)
-                return transcriber.transcribe(pfd)
-                    .onCompletion { teardownPipeline() }
+                // REL-11: opening the mic is the one step here that routinely fails for
+                // reasons outside the app — something else holds it. Previously that threw
+                // straight through begin() into an unguarded coroutine and killed the
+                // process. It is a start failure, not a fatal one, so it drops through the
+                // same fail-soft ladder every other capability in this app uses.
+                val pfd = try {
+                    pipe.start(preferredDevice)
+                } catch (e: AudioUnavailableException) {
+                    Log.w(TAG, "mic pipeline unavailable, falling back: $e")
+                    pipeline = null
+                    null
+                }
+                if (pfd != null) {
+                    _kind.value = EngineKind.MLKIT
+                    return transcriber.transcribe(pfd)
+                        .onCompletion { teardownPipeline() }
+                }
             }
 
             FeatureStatus.DOWNLOADABLE, FeatureStatus.DOWNLOADING -> {

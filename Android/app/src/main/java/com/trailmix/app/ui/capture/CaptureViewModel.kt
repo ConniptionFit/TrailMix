@@ -40,6 +40,13 @@ data class CaptureUiState(
     val lastFinalLine: String = "",
     val merging: Boolean = false,
     val speechAvailable: Boolean = true,
+    /**
+     * REL-11: why this session cannot transcribe, when the reason is *situational* rather
+     * than a property of the device. `speechAvailable = false` alone renders "isn't available
+     * on this device", which is simply wrong for a mic held by a call or another app — the
+     * device is fine and retrying later will work. Null when there is nothing to explain.
+     */
+    val captureError: String? = null,
     val engineKind: EngineKind = EngineKind.NONE,
     val deviceAudioActive: Boolean = false,
     /** Device audio attached but delivering pure silence for a while. */
