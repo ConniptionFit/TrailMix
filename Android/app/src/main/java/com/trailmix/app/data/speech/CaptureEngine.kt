@@ -180,7 +180,10 @@ class CaptureEngine @Inject constructor(
 
     private fun teardownPipeline() {
         detachDeviceAudio()
-        pipeline?.stop()
+        // REL-12: release(), not stop(). This runs when the recognizer flow has completed or
+        // been cancelled, so nothing will drain the PCM pipe again — the read end has to be
+        // closed here or a pump thread blocked writing into it is never freed.
+        pipeline?.release()
         pipeline = null
     }
 

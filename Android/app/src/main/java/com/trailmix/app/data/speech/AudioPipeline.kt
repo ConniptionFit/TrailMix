@@ -51,6 +51,18 @@ class AudioPipeline {
     private var writeSide: ParcelFileDescriptor? = null
 
     /**
+     * REL-12: the read end of the PCM pipe, retained rather than handed away and forgotten.
+     *
+     * It used to be a local in [start] that was returned and never referenced again, which
+     * left the pipeline unable to guarantee its own shutdown: the mic pump blocks in
+     * `out.write()` once the pipe's ~64 KiB (about two seconds of 16 kHz mono) fills, and the
+     * only thing that can unblock it is the reader draining or the read end closing. On every
+     * abandon path — pause, cancel — the recognizer has already stopped draining, so the pump
+     * was relying on ML Kit closing an fd we had given away. [release] now closes it directly.
+     */
+    private var readSide: ParcelFileDescriptor? = null
+
+    /**
      * Peak |amplitude| seen on the device-audio lane since the last read;
      * -1 when the lane isn't attached. Lets the UI tell the user when the
      * playing app is delivering silence (opted out of capture / voice call).
@@ -72,6 +84,7 @@ class AudioPipeline {
         check(!running) { "pipeline already running" }
         val pipe = ParcelFileDescriptor.createPipe()
         val readSide = pipe[0]
+        this.readSide = readSide
         writeSide = pipe[1]
         val out: OutputStream = ParcelFileDescriptor.AutoCloseOutputStream(pipe[1])
 
@@ -137,6 +150,13 @@ class AudioPipeline {
             } finally {
                 runCatching { out.flush() }
                 runCatching { out.close() } // EOF → recognizer finalizes
+                // REL-12: this thread owns the recorder's lifetime, exactly like the playback
+                // pump below. stop() used to release it after a bounded join(1s), so a join
+                // that timed out freed the native recorder while this thread could still be
+                // inside record.read() — a use-after-free in native code, from a path that
+                // times out precisely when the pump is wedged.
+                runCatching { record.stop() }
+                runCatching { record.release() }
             }
         }
         return readSide
@@ -150,6 +170,7 @@ class AudioPipeline {
      */
     private fun abandonPipe(readSide: ParcelFileDescriptor, out: OutputStream) {
         writeSide = null
+        this.readSide = null
         runCatching { out.close() }
         runCatching { readSide.close() }
     }
@@ -238,22 +259,55 @@ class AudioPipeline {
     }
 
     /**
-     * Stop everything and close the write end, which signals EOF so the
+     * End of input: stop the mic and close the write end, which signals EOF so the
      * recognizer emits its remaining final text and completes.
+     *
+     * This deliberately leaves the read end open — the recognizer is still draining the
+     * last couple of seconds of buffered audio, and closing it here would truncate the
+     * final utterance of every capture. Use [release] once that drain is over.
      */
-    fun stop() {
+    fun stop() = shutdown(closeReadSide = false)
+
+    /**
+     * REL-12: final teardown — after this, nothing is left holding the mic or the pipe,
+     * whatever state the session was in.
+     *
+     * The distinction from [stop] is which side of the pipe is still wanted. [stop] is the
+     * graceful EOF that lets the recognizer flush its tail. [release] is the abandon path
+     * (the flow completed, or was cancelled by pause/discard), where nothing will ever drain
+     * the pipe again — so the read end is closed *first*, which turns a pump thread blocked
+     * in `out.write()` into an immediate EPIPE instead of a thread parked forever on a pipe
+     * with no reader. Without it the join below could only ever time out, and the session
+     * leaked a thread, two fds and the pipe buffer on every cancelled capture.
+     */
+    fun release() = shutdown(closeReadSide = true)
+
+    private fun shutdown(closeReadSide: Boolean) {
+        if (closeReadSide) {
+            readSide?.let { runCatching { it.close() } }
+            readSide = null
+        }
         if (!running) return
         running = false
         detachPlayback()
-        micRecord?.let { runCatching { it.stop() } }
-        micThread?.join(1_000)
-        micRecord?.release()
+        val record = micRecord
         micRecord = null
+        // Unblock a pending read(). The pump thread — not this one — releases the recorder,
+        // so a join that times out can no longer free it mid-read.
+        record?.let { runCatching { it.stop() } }
+        micThread?.join(PUMP_JOIN_MS)
         micThread = null
         writeSide = null
     }
 
     private companion object {
         const val TAG = "TrailMixAudio"
+
+        /**
+         * How long [shutdown] waits for the mic pump to finish. It is a backstop, not the
+         * mechanism: stopping the recorder unblocks a pending `read()` and closing the read
+         * end unblocks a pending `write()`, so the pump normally exits in well under this.
+         */
+        const val PUMP_JOIN_MS = 1_000L
     }
 }

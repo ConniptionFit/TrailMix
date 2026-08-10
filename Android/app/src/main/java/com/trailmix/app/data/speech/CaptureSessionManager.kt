@@ -651,6 +651,14 @@ class CaptureSessionManager @Inject constructor(
     private fun stopCapture(handOffToMerge: Boolean = false) {
         listenJob?.cancel()
         listenJob = null
+        // REL-12: release the mic here rather than leaving it to the cancelled recognizer flow
+        // unwinding at some later moment. Cancelling the job above only *schedules* teardown —
+        // the pipeline is actually stopped by the flow's onCompletion, which runs after ML Kit
+        // finishes stopRecognition()/close(), an IPC round trip into AICore. Until then the
+        // AudioRecord is still open and the privacy indicator still lit, after the user has
+        // already stopped. endInput() is idempotent, so the paths that already call it first
+        // (cancel, the merge) are unaffected.
+        engine.endInput()
         tickerJob?.cancel()
         tickerJob = null
         // REL-09: one last flush before the periodic writer stops, so the journal's duration
