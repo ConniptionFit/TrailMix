@@ -7,6 +7,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.trailmix.app.data.db.ChatDao
 import com.trailmix.app.data.db.NoteDao
 import com.trailmix.app.data.db.TrailMixDatabase
+import com.trailmix.app.data.export.ExportSink
+import com.trailmix.app.data.export.NoteExporter
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -110,4 +112,13 @@ object AppModule {
 
     @Provides
     fun provideChatDao(db: TrailMixDatabase): ChatDao = db.chatDao()
+
+    /**
+     * REL-14: [NotesRepository] depends on the [ExportSink] *interface*, not on
+     * [NoteExporter], so the export/delete cascade can be exercised against a fake with no
+     * SAF, no `Context` and no device. This is the only place the two are tied together.
+     */
+    @Provides
+    @Singleton
+    fun provideExportSink(exporter: NoteExporter): ExportSink = exporter
 }

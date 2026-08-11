@@ -13,10 +13,11 @@ no audio files ever written to disk, no accounts, no telemetry, no cloud anythin
 | Platform | Status | Location |
 |---|---|---|
 | **Android** | Shipping, actively developed (Kotlin + Jetpack Compose, minSdk 31) | [`Android/`](Android/) |
-| Linux (Arch + Debian) | Planned, not started | Will land as a sibling folder (e.g. `Linux/`) alongside `Android/` when work begins — same product shape and data model (provenance segments, transcript lines, recipes), different native stack (candidate: whisper.cpp/sherpa-onnx + llama.cpp) |
+| Linux (Arch + Debian) | Started and substantially working (2026-07-24), but **in a separate repo** — `~/Projects/trailmix-linux`, not pushed anywhere yet | Electron/Node with its **own** SQLite schema. It did *not* land as a `Linux/` folder here, and it does **not** share the Android data model — there is no JVM-portable core to share. Reconciling the two repo locations is still open. |
 
 This repo is structured for multiple platform implementations to live side by side as
-top-level folders, each a self-contained project. Only `Android/` exists today.
+top-level folders, each a self-contained project. Only `Android/` exists here today — the
+Linux desktop went its own way (see the table above).
 
 ## Install (Android)
 
@@ -44,8 +45,12 @@ allow your file manager to install unknown apps).
 > Releases up to v1.9.0 were signed with a per-machine *debug* key, so they can't be
 > upgraded in place. v1.10.0 switches to a stable release key; from v1.10.0 onward,
 > updates install cleanly with no data loss. Before uninstalling anything, set
-> **Settings → Export location** — TrailMix then writes every note out as Markdown, so a
-> reinstall costs you nothing.
+> **Settings → Export location** — TrailMix then writes every note out as Markdown, and
+> those files live in shared storage, so they survive. Be clear-eyed about what that buys
+> you: the Markdown is readable and greppable forever, but **there is no import path back
+> into the app** (see INT-04), so a reinstall still costs you the in-app library — chat
+> history, provenance tags, and the ability to resume a capture. The exports are a real
+> safety net for the *content*, not a backup you can restore from.
 
 ### Build from source
 
@@ -258,12 +263,13 @@ from Obsidian Dataview, scannable on a phone, and unambiguous to a model reading
 
 ## Linux plans (Arch/Debian)
 
-Planned near-term, not yet started. The Linux port will not share the Android UI. The
-plan is to keep the same product shape (capture → merge → provenance note → recipes)
-with a native stack: whisper.cpp or sherpa-onnx for streaming ASR and llama.cpp for the
-merge/chat model, which run well on both Arch and Debian. The data model (provenance
-segments, transcript lines, recipes) is deliberately UI-independent so it can be ported
-directly. It will land as its own top-level folder alongside `Android/`, not inside it.
+Started 2026-07-24 and substantially working, but **not in this repo** — it lives at
+`~/Projects/trailmix-linux` and has not been pushed to a remote yet. It keeps the same
+product shape (capture → merge → provenance note → recipes) and, as planned, does not
+share the Android UI. Two things did *not* go to plan and are worth stating plainly: it is
+an **Electron/Node** app with its **own SQLite schema** rather than a port of the Android
+data model (there is no JVM-portable core to share), and it is a **separate repo** rather
+than a `Linux/` folder here. Whether to fold it back in is still an open decision.
 
 ## Known deviations from the Android design handoff
 

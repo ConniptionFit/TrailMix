@@ -6,6 +6,27 @@ import androidx.room.Query
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
+/**
+ * OBS-04 + REL-14: a live note that is not fully backed up by files outside app-private
+ * storage. Shared by the count and the list so the badge and the repair can never disagree
+ * about what "unexported" means.
+ *
+ * `obsidianFileUri` is only ever set after a *successful* write, so null means the note file
+ * never landed. **REL-14 added the second clause**: a note whose summary exported but whose
+ * companion `.transcript.md` did not was invisible here, so OBS-04 both under-counted and
+ * never repaired it — the note read as backed up while the verbatim record, the half that
+ * cannot be regenerated, was missing.
+ *
+ * `transcriptJson <> '[]'` stands in for [NoteExporter]'s own "does this note have transcript
+ * content" test. The two agree because every stored [com.trailmix.app.data.model.TranscriptLine]
+ * comes from a path that already rejected blank text, so "has lines" and "has non-blank lines"
+ * are the same set in practice; if they ever diverged the cost is one redundant export attempt
+ * per repair pass, not a wrong answer.
+ */
+private const val UNEXPORTED =
+    "deletedAtEpochMs IS NULL AND (obsidianFileUri IS NULL OR " +
+        "(transcriptFileUri IS NULL AND transcriptJson <> '[]' AND transcriptJson <> ''))"
+
 @Dao
 interface NoteDao {
     @Query("SELECT * FROM notes WHERE deletedAtEpochMs IS NULL ORDER BY createdAtEpochMs DESC")
@@ -37,20 +58,45 @@ interface NoteDao {
      * Restored notes legitimately appear here: [restore] nulls the URI on purpose so the
      * export is rewritten fresh rather than pointing at a file that was deleted with the note.
      */
-    @Query("SELECT COUNT(*) FROM notes WHERE deletedAtEpochMs IS NULL AND obsidianFileUri IS NULL")
+    @Query("SELECT COUNT(*) FROM notes WHERE $UNEXPORTED")
     fun observeUnexportedCount(): Flow<Int>
 
-    @Query(
-        "SELECT * FROM notes WHERE deletedAtEpochMs IS NULL AND obsidianFileUri IS NULL " +
-            "ORDER BY createdAtEpochMs DESC",
-    )
+    @Query("SELECT * FROM notes WHERE $UNEXPORTED ORDER BY createdAtEpochMs DESC")
     suspend fun getUnexported(): List<NoteEntity>
+
+    /**
+     * REL-14: write back **only** the two tracked export URIs.
+     *
+     * This exists because the whole-row `@Update` it replaces was a lost-update bug. An
+     * export is slow SAF I/O, and the row it wrote back was the snapshot read *before* that
+     * I/O — so anything the user did to the note meanwhile was silently reverted when the
+     * export landed. The worst shape was a delete: `deletedAtEpochMs` went back to null and
+     * the note reappeared, which on an app whose delete is the user's own decision is the
+     * opposite of fail-soft. Editing the note or adding a chat message in the same window
+     * lost that edit the same way.
+     *
+     * Two columns, addressed by id, cannot revert anything they don't name.
+     */
+    @Query("UPDATE notes SET obsidianFileUri = :noteUri, transcriptFileUri = :transcriptUri WHERE id = :id")
+    suspend fun setExportUris(id: Long, noteUri: String?, transcriptUri: String?)
 
     @Query("UPDATE notes SET deletedAtEpochMs = :deletedAt WHERE id = :id")
     suspend fun softDelete(id: Long, deletedAt: Long)
 
-    /** Also clears the tracked export URI — the export file was removed at soft-delete time. */
-    @Query("UPDATE notes SET deletedAtEpochMs = NULL, obsidianFileUri = NULL WHERE id = :id")
+    /**
+     * Also clears **both** tracked export URIs — the delete removed both files.
+     *
+     * REL-14: `transcriptFileUri` was left set, so a restored note pointed its companion
+     * transcript at a `content://` document that had been deleted. The next export then
+     * handed that stale URI to the writer, which either wrote nothing useful or — if the
+     * provider had recycled the document id — wrote this note's transcript over an unrelated
+     * file. Clearing it makes the restore do what its docstring already claimed: re-export
+     * fresh, both halves.
+     */
+    @Query(
+        "UPDATE notes SET deletedAtEpochMs = NULL, obsidianFileUri = NULL, " +
+            "transcriptFileUri = NULL WHERE id = :id",
+    )
     suspend fun restore(id: Long)
 
     @Query("SELECT * FROM notes WHERE deletedAtEpochMs IS NOT NULL AND deletedAtEpochMs < :cutoff")

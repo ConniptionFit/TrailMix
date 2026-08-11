@@ -2,6 +2,7 @@ package com.trailmix.app.data.export
 
 import android.content.Context
 import android.net.Uri
+import android.provider.DocumentsContract
 import com.trailmix.app.data.db.NoteEntity
 import com.trailmix.app.data.db.toMarkdown
 import com.trailmix.app.data.db.toTranscriptMarkdown
@@ -24,23 +25,19 @@ import kotlinx.coroutines.withContext
 class NoteExporter @Inject constructor(
     @ApplicationContext private val context: Context,
     private val settingsRepository: SettingsRepository,
-) {
-    /**
-     * The two files one note produces (OBS-02, v1.11.0). [transcript] is null when the note
-     * has no transcript lines — a typed-only note doesn't get an empty companion file.
-     */
-    data class ExportedFiles(val note: Uri, val transcript: Uri?)
+) : ExportSink {
+
+    override suspend fun isConfigured(): Boolean =
+        settingsRepository.exportLocationUri.first() != null
 
     /**
-     * Whether an export location is configured at all.
-     *
-     * OBS-04 needs this to tell two very different situations apart: "you have no export
-     * location, so nothing is expected to be backed up" versus "you have one and these notes
-     * failed to reach it". Reporting the first as a failure would be noise; reporting the
-     * second as fine would be a lie.
+     * REL-14: removing an exported file lives here, with the code that created it, rather
+     * than in the repository — SAF is this package's business, and the repository's job is
+     * only to decide *which* files a delete, restore or migration should take with it.
      */
-    suspend fun isConfigured(): Boolean =
-        settingsRepository.exportLocationUri.first() != null
+    override fun deleteExported(uriStr: String): Boolean = runCatching {
+        DocumentsContract.deleteDocument(context.contentResolver, Uri.parse(uriStr))
+    }.getOrDefault(false)
 
     /**
      * Best-effort export/update-in-place into the configured export location. Writes the
@@ -49,9 +46,9 @@ class NoteExporter @Inject constructor(
      * to another model as context). Returns null if no location is set or the note write
      * failed; a failed *transcript* write is not fatal, it just leaves that URI null.
      */
-    suspend fun exportNote(
+    override suspend fun exportNote(
         note: NoteEntity,
-        recipeOutputs: List<Pair<String, String>> = emptyList(),
+        recipeOutputs: List<Pair<String, String>>,
     ): ExportedFiles? = withContext(Dispatchers.IO) {
         val locationUri = settingsRepository.exportLocationUri.first() ?: return@withContext null
         val folderName = settingsRepository.notesFolder.first()
@@ -93,6 +90,6 @@ class NoteExporter @Inject constructor(
             null
         }
 
-        ExportedFiles(note = noteUri, transcript = transcriptUri)
+        ExportedFiles(note = noteUri.toString(), transcript = transcriptUri?.toString())
     }
 }
