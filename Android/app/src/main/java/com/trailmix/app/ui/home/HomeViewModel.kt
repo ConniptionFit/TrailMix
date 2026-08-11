@@ -4,14 +4,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.trailmix.app.data.calendar.UpcomingMeeting
 import com.trailmix.app.data.calendar.UpcomingMeetingSource
-import com.trailmix.app.data.db.NoteEntity
-import com.trailmix.app.data.db.NoteSearch
 import com.trailmix.app.data.db.NotesRepository
 import com.trailmix.app.data.db.toMarkdown
 import com.trailmix.app.data.speech.CaptureSessionManager
 import com.trailmix.app.data.speech.PendingJournal
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -20,6 +19,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -41,12 +41,19 @@ class HomeViewModel @Inject constructor(
     private val _meetingsOnly = MutableStateFlow(false)
     val meetingsOnly: StateFlow<Boolean> = _meetingsOnly.asStateFlow()
 
-    val notes: StateFlow<List<NoteEntity>> =
+    private val searchIndex = HomeNoteIndex()
+
+    /**
+     * UX-18: the filter runs on [Dispatchers.Default], not on the main thread. `stateIn`
+     * collects in [viewModelScope], whose dispatcher is `Main.immediate`, so without the
+     * `flowOn` every keystroke parsed every note's JSON on the UI thread. [HomeNoteIndex]
+     * then keeps a keystroke from redoing work the previous one already did.
+     */
+    val notes: StateFlow<List<HomeNote>> =
         combine(notesRepository.observeNotes(), searchQuery, _meetingsOnly) { all, query, meetings ->
-            all.filter { note ->
-                (!meetings || note.meetingTitle != null) && NoteSearch.matches(note, query)
-            }
-        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+            searchIndex.filter(all, query, meetings)
+        }.flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** How many notes sit in Recently deleted (REL-06) — drives the entry row's visibility. */
     val deletedCount: StateFlow<Int> = notesRepository.observeDeletedNotes()
@@ -92,7 +99,8 @@ class HomeViewModel @Inject constructor(
     /** Combined Markdown of the selected notes, in list (newest-first) order, for sharing. */
     suspend fun selectedMarkdown(): String {
         val ids = _selectedIds.value.orEmpty()
-        return notes.first().filter { it.id in ids }.joinToString("\n\n---\n\n") { it.toMarkdown() }
+        return notes.first().filter { it.id in ids }
+            .joinToString("\n\n---\n\n") { it.note.toMarkdown() }
     }
 
     private val _upcoming = MutableStateFlow<UpcomingMeeting?>(null)

@@ -358,17 +358,17 @@ fun HomeScreen(
                         )
                     }
                 }
-                items(notes, key = { it.id }) { note ->
+                items(notes, key = { it.id }) { row ->
                     NoteRow(
-                        note = note,
+                        row = row,
                         // UX-10: null when not in selection mode; row shows an indicator
                         // and taps toggle instead of opening while selecting.
-                        selected = selectedIds?.contains(note.id),
+                        selected = selectedIds?.contains(row.id),
                         onClick = {
-                            if (selecting) viewModel.toggleSelected(note.id) else onOpenNote(note.id)
+                            if (selecting) viewModel.toggleSelected(row.id) else onOpenNote(row.id)
                         },
                         onLongClick = {
-                            if (selecting) viewModel.toggleSelected(note.id) else contextMenuNote = note
+                            if (selecting) viewModel.toggleSelected(row.id) else contextMenuNote = row.note
                         },
                     )
                 }
@@ -956,11 +956,12 @@ private fun UpcomingCard(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun NoteRow(
-    note: NoteEntity,
+    row: HomeNote,
     selected: Boolean?,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
+    val note = row.note
     val c = TrailMix.colors
     Column(
         modifier = Modifier
@@ -1009,7 +1010,7 @@ private fun NoteRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = note.preview,
+                    text = row.preview,
                     color = c.dim,
                     fontSize = 13.sp,
                     maxLines = 1,
@@ -1017,14 +1018,11 @@ private fun NoteRow(
                     modifier = Modifier.padding(top = 3.dp),
                 )
                 // UX-12: creation date & time on every row; CAL-05 adds a meeting tag
-                // on notes linked to a calendar event.
-                val createdLabel = remember(note.createdAtEpochMs) {
-                    SimpleDateFormat("MMM d, yyyy · h:mm a", Locale.getDefault())
-                        .format(Date(note.createdAtEpochMs))
-                }
+                // on notes linked to a calendar event. UX-18: the label is formatted once
+                // per note off the main thread, not per composition.
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = createdLabel,
+                        text = row.createdLabel,
                         color = c.dim.copy(alpha = 0.75f),
                         fontSize = 11.5.sp,
                         modifier = Modifier.padding(top = 3.dp),

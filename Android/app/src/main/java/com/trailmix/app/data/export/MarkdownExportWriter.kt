@@ -67,10 +67,33 @@ object MarkdownExportWriter {
             ?: folder.createFile("text/markdown", fileName)
             ?: return null
 
+        val bytes = markdown.toByteArray(Charsets.UTF_8)
         context.contentResolver.openOutputStream(target.uri, "wt")?.use { out ->
-            out.write(markdown.toByteArray(Charsets.UTF_8))
+            out.write(bytes)
         } ?: return null
+
+        // REL-15: "wt" truncates and then writes, so a write that ends early leaves a file
+        // shorter than the note it is supposed to hold. An `IOException` on the way (a
+        // revoked grant, a dead provider) already surfaces as a null from the caller's
+        // `runCatching`, but a full disk can end a write short *without* throwing, and the
+        // export would then be recorded as a success — a URI pointing at a truncated note,
+        // and an OBS-04 counter saying everything is backed up.
+        if (isShortWrite(runCatching { target.length() }.getOrDefault(UNKNOWN_LENGTH), bytes.size)) {
+            return null
+        }
 
         return target.uri
     }
+
+    /** Reported length is 0 on providers that don't track size; not an answer, so not a failure. */
+    private const val UNKNOWN_LENGTH = 0L
+
+    /**
+     * Whether [reported] proves the write was cut short. Deliberately one-sided: only a
+     * length that is *positively* less than expected counts. Providers that report 0 or
+     * refuse to answer must not be read as failures, or every export on them would be
+     * rejected and retried forever, and a note that is genuinely saved would show as missing.
+     */
+    internal fun isShortWrite(reported: Long, expected: Int): Boolean =
+        reported > UNKNOWN_LENGTH && reported < expected.toLong()
 }
