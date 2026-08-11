@@ -1,10 +1,7 @@
 package com.trailmix.app.data.db
 
-import android.content.Context
-import android.net.Uri
-import android.provider.DocumentsContract
 import com.trailmix.app.data.ai.NoteTitle
-import com.trailmix.app.data.export.NoteExporter
+import com.trailmix.app.data.export.ExportSink
 import com.trailmix.app.data.export.NoteMarkdown
 import com.trailmix.app.data.model.NoteSegment
 import com.trailmix.app.data.model.SegmentsJson
@@ -14,7 +11,6 @@ import com.trailmix.app.data.model.StructuredSummaryJson
 import com.trailmix.app.data.model.TranscriptJson
 import com.trailmix.app.data.model.moveSection
 import com.trailmix.app.data.model.TranscriptLine
-import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
@@ -34,12 +30,22 @@ data class DeleteResult(val filesDeleted: Boolean)
  */
 data class ExportMigrationResult(val moved: Int, val writeFailures: Int, val removeFailures: Int)
 
+/**
+ * The note store, and — the part REL-14 is about — the **cascade** around it: which notes get
+ * written to the user's export folder, when a delete takes its files with it, what a restore
+ * rewrites, and how a failed export is found again later.
+ *
+ * That cascade is the app's only real backup story (`allowBackup=false`, local-only, the
+ * exported Markdown is the copy that survives a wipe), and until REL-14 it had **no tests at
+ * all** — the same shape as REL-13, where the pure half was covered and the half that actually
+ * deletes and overwrites things was not. Its collaborators are therefore interfaces
+ * ([ExportSink], the two DAOs) so the whole of it runs on plain JVM fakes with no device.
+ */
 @Singleton
 class NotesRepository @Inject constructor(
-    @ApplicationContext private val context: Context,
     private val noteDao: NoteDao,
     private val chatDao: ChatDao,
-    private val noteExporter: NoteExporter,
+    private val exportSink: ExportSink,
 ) {
     fun observeNotes(): Flow<List<NoteEntity>> = noteDao.observeAll()
 
@@ -80,7 +86,11 @@ class NotesRepository @Inject constructor(
                 template = template,
             ),
         )
-        exportIfConfigured(noteDao.getById(id)!!)
+        // REL-14: was `getById(id)!!`. Room hands back the row it just inserted in every
+        // ordinary case, but a bare `!!` inside the merge path is a crash where a skipped
+        // export would do — and REL-10 spent a release making sure a merge cannot take the
+        // app down with it. The note is already saved either way; only its export is at stake.
+        noteDao.getById(id)?.let { exportIfConfigured(it) }
         return id
     }
 
@@ -195,10 +205,10 @@ class NotesRepository @Inject constructor(
         noteDao.softDelete(id, System.currentTimeMillis())
 
         var filesOk = true
-        note.obsidianFileUri?.let { if (!deleteDocument(it)) filesOk = false }
+        note.obsidianFileUri?.let { if (!exportSink.deleteExported(it)) filesOk = false }
         // OBS-02: the companion transcript file is part of the note, so it goes too —
         // leaving it behind would strand an orphan .transcript.md in the export folder.
-        note.transcriptFileUri?.let { if (!deleteDocument(it)) filesOk = false }
+        note.transcriptFileUri?.let { if (!exportSink.deleteExported(it)) filesOk = false }
         return DeleteResult(filesDeleted = filesOk)
     }
 
@@ -215,9 +225,23 @@ class NotesRepository @Inject constructor(
         noteDao.getById(id)?.let { exportIfConfigured(it) }
     }
 
-    /** Immediate, unrecoverable removal — the "Delete now" action in Recently deleted
-     * and the purge path. The export file is already gone (removed at soft-delete time). */
+    /**
+     * Immediate, unrecoverable removal — the "Delete now" action in Recently deleted and the
+     * purge path.
+     *
+     * The export files are normally already gone, removed at soft-delete time. REL-14: they
+     * are retried here anyway, because the one case that matters is the one where that
+     * removal *failed* — a stale URI or a revoked SAF grant, reported fail-soft as
+     * [DeleteResult.filesDeleted] = false. Deleting the row was the last thing still pointing
+     * at those files, so without this retry a transient failure at delete time stranded an
+     * orphaned `.md` in the user's export folder permanently, with nothing left that knew it
+     * was there. A day in Recently deleted is ample time for the grant to be working again.
+     */
     suspend fun deleteForever(id: Long) {
+        noteDao.getById(id)?.let { note ->
+            note.obsidianFileUri?.let { exportSink.deleteExported(it) }
+            note.transcriptFileUri?.let { exportSink.deleteExported(it) }
+        }
         chatDao.deleteForNote(id)
         noteDao.deleteById(id)
     }
@@ -253,13 +277,29 @@ class NotesRepository @Inject constructor(
      * Fail-soft per note: a single unwritable note never aborts the rest.
      */
     suspend fun exportMissing(): ExportRepairResult {
-        if (!noteExporter.isConfigured()) return ExportRepairResult(0, 0)
+        if (!exportSink.isConfigured()) return ExportRepairResult(0, 0)
         var exported = 0
         var failures = 0
-        noteDao.getUnexported().forEach { note ->
-            val before = note.obsidianFileUri
-            exportIfConfigured(note)
-            if (noteDao.getById(note.id)?.obsidianFileUri != before) exported++ else failures++
+        // REL-14: hold the same re-entry guard the opportunistic path uses, for the whole
+        // pass. Without it every note's successful export triggered `retryMissingExports`,
+        // which exported the entire remaining backlog — and then this loop walked its own
+        // now-stale list and exported each of them a second time. N unexported notes cost
+        // ~2N writes and N full SAF directory scans, behind a button the user is watching.
+        // Repairing the backlog *is* the backlog repair; it must not recurse into itself.
+        repairingExports = true
+        try {
+            noteDao.getUnexported().forEach { note ->
+                exportIfConfigured(note)
+                // Success is "something got written", not "the note file got written" —
+                // a note whose summary was already exported can be here purely because its
+                // companion transcript is missing, in which case only that URI moves.
+                val after = noteDao.getById(note.id)
+                val moved = after?.obsidianFileUri != note.obsidianFileUri ||
+                    after?.transcriptFileUri != note.transcriptFileUri
+                if (moved) exported++ else failures++
+            }
+        } finally {
+            repairingExports = false
         }
         return ExportRepairResult(exported = exported, failures = failures)
     }
@@ -282,7 +322,7 @@ class NotesRepository @Inject constructor(
             val outputs = latestRecipeOutputs(note.id)
             // Clearing both tracked URIs forces a find-or-create in the new folder.
             val written = runCatching {
-                noteExporter.exportNote(
+                exportSink.exportNote(
                     note.copy(obsidianFileUri = null, transcriptFileUri = null),
                     outputs,
                 )
@@ -291,17 +331,19 @@ class NotesRepository @Inject constructor(
                 writeFailures++
                 return@forEach
             }
-            noteDao.update(
-                note.copy(
-                    obsidianFileUri = written.note.toString(),
-                    transcriptFileUri = written.transcript?.toString(),
-                ),
+            // REL-14: same targeted write-back as exportIfConfigured, for the same reason —
+            // this loop re-exports every note in the library, so the window between reading a
+            // row and writing it back spans a full SAF write per note.
+            noteDao.setExportUris(
+                id = note.id,
+                noteUri = written.note,
+                transcriptUri = written.transcript,
             )
             moved++
-            if (written.note.toString() != oldUri && !deleteDocument(oldUri)) removeFailures++
+            if (written.note != oldUri && !exportSink.deleteExported(oldUri)) removeFailures++
             // OBS-02: the transcript companion migrates with its note.
-            if (oldTranscriptUri != null && written.transcript?.toString() != oldTranscriptUri &&
-                !deleteDocument(oldTranscriptUri)
+            if (oldTranscriptUri != null && written.transcript != oldTranscriptUri &&
+                !exportSink.deleteExported(oldTranscriptUri)
             ) {
                 removeFailures++
             }
@@ -317,10 +359,6 @@ class NotesRepository @Inject constructor(
         chatDao.getRecipeOutputs(noteId)
             .groupBy { it.recipeName!! }
             .map { (name, messages) -> name to messages.last().text }
-
-    private fun deleteDocument(uriStr: String): Boolean = runCatching {
-        DocumentsContract.deleteDocument(context.contentResolver, Uri.parse(uriStr))
-    }.getOrDefault(false)
 
     /**
      * Best-effort Markdown export/update-in-place into the configured Export location
@@ -357,15 +395,22 @@ class NotesRepository @Inject constructor(
 
     private suspend fun exportIfConfigured(note: NoteEntity) {
         val outputs = latestRecipeOutputs(note.id)
-        val written = runCatching { noteExporter.exportNote(note, outputs) }.getOrNull() ?: return
-        noteDao.update(
-            note.copy(
-                obsidianFileUri = written.note.toString(),
-                // OBS-02: keep any previously-tracked transcript URI if this export didn't
-                // produce one (e.g. a note whose transcript write failed) rather than
-                // dropping the reference and orphaning the file.
-                transcriptFileUri = written.transcript?.toString() ?: note.transcriptFileUri,
-            ),
+        val written = runCatching { exportSink.exportNote(note, outputs) }.getOrNull() ?: return
+        // REL-14: write back the two URIs by id, NOT `noteDao.update(note.copy(…))`.
+        //
+        // `note` was read before the export, and the export is slow SAF I/O — so a whole-row
+        // update here rewrote every column from a stale snapshot and silently reverted
+        // anything the user did in between. The worst shape was a delete: `deletedAtEpochMs`
+        // went back to null and the note the user had just deleted reappeared. An edit
+        // (`updateNoteContent`) or a chat message landing in the same window was lost the
+        // same way. A two-column update addressed by id cannot revert what it doesn't name.
+        noteDao.setExportUris(
+            id = note.id,
+            noteUri = written.note,
+            // OBS-02: keep any previously-tracked transcript URI if this export didn't
+            // produce one (e.g. a note whose transcript write failed) rather than
+            // dropping the reference and orphaning the file.
+            transcriptUri = written.transcript ?: note.transcriptFileUri,
         )
         retryMissingExports()
     }
