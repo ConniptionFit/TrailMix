@@ -134,4 +134,10 @@ dependencies {
     // own android.database.sqlite classes are unit-test stubs that don't execute real SQL.
     testImplementation(libs.sqlite.jdbc)
     debugImplementation(libs.androidx.compose.ui.tooling)
+    // First instrumented tests (BLD-01): things a JVM unit test or a Robolectric shadow
+    // can't be trusted for on this codebase — real MediaStore queries, real SAF I/O — run
+    // against the tethered Pixel via ./gradlew connectedDebugAndroidTest.
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.core)
 }
