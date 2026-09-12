@@ -140,4 +140,11 @@ dependencies {
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.core)
+    // Compose UI tests target dependency-free composables only (plain data/callbacks, no
+    // ViewModel/Hilt/DataStore) — SettingsRepository and friends use the same DataStore file
+    // name as the real app, so an instrumented test that constructed one for real would read
+    // and write actual user settings on whatever device runs it. See project memory.
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
