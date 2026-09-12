@@ -81,6 +81,7 @@ fun SettingsScreen(
     val exportLocationUri by viewModel.exportLocationUri.collectAsStateWithLifecycle()
     val unexportedCount by viewModel.unexportedCount.collectAsStateWithLifecycle()
     val repairingExports by viewModel.repairingExports.collectAsStateWithLifecycle()
+    val restoringNotes by viewModel.restoringNotes.collectAsStateWithLifecycle()
     val defaultTemplate by viewModel.defaultTemplate.collectAsStateWithLifecycle()
     val asrLocaleTag by viewModel.asrLocaleTag.collectAsStateWithLifecycle()
     val customRecipes by viewModel.customRecipes.collectAsStateWithLifecycle()
@@ -448,6 +449,31 @@ fun SettingsScreen(
                 )
             }
         }
+
+        // Recovery feature: rebuild notes from whatever is already in the export folder —
+        // this app's only backup. Point this at a folder that already holds real exports
+        // (e.g. right after a reinstall) and it reconstructs what it can.
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
+            Text(
+                text = if (restoringNotes) "Restoring…" else "Restore from export folder",
+                color = if (hasLocation && !restoringNotes) c.amber else c.dim.copy(alpha = 0.5f),
+                fontSize = 13.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(100.dp))
+                    .background(c.card)
+                    .clickable(enabled = hasLocation && !restoringNotes) { viewModel.restoreFromExportFolder() }
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+            )
+        }
+        Text(
+            text = "Rebuilds notes from the Markdown files already in this folder — for after " +
+                "a reinstall or data loss. Existing notes are never duplicated.",
+            color = c.dim,
+            fontSize = 12.sp,
+            lineHeight = 16.sp,
+            modifier = Modifier.padding(top = 4.dp),
+        )
 
         // Built-in recipes (UX-14) — read-only list of the standard Chat & Recipes prompts;
         // press-and-hold (or tap) any row to see the full prompt it runs.

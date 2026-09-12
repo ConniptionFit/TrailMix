@@ -466,6 +466,8 @@ private class FakeExportSink : ExportSink {
         deleted += uriStr
         return true
     }
+
+    override suspend fun listExportedNotes(): List<com.trailmix.app.data.export.ExportedNoteFile> = emptyList()
 }
 
 /**

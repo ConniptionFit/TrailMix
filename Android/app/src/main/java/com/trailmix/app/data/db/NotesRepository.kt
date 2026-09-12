@@ -5,6 +5,7 @@ import com.trailmix.app.data.export.ExportFormat
 import com.trailmix.app.data.export.ExportSink
 import com.trailmix.app.data.export.ExportedPhoto
 import com.trailmix.app.data.export.NoteMarkdown
+import com.trailmix.app.data.export.NoteMarkdownImporter
 import com.trailmix.app.data.model.NoteSegment
 import com.trailmix.app.data.model.SegmentsJson
 import com.trailmix.app.data.model.StringListJson
@@ -274,6 +275,57 @@ class NotesRepository @Inject constructor(
     }
 
     /**
+     * Recovery feature (2026-09-12): rebuild notes from whatever is already sitting in the
+     * export folder — this app's only backup (`allowBackup=false`, local-only). Existing
+     * notes are never duplicated: a file whose title+timestamp already matches a live note is
+     * skipped. A restored note is linked to the file it came from (both tracked URIs set to
+     * the real, existing document) so its next edit updates that file in place instead of
+     * writing a new one beside it.
+     *
+     * Deliberately lossy in the same way [NoteMarkdownImporter] documents: the restored body
+     * is the file's own text verbatim, not a re-derived structured/provenance-tagged summary,
+     * and any chat/AI conversation that was never run as a named recipe isn't in the export at
+     * all. A flatter note that keeps 100% of the user's actual words beats a prettier one that
+     * risks silently dropping some.
+     */
+    suspend fun importFromExportFolder(): ImportResult {
+        val files = exportSink.listExportedNotes()
+        val existingKeys = noteDao.getAll().map { it.title to it.createdAtEpochMs }.toSet()
+        var imported = 0
+        var skipped = 0
+        var failed = 0
+        files.forEach { file ->
+            val parsed = NoteMarkdownImporter.parseNote(file.noteMarkdown, file.transcriptMarkdown)
+            when {
+                parsed == null -> failed++
+                (parsed.title to parsed.createdAtEpochMs) in existingKeys -> skipped++
+                else -> {
+                    noteDao.insert(
+                        NoteEntity(
+                            title = parsed.title,
+                            segmentsJson = SegmentsJson.encode(emptyList()),
+                            transcriptJson = TranscriptJson.encode(parsed.transcript),
+                            typedFragments = "",
+                            durationMs = parsed.durationMs,
+                            createdAtEpochMs = parsed.createdAtEpochMs,
+                            showSources = false,
+                            mergedWithAi = false,
+                            meetingTitle = parsed.meetingTitle,
+                            bodyOverride = parsed.bodyOverride,
+                            attendeesJson = parsed.attendees.takeIf { it.isNotEmpty() }?.let { StringListJson.encode(it) },
+                            template = parsed.template,
+                            obsidianFileUri = file.noteUri,
+                            transcriptFileUri = file.transcriptUri,
+                        ),
+                    )
+                    imported++
+                }
+            }
+        }
+        return ImportResult(imported, skipped, failed)
+    }
+
+    /**
      * OBS-04: how many live notes have no exported file behind them.
      *
      * Only meaningful once an export location is configured — with none set, nothing is
@@ -437,6 +489,19 @@ class NotesRepository @Inject constructor(
  * OBS-04 outcome of a repair pass. [failures] is the honest half: notes that are still not
  * backed up after trying, which is what the user actually needs told.
  */
+/** Recovery feature (2026-09-12): outcome of [NotesRepository.importFromExportFolder]. */
+data class ImportResult(val imported: Int, val skipped: Int, val failed: Int) {
+    fun summary(): String {
+        val noun = { n: Int -> "$n note${if (n == 1) "" else "s"}" }
+        return when {
+            imported == 0 && skipped == 0 && failed == 0 -> "No notes found in the export folder"
+            imported == 0 && failed == 0 -> "Nothing new to restore — already have ${noun(skipped)}"
+            failed == 0 -> "Restored ${noun(imported)}" + if (skipped > 0) " (${noun(skipped)} already present)" else ""
+            else -> "Restored ${noun(imported)}; ${noun(failed)} couldn't be read"
+        }
+    }
+}
+
 data class ExportRepairResult(val exported: Int, val failures: Int) {
     /**
      * User-facing summary. Pure so the wording can be unit-tested — this is the message that

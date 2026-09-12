@@ -3,6 +3,7 @@ package com.trailmix.app.data.export
 import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
+import androidx.documentfile.provider.DocumentFile
 import com.trailmix.app.data.db.NoteEntity
 import com.trailmix.app.data.db.toMarkdown
 import com.trailmix.app.data.db.toTranscriptMarkdown
@@ -103,4 +104,33 @@ class NoteExporter @Inject constructor(
 
         ExportedFiles(note = noteUri.toString(), transcript = transcriptUri?.toString())
     }
+
+    override suspend fun listExportedNotes(): List<ExportedNoteFile> = withContext(Dispatchers.IO) {
+        val locationUri = settingsRepository.exportLocationUri.first() ?: return@withContext emptyList()
+        val folderName = settingsRepository.notesFolder.first()
+        val folder = runCatching {
+            DocumentFile.fromTreeUri(context, Uri.parse(locationUri))?.findFile(folderName)
+        }.getOrNull() ?: return@withContext emptyList()
+
+        val children = folder.listFiles()
+        val transcriptsByName = children.associateBy { it.name }
+
+        children
+            .filter { it.isFile && it.name?.endsWith(".md") == true && it.name?.endsWith(".transcript.md") != true }
+            .mapNotNull { noteFile ->
+                val noteMarkdown = readText(noteFile.uri) ?: return@mapNotNull null
+                val transcriptName = noteFile.name!!.removeSuffix(".md") + ".transcript.md"
+                val transcriptFile = transcriptsByName[transcriptName]
+                ExportedNoteFile(
+                    noteUri = noteFile.uri.toString(),
+                    transcriptUri = transcriptFile?.uri?.toString(),
+                    noteMarkdown = noteMarkdown,
+                    transcriptMarkdown = transcriptFile?.let { readText(it.uri) },
+                )
+            }
+    }
+
+    private fun readText(uri: Uri): String? = runCatching {
+        context.contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }
+    }.getOrNull()
 }
