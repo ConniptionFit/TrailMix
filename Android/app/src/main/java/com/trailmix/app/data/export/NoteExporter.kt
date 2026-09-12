@@ -49,6 +49,7 @@ class NoteExporter @Inject constructor(
     override suspend fun exportNote(
         note: NoteEntity,
         recipeOutputs: List<Pair<String, String>>,
+        selectedPhotoUris: List<String>,
     ): ExportedFiles? = withContext(Dispatchers.IO) {
         val locationUri = settingsRepository.exportLocationUri.first() ?: return@withContext null
         val folderName = settingsRepository.notesFolder.first()
@@ -72,12 +73,18 @@ class NoteExporter @Inject constructor(
         val noteLinkBase = noteFileName.substringBeforeLast(".")
         val transcriptLinkBase = transcriptFileName.substringBeforeLast(".")
 
+        // Photo-export feature: an empty selection on a note that already has photos tracked
+        // means "re-export the same ones" (the repair pass has no UI to reselect), not "drop
+        // them" — only an explicit empty *tracked* list means genuinely none were ever chosen.
+        val photoUris = selectedPhotoUris.ifEmpty { note.exportedPhotoUris }
+        val photos = PhotoExportWriter.copyInto(context, tree, folderName, photoUris)
+
         val noteUri = MarkdownExportWriter.writeIntoFolder(
             context = context,
             treeUri = tree,
             folderName = folderName,
             fileName = noteFileName,
-            markdown = note.toMarkdown(recipeOutputs, noteLinkBase, transcriptLinkBase, format),
+            markdown = note.toMarkdown(recipeOutputs, noteLinkBase, transcriptLinkBase, format, photos),
             existingFileUri = note.obsidianFileUri,
         ) ?: return@withContext null
 

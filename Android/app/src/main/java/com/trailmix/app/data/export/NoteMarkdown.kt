@@ -28,6 +28,14 @@ import java.util.Locale
 enum class ExportFormat { LLM_OPTIMIZED, HUMAN_READABLE, PLAIN_TEXT }
 
 /**
+ * A photo copied into a note's `photos/` export subfolder (photo-export feature), by the
+ * name it actually ended up with (a collision with another note's photo may have renamed it)
+ * and when it was taken — filled in by [PhotoExportWriter][com.trailmix.app.data.export.PhotoExportWriter]
+ * after the copy, since that's the only point the real on-disk name is known.
+ */
+data class ExportedPhoto(val filename: String, val takenAtEpochMs: Long)
+
+/**
  * OBS-02 (v1.11.0): builds the exported Markdown.
  *
  * The note has two audiences that pull in opposite directions, and this file is where that
@@ -63,6 +71,8 @@ object NoteMarkdown {
         val transcript: List<TranscriptLine> = emptyList(),
         val recipeOutputs: List<Pair<String, String>> = emptyList(),
         val showSources: Boolean = true,
+        /** Photo-export feature: photos copied alongside this export, if any were selected. */
+        val photos: List<ExportedPhoto> = emptyList(),
         /**
          * OBS-03. Actual on-disk base names (no `.md`) of the two files this note owns, when
          * they are already known — used verbatim for every wiki-link instead of re-deriving
@@ -187,6 +197,24 @@ object NoteMarkdown {
             }
         }
 
+        // Photo-export feature: LLM-optimized lists photos as frontmatter metadata instead
+        // (pure token cost otherwise, for a model with no vision context in this pipeline) —
+        // see [frontmatter]. Human/plain formats get a section here.
+        if (source.photos.isNotEmpty() && format != ExportFormat.LLM_OPTIMIZED) {
+            appendLine(heading("Photos", 2, format))
+            appendLine()
+            source.photos.forEach { photo ->
+                val time = photoTime(photo.takenAtEpochMs)
+                appendLine(
+                    when (format) {
+                        ExportFormat.HUMAN_READABLE -> "![${photo.filename}](photos/${photo.filename})  *$time*"
+                        else -> "${photo.filename}  $time"
+                    },
+                )
+            }
+            appendLine()
+        }
+
         if (source.transcript.any { it.text.isNotBlank() }) {
             if (format != ExportFormat.PLAIN_TEXT) appendLine("---")
             appendLine()
@@ -230,6 +258,14 @@ object NoteMarkdown {
             appendLine(
                 "transcript: \"[[${source.transcriptLink}]]\"",
             )
+        }
+        // Photo-export feature: metadata only here, never an inline image — a model with no
+        // vision context gets nothing from a markdown image link but the token cost.
+        if (source.photos.isNotEmpty()) {
+            val entries = source.photos.joinToString(", ") { photo ->
+                "{name: ${yaml(photo.filename)}, taken: ${yaml(photoTime(photo.takenAtEpochMs))}}"
+            }
+            appendLine("photos: [$entries]")
         }
         appendLine("source: trailmix")
         appendLine("tags: [trailmix/note${if (source.meetingTitle != null) ", trailmix/meeting" else ""}]")
@@ -421,6 +457,9 @@ object NoteMarkdown {
             else -> "<1m"
         }
     }
+
+    private fun photoTime(epochMs: Long): String =
+        SimpleDateFormat("h:mm a", Locale.US).format(Date(epochMs))
 
     /** Quote a YAML scalar only when it needs it, so the common case stays readable. */
     private fun yaml(value: String): String {

@@ -43,10 +43,18 @@ interface ExportSink {
     /**
      * Best-effort export/update-in-place. Returns null when no location is set or the note
      * write failed; a failed *transcript* write is not fatal, it just leaves that URI null.
+     *
+     * [selectedPhotoUris] (photo-export feature) are `content://` MediaStore URI **strings**
+     * to copy into this note's `photos/` export subfolder — plain strings for the same
+     * Android-free reason as everything else here. Empty by default; when empty on a note
+     * that already has [NoteEntity.exportedPhotoUris] tracked, those are re-copied instead,
+     * so a background repair pass (`retryMissingExports`/`exportMissing`, which has no UI to
+     * reselect) still re-attaches whatever photos were chosen originally.
      */
     suspend fun exportNote(
         note: NoteEntity,
         recipeOutputs: List<Pair<String, String>> = emptyList(),
+        selectedPhotoUris: List<String> = emptyList(),
     ): ExportedFiles?
 
     /**

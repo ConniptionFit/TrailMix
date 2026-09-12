@@ -3,6 +3,7 @@ package com.trailmix.app.data.db
 import com.trailmix.app.data.ai.NoteTitle
 import com.trailmix.app.data.export.ExportFormat
 import com.trailmix.app.data.export.ExportSink
+import com.trailmix.app.data.export.ExportedPhoto
 import com.trailmix.app.data.export.NoteMarkdown
 import com.trailmix.app.data.model.NoteSegment
 import com.trailmix.app.data.model.SegmentsJson
@@ -155,6 +156,21 @@ class NotesRepository @Inject constructor(
     }
 
     suspend fun setShowSources(id: Long, show: Boolean) = noteDao.setShowSources(id, show)
+
+    /**
+     * Photo-export feature: persists which MediaStore photos the user selected for this
+     * note's export, then re-exports so the change is reflected on disk immediately — the
+     * same "persist, then re-export" shape as [updateNoteContent]. An empty [photoUris]
+     * clears the tracked selection (the user removed every photo), distinct from
+     * [ExportSink.exportNote]'s own empty-means-"reuse tracked" default used by the
+     * background repair pass, which never has a selection to pass in the first place.
+     */
+    suspend fun setSelectedPhotos(id: Long, photoUris: List<String>) {
+        val existing = noteDao.getById(id) ?: return
+        val json = photoUris.takeIf { it.isNotEmpty() }?.let { StringListJson.encode(it) }
+        noteDao.setExportedPhotoUris(id, json)
+        exportIfConfigured(existing.copy(exportedPhotoUrisJson = json))
+    }
 
     /**
      * [recipeName] is set only on assistant replies produced by running a saved recipe
@@ -457,7 +473,8 @@ fun NoteEntity.toMarkdown(
     noteLinkBase: String? = null,
     transcriptLinkBase: String? = null,
     format: ExportFormat = ExportFormat.LLM_OPTIMIZED,
-): String = NoteMarkdown.buildNote(markdownSource(recipeOutputs, noteLinkBase, transcriptLinkBase), format)
+    photos: List<ExportedPhoto> = emptyList(),
+): String = NoteMarkdown.buildNote(markdownSource(recipeOutputs, noteLinkBase, transcriptLinkBase, photos), format)
 
 /** The verbatim transcript as its own standalone document (OBS-02). */
 fun NoteEntity.toTranscriptMarkdown(
@@ -470,6 +487,7 @@ private fun NoteEntity.markdownSource(
     recipeOutputs: List<Pair<String, String>>,
     noteLinkBase: String? = null,
     transcriptLinkBase: String? = null,
+    photos: List<ExportedPhoto> = emptyList(),
 ) = NoteMarkdown.Source(
     title = title,
     createdAtEpochMs = createdAtEpochMs,
@@ -486,4 +504,5 @@ private fun NoteEntity.markdownSource(
     showSources = showSources,
     noteLinkBase = noteLinkBase,
     transcriptLinkBase = transcriptLinkBase,
+    photos = photos,
 )

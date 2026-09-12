@@ -80,6 +80,14 @@ interface NoteDao {
     @Query("UPDATE notes SET obsidianFileUri = :noteUri, transcriptFileUri = :transcriptUri WHERE id = :id")
     suspend fun setExportUris(id: Long, noteUri: String?, transcriptUri: String?)
 
+    /**
+     * Photo-export feature: persists which MediaStore photos the user selected for this
+     * note, addressed by id alone for the same lost-update reason as [setExportUris] — never
+     * a whole-row `@Update` from a snapshot that could be stale by the time this runs.
+     */
+    @Query("UPDATE notes SET exportedPhotoUrisJson = :photoUrisJson WHERE id = :id")
+    suspend fun setExportedPhotoUris(id: Long, photoUrisJson: String?)
+
     @Query("UPDATE notes SET deletedAtEpochMs = :deletedAt WHERE id = :id")
     suspend fun softDelete(id: Long, deletedAt: Long)
 
