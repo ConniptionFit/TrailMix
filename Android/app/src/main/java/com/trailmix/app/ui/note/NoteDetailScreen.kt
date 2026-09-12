@@ -47,9 +47,11 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.trailmix.app.data.db.toMarkdown
+import com.trailmix.app.data.export.ExportFormat
 import com.trailmix.app.data.model.Provenance
 import com.trailmix.app.data.model.SummaryBullet
 import com.trailmix.app.ui.components.BackChevron
+import com.trailmix.app.ui.export.ExportFormatPickerDialog
 import com.trailmix.app.ui.theme.TrailMix
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -68,6 +70,7 @@ fun NoteDetailScreen(
 ) {
     val note by viewModel.note.collectAsStateWithLifecycle()
     val activeCapture by viewModel.activeCapture.collectAsStateWithLifecycle()
+    val defaultExportFormat by viewModel.exportFormat.collectAsStateWithLifecycle()
     val c = TrailMix.colors
     val current = note ?: return
     val context = LocalContext.current
@@ -75,14 +78,26 @@ fun NoteDetailScreen(
     var editing by remember(current.id) { mutableStateOf(false) }
     var titleDraft by remember(current.id) { mutableStateOf("") }
     var bodyDraft by remember(current.id) { mutableStateOf("") }
+    var showFormatPicker by remember { mutableStateOf(false) }
 
-    fun shareNote() {
+    fun shareNote(format: ExportFormat) {
         val sendIntent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_SUBJECT, current.title)
-            putExtra(Intent.EXTRA_TEXT, current.toMarkdown())
+            putExtra(Intent.EXTRA_TEXT, current.toMarkdown(format = format))
         }
         context.startActivity(Intent.createChooser(sendIntent, "Share note"))
+    }
+
+    if (showFormatPicker) {
+        ExportFormatPickerDialog(
+            initialFormat = defaultExportFormat,
+            onConfirm = { format ->
+                showFormatPicker = false
+                shareNote(format)
+            },
+            onDismiss = { showFormatPicker = false },
+        )
     }
 
     fun enterEdit() {
@@ -134,7 +149,7 @@ fun NoteDetailScreen(
                         tint = c.dim,
                         modifier = Modifier
                             .size(20.dp)
-                            .clickable { shareNote() },
+                            .clickable { showFormatPicker = true },
                     )
                     Spacer(modifier = Modifier.size(12.dp))
                     Text(

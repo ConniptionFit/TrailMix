@@ -6,6 +6,8 @@ import com.trailmix.app.data.calendar.UpcomingMeeting
 import com.trailmix.app.data.calendar.UpcomingMeetingSource
 import com.trailmix.app.data.db.NotesRepository
 import com.trailmix.app.data.db.toMarkdown
+import com.trailmix.app.data.export.ExportFormat
+import com.trailmix.app.data.settings.SettingsRepository
 import com.trailmix.app.data.speech.CaptureSessionManager
 import com.trailmix.app.data.speech.PendingJournal
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -32,7 +34,12 @@ class HomeViewModel @Inject constructor(
     private val notesRepository: NotesRepository,
     private val meetingSource: UpcomingMeetingSource,
     private val captureSessionManager: CaptureSessionManager,
+    private val settingsRepository: SettingsRepository,
 ) : ViewModel() {
+
+    /** Persisted default (Settings) the share sheet's one-off picker starts from. */
+    val exportFormat: StateFlow<ExportFormat> = settingsRepository.exportFormat
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ExportFormat.LLM_OPTIMIZED)
 
     /** Search query (UX-13) — filters the notes list live; blank shows everything. */
     val searchQuery = MutableStateFlow("")
@@ -97,10 +104,10 @@ class HomeViewModel @Inject constructor(
     }
 
     /** Combined Markdown of the selected notes, in list (newest-first) order, for sharing. */
-    suspend fun selectedMarkdown(): String {
+    suspend fun selectedMarkdown(format: ExportFormat): String {
         val ids = _selectedIds.value.orEmpty()
         return notes.first().filter { it.id in ids }
-            .joinToString("\n\n---\n\n") { it.note.toMarkdown() }
+            .joinToString("\n\n---\n\n") { it.note.toMarkdown(format = format) }
     }
 
     private val _upcoming = MutableStateFlow<UpcomingMeeting?>(null)

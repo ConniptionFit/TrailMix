@@ -21,6 +21,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -32,7 +35,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.trailmix.app.data.export.ExportFormat
+import com.trailmix.app.data.model.TranscriptLine
 import com.trailmix.app.ui.components.BackTitleBar
+import com.trailmix.app.ui.export.ExportFormatPickerDialog
 import com.trailmix.app.ui.note.NoteDetailViewModel
 import com.trailmix.app.ui.theme.TrailMix
 
@@ -42,8 +48,38 @@ fun TranscriptScreen(
     viewModel: NoteDetailViewModel = hiltViewModel(),
 ) {
     val note by viewModel.note.collectAsStateWithLifecycle()
+    val defaultExportFormat by viewModel.exportFormat.collectAsStateWithLifecycle()
     val c = TrailMix.colors
     val context = LocalContext.current
+    var showFormatPicker by remember { mutableStateOf(false) }
+
+    fun shareTranscript(format: ExportFormat, lines: List<TranscriptLine>, title: String) {
+        val text = if (format == ExportFormat.PLAIN_TEXT) {
+            lines.joinToString("\n") { "${it.label}  ${it.text}" }
+        } else {
+            lines.joinToString("\n") { "**${it.label}** — ${it.text}" }
+        }
+        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, title)
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+        context.startActivity(Intent.createChooser(sendIntent, "Share transcript"))
+    }
+
+    if (showFormatPicker) {
+        val current = note
+        if (current != null) {
+            ExportFormatPickerDialog(
+                initialFormat = defaultExportFormat,
+                onConfirm = { format ->
+                    showFormatPicker = false
+                    shareTranscript(format, current.transcript, current.title)
+                },
+                onDismiss = { showFormatPicker = false },
+            )
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -61,15 +97,7 @@ fun TranscriptScreen(
                     tint = c.dim,
                     modifier = Modifier
                         .padding(end = 16.dp)
-                        .clickable {
-                            val text = current.transcript.joinToString("\n") { "${it.label}  ${it.text}" }
-                            val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                type = "text/plain"
-                                putExtra(Intent.EXTRA_SUBJECT, current.title)
-                                putExtra(Intent.EXTRA_TEXT, text)
-                            }
-                            context.startActivity(Intent.createChooser(sendIntent, "Share transcript"))
-                        },
+                        .clickable { showFormatPicker = true },
                 )
             }
         }

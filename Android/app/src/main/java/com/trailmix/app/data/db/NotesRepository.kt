@@ -1,6 +1,7 @@
 package com.trailmix.app.data.db
 
 import com.trailmix.app.data.ai.NoteTitle
+import com.trailmix.app.data.export.ExportFormat
 import com.trailmix.app.data.export.ExportSink
 import com.trailmix.app.data.export.NoteMarkdown
 import com.trailmix.app.data.model.NoteSegment
@@ -455,13 +456,15 @@ fun NoteEntity.toMarkdown(
     recipeOutputs: List<Pair<String, String>> = emptyList(),
     noteLinkBase: String? = null,
     transcriptLinkBase: String? = null,
-): String = NoteMarkdown.buildNote(markdownSource(recipeOutputs, noteLinkBase, transcriptLinkBase))
+    format: ExportFormat = ExportFormat.LLM_OPTIMIZED,
+): String = NoteMarkdown.buildNote(markdownSource(recipeOutputs, noteLinkBase, transcriptLinkBase), format)
 
 /** The verbatim transcript as its own standalone document (OBS-02). */
 fun NoteEntity.toTranscriptMarkdown(
     noteLinkBase: String? = null,
     transcriptLinkBase: String? = null,
-): String = NoteMarkdown.buildTranscript(markdownSource(emptyList(), noteLinkBase, transcriptLinkBase))
+    format: ExportFormat = ExportFormat.LLM_OPTIMIZED,
+): String = NoteMarkdown.buildTranscript(markdownSource(emptyList(), noteLinkBase, transcriptLinkBase), format)
 
 private fun NoteEntity.markdownSource(
     recipeOutputs: List<Pair<String, String>>,
