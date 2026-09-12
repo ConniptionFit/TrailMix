@@ -11,6 +11,23 @@ import java.util.Date
 import java.util.Locale
 
 /**
+ * The export's rendering flavor (new — the export-format dropdown feature).
+ *
+ * [LLM_OPTIMIZED] is the original OBS-02 format and stays the default everywhere: YAML
+ * frontmatter, per-bullet provenance tags gated by [NoteMarkdown.Source.showSources], and
+ * Obsidian wikilinks between the note and its companion transcript.
+ *
+ * [HUMAN_READABLE] drops the frontmatter and provenance tags — a person reading this on their
+ * phone doesn't need either — and swaps wikilinks for plain filenames so the file also makes
+ * sense outside Obsidian. It keeps the same section structure, just without the clutter.
+ *
+ * [PLAIN_TEXT] goes further: no Markdown syntax at all (headers become plain/ALL-CAPS lines,
+ * no bold/backticks/wikilinks, the transcript's table becomes flat `HH:MM  text` lines), for
+ * pasting somewhere that would otherwise mangle Markdown. Exported as `.txt`, not `.md`.
+ */
+enum class ExportFormat { LLM_OPTIMIZED, HUMAN_READABLE, PLAIN_TEXT }
+
+/**
  * OBS-02 (v1.11.0): builds the exported Markdown.
  *
  * The note has two audiences that pull in opposite directions, and this file is where that
@@ -24,7 +41,8 @@ import java.util.Locale
  *
  * Both are served by the same thing: dense structure up front, and the transcript moved to a
  * companion file ([transcriptFileName]) rather than appended. The summary stays paste-ready;
- * the transcript stays one link away.
+ * the transcript stays one link away. [ExportFormat] adds two more flavors for a third
+ * audience (a person who doesn't want either kind of clutter) — see its own doc comment.
  *
  * Everything here is pure — no Android, no I/O — so the whole format is unit-testable.
  */
@@ -85,61 +103,94 @@ object NoteMarkdown {
         return "$date-$slug"
     }
 
-    fun noteFileName(title: String, createdAtEpochMs: Long) = "${baseName(title, createdAtEpochMs)}.md"
+    private fun extension(format: ExportFormat) =
+        if (format == ExportFormat.PLAIN_TEXT) "txt" else "md"
 
-    fun transcriptFileName(title: String, createdAtEpochMs: Long) =
-        "${baseName(title, createdAtEpochMs)}.transcript.md"
+    fun noteFileName(title: String, createdAtEpochMs: Long, format: ExportFormat = ExportFormat.LLM_OPTIMIZED) =
+        "${baseName(title, createdAtEpochMs)}.${extension(format)}"
+
+    fun transcriptFileName(
+        title: String,
+        createdAtEpochMs: Long,
+        format: ExportFormat = ExportFormat.LLM_OPTIMIZED,
+    ) = "${baseName(title, createdAtEpochMs)}.transcript.${extension(format)}"
 
     // ── Summary note ────────────────────────────────────────────────────────
 
-    fun buildNote(source: Source): String = buildString {
-        append(frontmatter(source))
-        appendLine()
-        appendLine("# ${source.title}")
+    fun buildNote(source: Source, format: ExportFormat = ExportFormat.LLM_OPTIMIZED): String = buildString {
+        if (format == ExportFormat.LLM_OPTIMIZED) {
+            append(frontmatter(source))
+            appendLine()
+        }
+        appendLine(titleLine(source.title, format))
         appendLine()
 
-        tldr(source)?.let {
-            appendLine("> [!summary] TL;DR")
-            it.forEach { line -> appendLine("> $line") }
+        if (format != ExportFormat.LLM_OPTIMIZED) {
+            // No YAML for a human — the friendly header replaces it.
+            val header = metaLine(source).trim('*')
+            if (header.isNotEmpty()) {
+                appendLine(header)
+                appendLine()
+            }
+        }
+
+        tldr(source)?.let { lines ->
+            when (format) {
+                ExportFormat.PLAIN_TEXT -> {
+                    appendLine("TL;DR:")
+                    lines.forEach { appendLine(stripMarkdown(it)) }
+                }
+                ExportFormat.HUMAN_READABLE -> {
+                    appendLine("**TL;DR**")
+                    lines.forEach { appendLine(it) }
+                }
+                ExportFormat.LLM_OPTIMIZED -> {
+                    appendLine("> [!summary] TL;DR")
+                    lines.forEach { appendLine("> $it") }
+                }
+            }
             appendLine()
         }
 
-        val meta = metaLine(source)
-        if (meta.isNotEmpty()) {
-            appendLine(meta)
-            appendLine()
+        if (format == ExportFormat.LLM_OPTIMIZED) {
+            val meta = metaLine(source)
+            if (meta.isNotEmpty()) {
+                appendLine(meta)
+                appendLine()
+            }
         }
 
+        val annotate = format == ExportFormat.LLM_OPTIMIZED && source.showSources
         val summary = source.summary
         when {
             source.bodyOverride != null -> {
-                appendLine(source.bodyOverride.trim())
+                appendLine(plainize(source.bodyOverride.trim(), format))
                 appendLine()
             }
-            summary != null -> appendSummary(summary, source.showSources)
+            summary != null -> appendSummary(summary, annotate, format)
             else -> {
                 if (source.flatBody.isNotBlank()) {
-                    appendLine(source.flatBody.trim())
+                    appendLine(plainize(source.flatBody.trim(), format))
                     appendLine()
                 }
             }
         }
 
         if (source.recipeOutputs.isNotEmpty()) {
-            appendLine("## Recipe outputs")
+            appendLine(heading("Recipe outputs", 2, format))
             appendLine()
             source.recipeOutputs.forEach { (name, text) ->
-                appendLine("### $name")
+                appendLine(heading(name, 3, format))
                 appendLine()
-                appendLine(text.trim())
+                appendLine(plainize(text.trim(), format))
                 appendLine()
             }
         }
 
         if (source.transcript.any { it.text.isNotBlank() }) {
-            appendLine("---")
+            if (format != ExportFormat.PLAIN_TEXT) appendLine("---")
             appendLine()
-            appendLine("📄 **Full transcript:** [[${source.transcriptLink}]]")
+            appendLine(transcriptFooter(source, format))
             appendLine()
         }
     }.trimEnd() + "\n"
@@ -147,7 +198,8 @@ object NoteMarkdown {
     /**
      * YAML frontmatter. This is the part another model reads first and the part Obsidian
      * queries against, so it carries everything answerable without parsing prose: what this
-     * was, when, how long, who, what it's about, and how much is actionable.
+     * was, when, how long, who, what it's about, and how much is actionable. LLM-optimized
+     * only — see [ExportFormat].
      */
     private fun frontmatter(source: Source): String = buildString {
         val created = Date(source.createdAtEpochMs)
@@ -215,9 +267,24 @@ object NoteMarkdown {
         return if (parts.isEmpty()) "" else "*${parts.joinToString(" · ")}*"
     }
 
-    private fun StringBuilder.appendSummary(summary: StructuredSummary, annotate: Boolean) {
+    private fun titleLine(title: String, format: ExportFormat): String =
+        if (format == ExportFormat.PLAIN_TEXT) title else "# $title"
+
+    /** LLM/human formats keep Markdown headers; plain text drops the syntax entirely. */
+    private fun heading(text: String, level: Int, format: ExportFormat): String = when (format) {
+        ExportFormat.PLAIN_TEXT -> if (level <= 2) text.uppercase(Locale.US) else text
+        else -> "#".repeat(level) + " " + text
+    }
+
+    private fun transcriptFooter(source: Source, format: ExportFormat): String = when (format) {
+        ExportFormat.LLM_OPTIMIZED -> "📄 **Full transcript:** [[${source.transcriptLink}]]"
+        ExportFormat.HUMAN_READABLE -> "📄 Full transcript: ${source.transcriptLink}.md"
+        ExportFormat.PLAIN_TEXT -> "Full transcript: ${source.transcriptLink}.txt"
+    }
+
+    private fun StringBuilder.appendSummary(summary: StructuredSummary, annotate: Boolean, format: ExportFormat) {
         if (summary.highlights.isNotEmpty()) {
-            appendLine("## Highlights")
+            appendLine(heading("Highlights", 2, format))
             appendLine()
             summary.highlights.forEach { appendLine(bullet(it, annotate)) }
             appendLine()
@@ -229,17 +296,17 @@ object NoteMarkdown {
             section.bullets.isNotEmpty() && section.bullets.all { it.source == Provenance.FRAGMENT }
         }
         own.forEach { section ->
-            appendLine("## ${section.heading}")
+            appendLine(heading(section.heading, 2, format))
             appendLine()
             section.bullets.forEach { appendLine(bullet(it, annotate)) }
             appendLine()
         }
 
         if (spoken.isNotEmpty()) {
-            appendLine("## Key points")
+            appendLine(heading("Key points", 2, format))
             appendLine()
             spoken.forEach { section ->
-                appendLine("### ${section.heading}")
+                appendLine(heading(section.heading, 3, format))
                 appendLine()
                 section.bullets.forEach { appendLine(bullet(it, annotate)) }
                 appendLine()
@@ -247,9 +314,9 @@ object NoteMarkdown {
         }
 
         if (summary.actionItems.isNotEmpty()) {
-            appendLine("## Action items")
+            appendLine(heading("Action items", 2, format))
             appendLine()
-            summary.actionItems.forEach { appendLine(actionItem(it, annotate)) }
+            summary.actionItems.forEach { appendLine(actionItem(it, annotate, format)) }
             appendLine()
         }
     }
@@ -257,15 +324,18 @@ object NoteMarkdown {
     private fun bullet(b: SummaryBullet, annotate: Boolean) =
         "- ${tag(b.source, b.timestampLabel, annotate)}${b.text.trim()}"
 
-    private fun actionItem(item: ActionItem, annotate: Boolean): String {
+    private fun actionItem(item: ActionItem, annotate: Boolean, format: ExportFormat): String {
+        val plain = format == ExportFormat.PLAIN_TEXT
         val suffix = buildString {
-            item.owner?.let { append(" — **$it**") }
-            item.deadline?.let { append(" *(due $it)*") }
+            item.owner?.let { append(if (plain) " — $it" else " — **$it**") }
+            item.deadline?.let { append(if (plain) " (due $it)" else " *(due $it)*") }
         }
-        return "- [ ] ${tag(item.source, item.timestampLabel, annotate)}${item.text.trim()}$suffix"
+        val box = if (plain) "[ ] " else "- [ ] "
+        return "$box${tag(item.source, item.timestampLabel, annotate)}${item.text.trim()}$suffix"
     }
 
-    /** AI-05's provenance marker: `[you]` for typed, `[mm:ss]` for spoken. */
+    /** AI-05's provenance marker: `[you]` for typed, `[mm:ss]` for spoken. Gated off for the
+     * human/plain formats regardless of [Source.showSources] — see [ExportFormat]. */
     private fun tag(source: Provenance, timestampLabel: String?, annotate: Boolean): String {
         if (!annotate) return ""
         return when {
@@ -280,9 +350,38 @@ object NoteMarkdown {
     /**
      * The verbatim record, in its own file so it never competes for space with the summary.
      * Carries enough frontmatter to stand alone if it's moved somewhere else entirely, which
-     * is the stated point of splitting it out.
+     * is the stated point of splitting it out (LLM-optimized and human-readable only — plain
+     * text drops the table for flat `HH:MM  text` lines, see [ExportFormat]).
      */
-    fun buildTranscript(source: Source): String = buildString {
+    fun buildTranscript(source: Source, format: ExportFormat = ExportFormat.LLM_OPTIMIZED): String = buildString {
+        if (format == ExportFormat.PLAIN_TEXT) {
+            appendLine("${source.title} — transcript")
+            appendLine()
+            source.transcript.filter { it.text.isNotBlank() }.forEach {
+                val label = it.label.ifBlank { "--" }
+                appendLine("$label  ${it.text.trim()}")
+            }
+            return@buildString
+        }
+
+        if (format == ExportFormat.LLM_OPTIMIZED) {
+            append(transcriptFrontmatter(source))
+            appendLine()
+        }
+        appendLine("# ${source.title} — transcript")
+        appendLine()
+        val summaryLink = if (format == ExportFormat.LLM_OPTIMIZED) "[[${source.noteLink}]]" else source.noteLink
+        appendLine("*Verbatim, on-device. Summary: $summaryLink*")
+        appendLine()
+        appendLine("| Time | Text |")
+        appendLine("|---|---|")
+        source.transcript.filter { it.text.isNotBlank() }.forEach {
+            val label = it.label.ifBlank { "—" }
+            appendLine("| `$label` | ${it.text.trim().replace("|", "\\|")} |")
+        }
+    }.trimEnd() + "\n"
+
+    private fun transcriptFrontmatter(source: Source): String = buildString {
         val created = Date(source.createdAtEpochMs)
         appendLine("---")
         appendLine("title: ${yaml(source.title + " — transcript")}")
@@ -294,18 +393,7 @@ object NoteMarkdown {
         appendLine("source: trailmix")
         appendLine("tags: [trailmix/transcript]")
         appendLine("---")
-        appendLine()
-        appendLine("# ${source.title} — transcript")
-        appendLine()
-        appendLine("*Verbatim, on-device. Summary: [[${source.noteLink}]]*")
-        appendLine()
-        appendLine("| Time | Text |")
-        appendLine("|---|---|")
-        source.transcript.filter { it.text.isNotBlank() }.forEach {
-            val label = it.label.ifBlank { "—" }
-            appendLine("| `$label` | ${it.text.trim().replace("|", "\\|")} |")
-        }
-    }.trimEnd() + "\n"
+    }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -342,6 +430,15 @@ object NoteMarkdown {
             v.lowercase(Locale.US) in setOf("true", "false", "null", "yes", "no", "on", "off")
         return if (needsQuote) "\"${v.replace("\\", "\\\\").replace("\"", "\\\"")}\"" else v
     }
+
+    /** Plain text only: strip bold/code/wikilink syntax out of otherwise free-form text. */
+    private fun plainize(text: String, format: ExportFormat): String =
+        if (format == ExportFormat.PLAIN_TEXT) stripMarkdown(text) else text
+
+    private fun stripMarkdown(text: String): String = text
+        .replace(Regex("\\*\\*(.*?)\\*\\*"), "$1")
+        .replace(Regex("`([^`]*)`"), "$1")
+        .replace(Regex("\\[\\[([^\\]|]*)\\]\\]"), "$1")
 
     private const val TLDR_LINES = 3
     private const val MAX_TOPICS = 6

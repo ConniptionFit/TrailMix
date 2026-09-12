@@ -53,6 +53,10 @@ class NoteExporter @Inject constructor(
         val locationUri = settingsRepository.exportLocationUri.first() ?: return@withContext null
         val folderName = settingsRepository.notesFolder.first()
         val tree = Uri.parse(locationUri)
+        // Auto-export is fire-and-forget with no UI in the loop, so it always uses the
+        // persisted default rather than asking — the share sheet is where a one-off
+        // override belongs (export-format dropdown feature).
+        val format = settingsRepository.exportFormat.first()
 
         // OBS-03: resolve the names these two files will ACTUALLY have before rendering
         // either of them. A tracked file is rewritten in place and keeps its original name,
@@ -61,19 +65,19 @@ class NoteExporter @Inject constructor(
         // Untracked (first export) falls back to the title-derived name, which is precisely
         // what the writer will create.
         val noteFileName = MarkdownExportWriter.existingDisplayName(context, note.obsidianFileUri)
-            ?: NoteMarkdown.noteFileName(note.title, note.createdAtEpochMs)
+            ?: NoteMarkdown.noteFileName(note.title, note.createdAtEpochMs, format)
         val transcriptFileName =
             MarkdownExportWriter.existingDisplayName(context, note.transcriptFileUri)
-                ?: NoteMarkdown.transcriptFileName(note.title, note.createdAtEpochMs)
-        val noteLinkBase = noteFileName.removeSuffix(".md")
-        val transcriptLinkBase = transcriptFileName.removeSuffix(".md")
+                ?: NoteMarkdown.transcriptFileName(note.title, note.createdAtEpochMs, format)
+        val noteLinkBase = noteFileName.substringBeforeLast(".")
+        val transcriptLinkBase = transcriptFileName.substringBeforeLast(".")
 
         val noteUri = MarkdownExportWriter.writeIntoFolder(
             context = context,
             treeUri = tree,
             folderName = folderName,
             fileName = noteFileName,
-            markdown = note.toMarkdown(recipeOutputs, noteLinkBase, transcriptLinkBase),
+            markdown = note.toMarkdown(recipeOutputs, noteLinkBase, transcriptLinkBase, format),
             existingFileUri = note.obsidianFileUri,
         ) ?: return@withContext null
 
@@ -83,7 +87,7 @@ class NoteExporter @Inject constructor(
                 treeUri = tree,
                 folderName = folderName,
                 fileName = transcriptFileName,
-                markdown = note.toTranscriptMarkdown(noteLinkBase, transcriptLinkBase),
+                markdown = note.toTranscriptMarkdown(noteLinkBase, transcriptLinkBase, format),
                 existingFileUri = note.transcriptFileUri,
             )
         } else {

@@ -60,11 +60,13 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.trailmix.app.data.ai.DEFAULT_RECIPES
 import com.trailmix.app.data.ai.Recipe
+import com.trailmix.app.data.export.ExportFormat
 import com.trailmix.app.data.model.CustomSummaryTemplate
 import com.trailmix.app.data.model.SummaryTemplate
 import com.trailmix.app.data.model.TemplateOptions
 import com.trailmix.app.data.speech.AsrLocales
 import com.trailmix.app.ui.components.SectionLabel
+import com.trailmix.app.ui.export.label
 import com.trailmix.app.ui.theme.TrailMix
 import kotlinx.coroutines.launch
 
@@ -83,6 +85,7 @@ fun SettingsScreen(
     val asrLocaleTag by viewModel.asrLocaleTag.collectAsStateWithLifecycle()
     val customRecipes by viewModel.customRecipes.collectAsStateWithLifecycle()
     val customTemplates by viewModel.customTemplates.collectAsStateWithLifecycle()
+    val exportFormat by viewModel.exportFormat.collectAsStateWithLifecycle()
     val migrating by viewModel.migrating.collectAsStateWithLifecycle()
     val c = TrailMix.colors
     val context = LocalContext.current
@@ -622,6 +625,38 @@ fun SettingsScreen(
                         .clip(RoundedCornerShape(100.dp))
                         .background(if (selected) c.amber else c.card)
                         .clickable { viewModel.setDefaultTemplate(option.stored) }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+            }
+        }
+
+        // Export format (the export-format dropdown feature): default rendering for
+        // auto-export; the share sheet starts from this but can override it per-share.
+        SectionLabel(
+            text = "Export format",
+            modifier = Modifier.padding(top = 28.dp, bottom = 10.dp),
+        )
+        Text(
+            text = "LLM-optimized carries frontmatter and source tags for pasting into another " +
+                "model. Human-readable drops both for easier reading. Plain text has no " +
+                "Markdown at all.",
+            color = c.dim,
+            fontSize = 12.5.sp,
+            modifier = Modifier.padding(bottom = 10.dp),
+        )
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(ExportFormat.entries.size) { i ->
+                val option = ExportFormat.entries[i]
+                val selected = option == exportFormat
+                Text(
+                    text = option.label,
+                    color = if (selected) Color.White else c.dim,
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(100.dp))
+                        .background(if (selected) c.amber else c.card)
+                        .clickable { viewModel.setExportFormat(option) }
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                 )
             }

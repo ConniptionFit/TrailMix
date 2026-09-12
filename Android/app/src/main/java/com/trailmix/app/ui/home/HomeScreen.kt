@@ -64,6 +64,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.trailmix.app.data.calendar.UpcomingMeeting
 import com.trailmix.app.data.db.NoteEntity
 import com.trailmix.app.data.db.toMarkdown
+import com.trailmix.app.ui.export.ExportFormatPickerDialog
 import com.trailmix.app.ui.components.SectionLabel
 import com.trailmix.app.ui.theme.TrailMix
 import java.text.SimpleDateFormat
@@ -101,6 +102,11 @@ fun HomeScreen(
     BackHandler(enabled = selecting) { viewModel.exitSelectionMode() }
     val scope = rememberCoroutineScope()
     var confirmDeleteSelected by remember { mutableStateOf(false) }
+
+    // Export-format dropdown: a share action (single note or the bulk selection) waiting on
+    // the one-off format picker before its intent is actually sent.
+    val defaultExportFormat by viewModel.exportFormat.collectAsStateWithLifecycle()
+    var pendingShare by remember { mutableStateOf<PendingShare?>(null) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -453,18 +459,7 @@ fun HomeScreen(
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                     modifier = Modifier
                         .weight(1f)
-                        .clickable(enabled = count > 0) {
-                            scope.launch {
-                                val markdown = viewModel.selectedMarkdown()
-                                viewModel.exitSelectionMode()
-                                val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                    type = "text/plain"
-                                    putExtra(Intent.EXTRA_SUBJECT, "$count notes from TrailMix")
-                                    putExtra(Intent.EXTRA_TEXT, markdown)
-                                }
-                                context.startActivity(Intent.createChooser(sendIntent, "Share notes"))
-                            }
-                        }
+                        .clickable(enabled = count > 0) { pendingShare = PendingShare.Bulk(count) }
                         .padding(vertical = 15.dp),
                 )
             }
@@ -559,15 +554,48 @@ fun HomeScreen(
             },
             onShare = {
                 contextMenuNote = null
-                val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                    type = "text/plain"
-                    putExtra(Intent.EXTRA_SUBJECT, note.title)
-                    putExtra(Intent.EXTRA_TEXT, note.toMarkdown())
-                }
-                context.startActivity(Intent.createChooser(sendIntent, "Share note"))
+                pendingShare = PendingShare.Single(note)
             },
         )
     }
+
+    pendingShare?.let { share ->
+        ExportFormatPickerDialog(
+            initialFormat = defaultExportFormat,
+            onConfirm = { format ->
+                pendingShare = null
+                when (share) {
+                    is PendingShare.Single -> {
+                        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_SUBJECT, share.note.title)
+                            putExtra(Intent.EXTRA_TEXT, share.note.toMarkdown(format = format))
+                        }
+                        context.startActivity(Intent.createChooser(sendIntent, "Share note"))
+                    }
+                    is PendingShare.Bulk -> {
+                        scope.launch {
+                            val markdown = viewModel.selectedMarkdown(format)
+                            viewModel.exitSelectionMode()
+                            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_SUBJECT, "${share.count} notes from TrailMix")
+                                putExtra(Intent.EXTRA_TEXT, markdown)
+                            }
+                            context.startActivity(Intent.createChooser(sendIntent, "Share notes"))
+                        }
+                    }
+                }
+            },
+            onDismiss = { pendingShare = null },
+        )
+    }
+}
+
+/** A share action queued behind the export-format dropdown's one-off picker. */
+private sealed class PendingShare {
+    data class Single(val note: NoteEntity) : PendingShare()
+    data class Bulk(val count: Int) : PendingShare()
 }
 
 /**

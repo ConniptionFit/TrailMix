@@ -300,4 +300,91 @@ class NoteMarkdownTest {
         // …while the link keeps pointing at the file on disk.
         assertTrue(md.contains("[[2026-07-15-original-name.transcript]]"))
     }
+
+    // ── Export-format dropdown ────────────────────────────────────────────
+
+    @Test
+    fun `LLM-optimized is the default and stays byte-identical`() {
+        val explicit = NoteMarkdown.buildNote(source(), ExportFormat.LLM_OPTIMIZED)
+        val default = NoteMarkdown.buildNote(source())
+        assertEquals(explicit, default)
+        assertTrue(explicit.startsWith("---"))
+        assertTrue(explicit.contains("**`[3:12]`**"))
+    }
+
+    @Test
+    fun `human-readable drops frontmatter and provenance tags`() {
+        val md = NoteMarkdown.buildNote(source(), ExportFormat.HUMAN_READABLE)
+        assertFalse(md.startsWith("---"))
+        assertFalse(md.contains("title: Scaling Postgres"))
+        assertFalse(md.contains("[you]"))
+        assertFalse(md.contains("[3:12]"))
+        // Still normal Markdown otherwise: title heading and section structure survive.
+        assertTrue(md.contains("# Scaling Postgres"))
+        assertTrue(md.contains("## Key points"))
+        assertTrue(md.contains("### 0:00 – 7:00 · sharding"))
+        assertTrue(md.contains("- [ ] "))
+        // A friendly header replaces the YAML block.
+        assertTrue(md.contains("45m"))
+    }
+
+    @Test
+    fun `human-readable still respects an explicit showSources of false`() {
+        val on = NoteMarkdown.buildNote(source(showSources = true), ExportFormat.HUMAN_READABLE)
+        val off = NoteMarkdown.buildNote(source(showSources = false), ExportFormat.HUMAN_READABLE)
+        // Human-readable already forces tags off regardless — both must be identical.
+        assertEquals(on, off)
+    }
+
+    @Test
+    fun `plain text has no markdown syntax at all`() {
+        val md = NoteMarkdown.buildNote(source(), ExportFormat.PLAIN_TEXT)
+        assertFalse(md.contains("---"))
+        assertFalse(md.contains("#"))
+        assertFalse(md.contains("**"))
+        assertFalse(md.contains("[["))
+        assertFalse(md.contains("`"))
+        assertTrue(md.contains("SCALING POSTGRES") || md.contains("Scaling Postgres"))
+        assertTrue(md.contains("KEY POINTS"))
+        assertTrue(md.contains("ACTION ITEMS"))
+        assertTrue(md.contains("[ ] "))
+    }
+
+    @Test
+    fun `plain text transcript is flat lines with no table`() {
+        val md = NoteMarkdown.buildTranscript(source(), ExportFormat.PLAIN_TEXT)
+        assertFalse(md.contains("|"))
+        assertFalse(md.contains("---"))
+        assertTrue(md.contains("0:04  Thanks for having me."))
+        assertTrue(md.contains("3:12  Sharding cut tail latency by two thirds."))
+    }
+
+    @Test
+    fun `human-readable transcript keeps the table but drops frontmatter`() {
+        val md = NoteMarkdown.buildTranscript(source(), ExportFormat.HUMAN_READABLE)
+        assertFalse(md.startsWith("---"))
+        assertTrue(md.contains("| Time | Text |"))
+        assertTrue(md.contains("# Scaling Postgres — transcript"))
+    }
+
+    @Test
+    fun `file names use txt for plain text and md otherwise`() {
+        val at = 1_785_000_000_000
+        assertEquals(
+            "2026-07-25-scaling-postgres.md",
+            NoteMarkdown.noteFileName("Scaling Postgres", at, ExportFormat.LLM_OPTIMIZED),
+        )
+        assertEquals(
+            "2026-07-25-scaling-postgres.md",
+            NoteMarkdown.noteFileName("Scaling Postgres", at, ExportFormat.HUMAN_READABLE),
+        )
+        assertEquals(
+            "2026-07-25-scaling-postgres.txt",
+            NoteMarkdown.noteFileName("Scaling Postgres", at, ExportFormat.PLAIN_TEXT),
+        )
+        assertEquals(
+            "2026-07-25-scaling-postgres.transcript.txt",
+            NoteMarkdown.transcriptFileName("Scaling Postgres", at, ExportFormat.PLAIN_TEXT),
+        )
+    }
 }

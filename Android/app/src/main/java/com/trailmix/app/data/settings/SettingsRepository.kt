@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.trailmix.app.data.ai.Recipe
 import com.trailmix.app.data.ai.RecipesJson
+import com.trailmix.app.data.export.ExportFormat
 import com.trailmix.app.data.model.CustomSummaryTemplate
 import com.trailmix.app.data.model.CustomTemplatesJson
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -37,6 +38,7 @@ class SettingsRepository @Inject constructor(
     private val asrLocaleTagKey = stringPreferencesKey("asr_locale_tag")
     private val customRecipesKey = stringPreferencesKey("custom_recipes")
     private val customTemplatesKey = stringPreferencesKey("custom_summary_templates")
+    private val exportFormatKey = stringPreferencesKey("export_format")
 
     // Retired keys, deliberately no longer read or written:
     // - "name_variants" (CAL-04, v1.7.0)
@@ -144,5 +146,22 @@ class SettingsRepository @Inject constructor(
                 prefs[customTemplatesKey] = CustomTemplatesJson.encode(cleaned)
             }
         }
+    }
+
+    /**
+     * Default export format (the export-format dropdown feature) applied to every
+     * fire-and-forget auto-export ([com.trailmix.app.data.export.NoteExporter]) and used as
+     * the starting point for the one-off share-sheet picker. Defaults to
+     * [ExportFormat.LLM_OPTIMIZED] so an existing install's auto-exports keep rendering
+     * exactly as before unless the user opts into a different default.
+     */
+    val exportFormat: Flow<ExportFormat> = context.dataStore.data.map { prefs ->
+        prefs[exportFormatKey]?.let { name ->
+            runCatching { ExportFormat.valueOf(name) }.getOrNull()
+        } ?: ExportFormat.LLM_OPTIMIZED
+    }
+
+    suspend fun setExportFormat(format: ExportFormat) {
+        context.dataStore.edit { prefs -> prefs[exportFormatKey] = format.name }
     }
 }

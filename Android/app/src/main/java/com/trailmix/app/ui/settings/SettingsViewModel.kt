@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.trailmix.app.data.ai.Recipe
 import com.trailmix.app.data.db.NotesRepository
+import com.trailmix.app.data.export.ExportFormat
 import com.trailmix.app.data.model.CustomSummaryTemplate
 import com.trailmix.app.data.model.SummaryTemplate
 import com.trailmix.app.data.model.TemplateOptions
@@ -60,6 +61,17 @@ class SettingsViewModel @Inject constructor(
     /** User-defined recipes (UX-06). */
     val customRecipes: StateFlow<List<Recipe>> = settingsRepository.customRecipes
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * Default export format applied to auto-export; the share-sheet picker starts from this
+     * value but can override it one-off without changing the standing default.
+     */
+    val exportFormat: StateFlow<ExportFormat> = settingsRepository.exportFormat
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ExportFormat.LLM_OPTIMIZED)
+
+    fun setExportFormat(format: ExportFormat) {
+        viewModelScope.launch { settingsRepository.setExportFormat(format) }
+    }
 
     /** True while the INT-02 export-location migration is moving files between folders. */
     private val _migrating = MutableStateFlow(false)

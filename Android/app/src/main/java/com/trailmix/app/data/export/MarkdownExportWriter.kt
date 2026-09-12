@@ -62,9 +62,13 @@ object MarkdownExportWriter {
         val existing = existingFileUri
             ?.let { runCatching { DocumentFile.fromSingleUri(context, Uri.parse(it)) }.getOrNull() }
             ?.takeIf { it.exists() }
+        // Export-format dropdown: a plain-text export uses the .txt extension, and some SAF
+        // providers use the create-time MIME type to influence the actual extension they
+        // append — a "text/markdown" .txt file has been observed growing a second .md suffix.
+        val mimeType = if (fileName.endsWith(".txt")) "text/plain" else "text/markdown"
         val target = existing
             ?: folder.findFile(fileName)
-            ?: folder.createFile("text/markdown", fileName)
+            ?: folder.createFile(mimeType, fileName)
             ?: return null
 
         val bytes = markdown.toByteArray(Charsets.UTF_8)
