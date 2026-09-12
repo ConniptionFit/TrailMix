@@ -17,6 +17,7 @@ mlkitGenaiAsr = "1.0.0-alpha1"
 documentfile = "1.0.1"
 junit = "4.13.2"
 orgJson = "20240303"
+sqliteJdbc = "3.41.2.2"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -45,6 +46,7 @@ mlkit-genai-speech = { group = "com.google.mlkit", name = "genai-speech-recognit
 androidx-documentfile = { group = "androidx.documentfile", name = "documentfile", version.ref = "documentfile" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 org-json = { group = "org.json", name = "json", version.ref = "orgJson" }
+sqlite-jdbc = { group = "org.xerial", name = "sqlite-jdbc", version.ref = "sqliteJdbc" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
