@@ -3,6 +3,7 @@ package com.trailmix.app.ui.home
 import androidx.annotation.VisibleForTesting
 import com.trailmix.app.data.db.NoteEntity
 import com.trailmix.app.data.db.NoteSearch
+import com.trailmix.app.data.model.TranscriptLine
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -16,6 +17,13 @@ data class HomeNote(
     val preview: String,
     /** "MMM d, yyyy · h:mm a" in the current locale — the UX-12 row subtitle. */
     val createdLabel: String,
+    /**
+     * UX-19/UX-20 (conference scale): the specific transcript line a search matched, when the
+     * match fell through past the summary — null outside an active search, or when the
+     * summary alone already matched. A 90-minute keynote makes "which minute" a far more
+     * useful answer than "this note matched somewhere".
+     */
+    val matchedMoment: TranscriptLine? = null,
 ) {
     val id: Long get() = note.id
 }
@@ -55,7 +63,12 @@ class HomeNoteIndex {
 
     private inner class Entry(val source: NoteEntity, val formatting: String) {
         val searchText: String by lazy { summaryBuilds++; NoteSearch.summaryText(source) }
-        val transcriptText: String by lazy { transcriptBuilds++; NoteSearch.transcriptText(source) }
+        /** Decoded once and shared by [transcriptText] and moment-lookup — a note filtered
+         * out by [searchText] alone never pays for either. */
+        val transcriptLines: List<TranscriptLine> by lazy { transcriptBuilds++; source.transcript }
+        val transcriptText: String by lazy {
+            transcriptLines.joinToString("\n") { it.text }.lowercase(Locale.getDefault())
+        }
         val homeNote: HomeNote by lazy {
             displayBuilds++
             HomeNote(
@@ -106,8 +119,20 @@ class HomeNoteIndex {
         for (note in notes) {
             if (meetingsOnly && note.meetingTitle == null) continue
             val entry = entryFor(note, formatting)
-            if (!NoteSearch.matches(tokens, { entry.searchText }, { entry.transcriptText })) continue
-            result += entry.homeNote
+            // Tracked separately from `matches` so a moment is only looked up for exactly the
+            // notes where the transcript was the reason this note matched at all.
+            var unmatchedBySummary: List<String>? = null
+            val matched = NoteSearch.matches(
+                tokens,
+                { entry.searchText },
+                {
+                    unmatchedBySummary = tokens.filterNot { it in entry.searchText }
+                    entry.transcriptText
+                },
+            )
+            if (!matched) continue
+            val moment = unmatchedBySummary?.let { NoteSearch.firstMatchingLine(it, entry.transcriptLines) }
+            result += if (moment != null) entry.homeNote.copy(matchedMoment = moment) else entry.homeNote
         }
 
         // Drop entries for notes that are gone (deleted, or purged) so the cache tracks the

@@ -23,7 +23,7 @@ object Routes {
     const val HOME = "home"
     const val CAPTURE = "capture?title={title}&resumeNoteId={resumeNoteId}"
     const val NOTE = "note/{noteId}"
-    const val TRANSCRIPT = "transcript/{noteId}"
+    const val TRANSCRIPT = "transcript/{noteId}?highlightLabel={highlightLabel}"
     const val CHAT = "chat/{noteId}"
     const val SETTINGS = "settings"
     const val MEETINGS = "meetings"
@@ -36,7 +36,10 @@ object Routes {
     /** Continue adding to an existing note (re-merges into it on End & Merge). */
     fun resumeCapture(noteId: Long) = "capture?resumeNoteId=$noteId"
     fun note(id: Long) = "note/$id"
-    fun transcript(id: Long) = "transcript/$id"
+
+    /** UX-19/UX-20: [highlightLabel] scrolls the transcript to and highlights that line. */
+    fun transcript(id: Long, highlightLabel: String? = null) =
+        "transcript/$id" + (highlightLabel?.let { "?highlightLabel=${Uri.encode(it)}" } ?: "")
     fun chat(id: Long) = "chat/$id"
 }
 
@@ -49,6 +52,9 @@ fun TrailMixNavHost(navController: NavHostController = rememberNavController()) 
                 onCaptureMeeting = { title -> navController.navigate(Routes.capture(title)) },
                 onOpenMeetings = { navController.navigate(Routes.MEETINGS) },
                 onOpenNote = { id -> navController.navigate(Routes.note(id)) },
+                onOpenTranscriptMoment = { id, label ->
+                    navController.navigate(Routes.transcript(id, label))
+                },
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                 onOpenRecentlyDeleted = { navController.navigate(Routes.RECENTLY_DELETED) },
                 // CAP-10: reopen the still-running capture session — no title/resumeNoteId
@@ -122,9 +128,19 @@ fun TrailMixNavHost(navController: NavHostController = rememberNavController()) 
         }
         composable(
             Routes.TRANSCRIPT,
-            arguments = listOf(navArgument("noteId") { type = NavType.LongType }),
-        ) {
-            TranscriptScreen(onBack = { navController.popBackStack() })
+            arguments = listOf(
+                navArgument("noteId") { type = NavType.LongType },
+                navArgument("highlightLabel") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+            ),
+        ) { entry ->
+            TranscriptScreen(
+                onBack = { navController.popBackStack() },
+                highlightLabel = entry.arguments?.getString("highlightLabel"),
+            )
         }
         composable(
             Routes.CHAT,
