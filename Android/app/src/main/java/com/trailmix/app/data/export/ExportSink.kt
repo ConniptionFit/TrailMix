@@ -15,6 +15,19 @@ import com.trailmix.app.data.db.NoteEntity
 data class ExportedFiles(val note: String, val transcript: String?)
 
 /**
+ * Recovery feature (2026-09-12): one summary/transcript pair already sitting in the export
+ * folder, as raw file content plus the real `content://` URIs — so a note restored from it
+ * can be linked for update-in-place re-export rather than creating a duplicate file next to
+ * the one it came from.
+ */
+data class ExportedNoteFile(
+    val noteUri: String,
+    val transcriptUri: String?,
+    val noteMarkdown: String,
+    val transcriptMarkdown: String?,
+)
+
+/**
  * REL-14: everything [com.trailmix.app.data.db.NotesRepository] needs to reach the user's
  * export folder — deliberately an interface, and deliberately Android-free.
  *
@@ -63,4 +76,12 @@ interface ExportSink {
      * local delete.
      */
     fun deleteExported(uriStr: String): Boolean
+
+    /**
+     * Recovery feature: every `.md` note (with its companion transcript, if any) currently
+     * sitting in the export folder. Empty if no location is configured. Used by
+     * [com.trailmix.app.data.db.NotesRepository.importFromExportFolder] to reconstruct notes
+     * after data loss — the exported folder is this app's only backup (`allowBackup=false`).
+     */
+    suspend fun listExportedNotes(): List<ExportedNoteFile>
 }

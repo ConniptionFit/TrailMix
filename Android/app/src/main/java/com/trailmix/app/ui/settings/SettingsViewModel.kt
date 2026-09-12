@@ -155,6 +155,27 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { settingsRepository.clearExportLocation() }
     }
 
+    private val _restoringNotes = MutableStateFlow(false)
+    val restoringNotes: StateFlow<Boolean> = _restoringNotes.asStateFlow()
+
+    /**
+     * Recovery feature: rebuild notes from whatever is already in the export folder — this
+     * app's only backup. Meant for exactly the situation that motivated it: the Room DB is
+     * gone (an uninstall, a device wipe) but the export folder survived, so re-linking that
+     * same folder here and tapping this restores what it can.
+     */
+    fun restoreFromExportFolder() {
+        if (_restoringNotes.value) return
+        viewModelScope.launch {
+            _restoringNotes.value = true
+            try {
+                _snackbarMessage.tryEmit(notesRepository.importFromExportFolder().summary())
+            } finally {
+                _restoringNotes.value = false
+            }
+        }
+    }
+
     fun setDefaultTemplate(stored: String) {
         viewModelScope.launch {
             settingsRepository.setDefaultSummaryTemplate(stored.takeIf { it != SummaryTemplate.NONE.name })
