@@ -334,6 +334,37 @@ class NotesRepository @Inject constructor(
     fun observeUnexportedCount(): Flow<Int> = noteDao.observeUnexportedCount()
 
     /**
+     * OBS-05: notice when a tracked export file is gone — deleted in a file manager, lost to
+     * a sync conflict, or a provider that recycled its document id. Until now a tracked URI
+     * was trusted at face value forever; a note could read as backed up while nothing was
+     * actually behind it. Clearing the stale half of a URI pair (never both blindly — the
+     * other file may still be fine) makes the note reappear in [observeUnexportedCount] and
+     * eligible for [exportMissing] to rewrite, the same path a first-ever export failure
+     * already uses.
+     *
+     * Returns how many notes had at least one stale URI cleared. Called once per Settings
+     * visit ([com.trailmix.app.ui.settings.SettingsViewModel]) rather than reactively on
+     * every DB emission — checking file existence is real SAF I/O per note, not a query.
+     */
+    suspend fun detectAndClearDeletedExports(): Int {
+        if (!exportSink.isConfigured()) return 0
+        var cleared = 0
+        noteDao.getAll().forEach { note ->
+            val noteGone = note.obsidianFileUri?.let { !exportSink.exists(it) } ?: false
+            val transcriptGone = note.transcriptFileUri?.let { !exportSink.exists(it) } ?: false
+            if (noteGone || transcriptGone) {
+                noteDao.setExportUris(
+                    id = note.id,
+                    noteUri = if (noteGone) null else note.obsidianFileUri,
+                    transcriptUri = if (transcriptGone) null else note.transcriptFileUri,
+                )
+                cleared++
+            }
+        }
+        return cleared
+    }
+
+    /**
      * OBS-04: retry every live note that has no exported file.
      *
      * Exports were previously fire-and-forget: [exportIfConfigured] swallowed failures, and
@@ -357,6 +388,9 @@ class NotesRepository @Inject constructor(
         // Repairing the backlog *is* the backlog repair; it must not recurse into itself.
         repairingExports = true
         try {
+            // OBS-05: a stale tracked URI must be cleared before this scan, or a note whose
+            // file quietly vanished stays invisible to the very query meant to find it.
+            detectAndClearDeletedExports()
             noteDao.getUnexported().forEach { note ->
                 exportIfConfigured(note)
                 // Success is "something got written", not "the note file got written" —

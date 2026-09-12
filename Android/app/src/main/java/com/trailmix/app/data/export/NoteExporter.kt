@@ -40,6 +40,10 @@ class NoteExporter @Inject constructor(
         DocumentsContract.deleteDocument(context.contentResolver, Uri.parse(uriStr))
     }.getOrDefault(false)
 
+    override fun exists(uriStr: String): Boolean = runCatching {
+        DocumentFile.fromSingleUri(context, Uri.parse(uriStr))?.exists() == true
+    }.getOrDefault(false)
+
     /**
      * Best-effort export/update-in-place into the configured export location. Writes the
      * summary note and, when there's a transcript, a companion `<name>.transcript.md`

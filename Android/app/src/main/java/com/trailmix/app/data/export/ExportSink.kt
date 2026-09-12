@@ -78,6 +78,14 @@ interface ExportSink {
     fun deleteExported(uriStr: String): Boolean
 
     /**
+     * OBS-05: whether a tracked export file is still actually there. A tracked URI going
+     * stale (the user deleted the file in a file manager, a sync conflict removed it, the
+     * provider recycled the document id) was previously never noticed — the note read as
+     * backed up on the strength of a URI alone, whether or not anything was still behind it.
+     */
+    fun exists(uriStr: String): Boolean
+
+    /**
      * Recovery feature: every `.md` note (with its companion transcript, if any) currently
      * sitting in the export folder. Empty if no location is configured. Used by
      * [com.trailmix.app.data.db.NotesRepository.importFromExportFolder] to reconstruct notes
