@@ -73,6 +73,15 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { settingsRepository.setExportFormat(format) }
     }
 
+    init {
+        // OBS-05: catch a tracked export file that vanished outside the app (deleted in a
+        // file manager, a sync conflict, a recycled document id) once per Settings visit —
+        // checking existence is real SAF I/O per note, not something to run reactively on
+        // every DB emission. Folds into the same unexported-count badge/repair OBS-04 already
+        // has, so this needs no UI of its own.
+        viewModelScope.launch { notesRepository.detectAndClearDeletedExports() }
+    }
+
     /** True while the INT-02 export-location migration is moving files between folders. */
     private val _migrating = MutableStateFlow(false)
     val migrating: StateFlow<Boolean> = _migrating.asStateFlow()

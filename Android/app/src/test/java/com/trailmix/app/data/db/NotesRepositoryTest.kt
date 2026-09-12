@@ -223,6 +223,69 @@ class NotesRepositoryTest {
         assertEquals(ExportRepairResult(0, 0), result)
     }
 
+    // ── OBS-05: a tracked file that vanished outside the app ─────────────────
+
+    @Test
+    fun `a tracked file that no longer exists is cleared, not trusted forever`() = runBlocking {
+        val id = seed(noteUri = "content://export/gone.md", transcriptUri = "content://export/gone.transcript.md")
+        exporter.missingUris += "content://export/gone.md"
+        exporter.missingUris += "content://export/gone.transcript.md"
+
+        val cleared = repo.detectAndClearDeletedExports()
+
+        assertEquals(1, cleared)
+        assertNull(noteDao.rows.getValue(id).obsidianFileUri)
+        assertNull(noteDao.rows.getValue(id).transcriptFileUri)
+    }
+
+    @Test
+    fun `only the half that actually vanished is cleared`() = runBlocking {
+        val id = seed(noteUri = "content://export/note.md", transcriptUri = "content://export/gone.transcript.md")
+        exporter.missingUris += "content://export/gone.transcript.md"
+
+        repo.detectAndClearDeletedExports()
+
+        assertEquals(
+            "the summary file is still there — clearing it too would orphan it on the next export",
+            "content://export/note.md",
+            noteDao.rows.getValue(id).obsidianFileUri,
+        )
+        assertNull(noteDao.rows.getValue(id).transcriptFileUri)
+    }
+
+    @Test
+    fun `a note whose files are all still present is left untouched`() = runBlocking {
+        val id = seed(noteUri = "content://export/note.md", transcriptUri = "content://export/note.transcript.md")
+
+        val cleared = repo.detectAndClearDeletedExports()
+
+        assertEquals(0, cleared)
+        assertEquals("content://export/note.md", noteDao.rows.getValue(id).obsidianFileUri)
+    }
+
+    @Test
+    fun `detection does nothing when no export location is configured`() = runBlocking {
+        seed(noteUri = "content://export/gone.md")
+        exporter.missingUris += "content://export/gone.md"
+        exporter.configured = false
+
+        assertEquals(0, repo.detectAndClearDeletedExports())
+    }
+
+    @Test
+    fun `exportMissing repairs a note whose file vanished, not just never-exported ones`() = runBlocking {
+        val id = seed(noteUri = "content://export/gone.md")
+        exporter.missingUris += "content://export/gone.md"
+
+        val result = repo.exportMissing()
+
+        assertEquals(1, result.exported)
+        assertNotNull(
+            "the vanished file must have been rewritten, not left null",
+            noteDao.rows.getValue(id).obsidianFileUri,
+        )
+    }
+
     // ── What counts as "not backed up" ──────────────────────────────────────
 
     /**
@@ -437,6 +500,8 @@ private class FakeExportSink : ExportSink {
     var exportCount = 0
     val deleted = mutableListOf<String>()
     var onExport: (suspend () -> Unit)? = null
+    /** OBS-05: URIs [exists] should report as gone — everything else reports present. */
+    val missingUris = mutableSetOf<String>()
 
     override suspend fun isConfigured(): Boolean = configured
 
@@ -468,6 +533,8 @@ private class FakeExportSink : ExportSink {
     }
 
     override suspend fun listExportedNotes(): List<com.trailmix.app.data.export.ExportedNoteFile> = emptyList()
+
+    override fun exists(uriStr: String): Boolean = uriStr !in missingUris
 }
 
 /**
