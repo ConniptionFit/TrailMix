@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,6 +53,7 @@ import com.trailmix.app.data.model.Provenance
 import com.trailmix.app.data.model.SummaryBullet
 import com.trailmix.app.ui.components.BackChevron
 import com.trailmix.app.ui.export.ExportFormatPickerDialog
+import com.trailmix.app.ui.export.PhotoPickerSheet
 import com.trailmix.app.ui.theme.TrailMix
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -71,6 +73,8 @@ fun NoteDetailScreen(
     val note by viewModel.note.collectAsStateWithLifecycle()
     val activeCapture by viewModel.activeCapture.collectAsStateWithLifecycle()
     val defaultExportFormat by viewModel.exportFormat.collectAsStateWithLifecycle()
+    val photoPermissionGranted by viewModel.photoPermissionGranted.collectAsStateWithLifecycle()
+    val matchedPhotos by viewModel.matchedPhotos.collectAsStateWithLifecycle()
     val c = TrailMix.colors
     val current = note ?: return
     val context = LocalContext.current
@@ -79,6 +83,7 @@ fun NoteDetailScreen(
     var titleDraft by remember(current.id) { mutableStateOf("") }
     var bodyDraft by remember(current.id) { mutableStateOf("") }
     var showFormatPicker by remember { mutableStateOf(false) }
+    var showPhotoPicker by remember { mutableStateOf(false) }
 
     fun shareNote(format: ExportFormat) {
         val sendIntent = Intent(Intent.ACTION_SEND).apply {
@@ -97,6 +102,23 @@ fun NoteDetailScreen(
                 shareNote(format)
             },
             onDismiss = { showFormatPicker = false },
+        )
+    }
+
+    if (showPhotoPicker) {
+        LaunchedEffect(Unit) {
+            if (photoPermissionGranted) viewModel.loadMatchedPhotos()
+        }
+        PhotoPickerSheet(
+            hasPermission = photoPermissionGranted,
+            photos = matchedPhotos,
+            initiallySelected = current.exportedPhotoUris.toSet(),
+            onPermissionGranted = { viewModel.refreshPhotoPermission() },
+            onConfirm = { uris ->
+                showPhotoPicker = false
+                viewModel.setSelectedPhotos(uris)
+            },
+            onDismiss = { showPhotoPicker = false },
         )
     }
 
@@ -277,6 +299,23 @@ fun NoteDetailScreen(
                         modifier = Modifier.padding(bottom = 14.dp),
                     )
                 }
+
+                // Photo-export feature: attaches photos taken during this session to the
+                // export folder — a note-level setting, not part of the ad-hoc share sheet.
+                Text(
+                    text = if (current.exportedPhotoUris.isEmpty()) {
+                        "Add photos"
+                    } else {
+                        "${current.exportedPhotoUris.size} photo" +
+                            "${if (current.exportedPhotoUris.size == 1) "" else "s"} attached"
+                    },
+                    color = c.amber,
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier
+                        .clickable { showPhotoPicker = true }
+                        .padding(bottom = 14.dp),
+                )
 
                 val summary = current.structuredSummary
                 when {
