@@ -6,6 +6,13 @@ plugins {
     alias(libs.plugins.hilt)
 }
 
+ksp {
+    // Room migration tests (MigrationTest.kt) need the real per-version schema JSON to
+    // build historical databases from — hand-deriving CREATE TABLE SQL by reading the
+    // entity source risks silently diverging from what Room actually generates.
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 android {
     namespace = "com.trailmix.app"
     compileSdk = 35
@@ -122,5 +129,9 @@ dependencies {
     implementation(libs.androidx.documentfile)
     testImplementation(libs.junit)
     testImplementation(libs.org.json)
+    // MigrationTest.kt: a real (pure-JVM) SQLite engine to run the production Migration
+    // objects against, without needing Robolectric or an instrumented device — Android's
+    // own android.database.sqlite classes are unit-test stubs that don't execute real SQL.
+    testImplementation(libs.sqlite.jdbc)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

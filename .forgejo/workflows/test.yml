@@ -1,0 +1,39 @@
+name: Unit Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    # Requires a self-hosted Forgejo Actions runner registered with a Docker-capable
+    # label and an image that has (or can install) an Android SDK — Forgejo's runner
+    # images aren't guaranteed to match GitHub-hosted assumptions. Update `runs-on`
+    # to match whatever label the registered runner actually advertises.
+    runs-on: docker
+    defaults:
+      run:
+        working-directory: Android
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Run unit tests
+        run: ./gradlew testDebugUnitTest --stacktrace
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: Android/app/build/reports/tests/testDebugUnitTest/

@@ -6,7 +6,7 @@ import androidx.room.RoomDatabase
 @Database(
     entities = [NoteEntity::class, ChatMessageEntity::class],
     version = 9,
-    exportSchema = false,
+    exportSchema = true,
 )
 abstract class TrailMixDatabase : RoomDatabase() {
     abstract fun noteDao(): NoteDao
