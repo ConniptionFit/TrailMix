@@ -78,6 +78,8 @@ fun HomeScreen(
     onCaptureMeeting: (String) -> Unit,
     onOpenMeetings: () -> Unit,
     onOpenNote: (Long) -> Unit,
+    /** UX-19/UX-20: open a note's transcript scrolled to the moment a search matched. */
+    onOpenTranscriptMoment: (noteId: Long, label: String) -> Unit,
     onOpenSettings: () -> Unit,
     /** REL-06: open the Recently deleted recovery screen. */
     onOpenRecentlyDeleted: () -> Unit,
@@ -376,6 +378,7 @@ fun HomeScreen(
                         onLongClick = {
                             if (selecting) viewModel.toggleSelected(row.id) else contextMenuNote = row.note
                         },
+                        onMomentClick = { label -> onOpenTranscriptMoment(row.id, label) },
                     )
                 }
                 // REL-06: entry to the recovery screen, only when something is in it.
@@ -988,6 +991,7 @@ private fun NoteRow(
     selected: Boolean?,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
+    onMomentClick: (label: String) -> Unit,
 ) {
     val note = row.note
     val c = TrailMix.colors
@@ -1066,6 +1070,36 @@ private fun NoteRow(
                                 .clip(RoundedCornerShape(100.dp))
                                 .background(c.amber.copy(alpha = 0.14f))
                                 .padding(horizontal = 7.dp, vertical = 2.dp),
+                        )
+                    }
+                }
+                // UX-19/UX-20 (conference scale): the search matched inside the transcript,
+                // not the summary — a 90-minute keynote makes "which minute" a far more
+                // useful answer than "this note matched somewhere". Tapping jumps straight
+                // into the transcript at that line instead of the note's summary.
+                row.matchedMoment?.let { moment ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .padding(top = 6.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(c.amber.copy(alpha = 0.10f))
+                            .clickable { onMomentClick(moment.label) }
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                    ) {
+                        Text(
+                            text = moment.label,
+                            color = c.amber,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = "  " + moment.text,
+                            color = c.text,
+                            fontSize = 12.5.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
                         )
                     }
                 }

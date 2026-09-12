@@ -5,7 +5,9 @@ import com.trailmix.app.data.model.TranscriptLine
 import java.util.Calendar
 import java.util.Locale
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -162,5 +164,25 @@ class NoteSearchTest {
     fun `an empty transcript is harmless`() {
         assertFalse(NoteSearch.matches(note(), "henderson"))
         assertTrue(NoteSearch.matches(note(), "roadmap"))
+    }
+
+    // ── UX-19/UX-20: the specific moment a transcript match came from ─────────
+
+    @Test
+    fun `firstMatchingLine finds the line containing the token, in transcript order`() {
+        val lines = listOf(
+            TranscriptLine("0:10", "We opened with the roadmap."),
+            TranscriptLine("0:24", "The Henderson contract needs a signature."),
+            TranscriptLine("0:31", "Henderson again, for good measure."),
+        )
+        val match = NoteSearch.firstMatchingLine(listOf("henderson"), lines)
+        assertEquals("0:24", match?.label)
+    }
+
+    @Test
+    fun `firstMatchingLine is null for no tokens or no match`() {
+        val lines = listOf(TranscriptLine("0:10", "We opened with the roadmap."))
+        assertNull(NoteSearch.firstMatchingLine(emptyList(), lines))
+        assertNull(NoteSearch.firstMatchingLine(listOf("kubernetes"), lines))
     }
 }

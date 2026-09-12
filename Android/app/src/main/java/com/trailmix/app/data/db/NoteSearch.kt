@@ -1,5 +1,6 @@
 package com.trailmix.app.data.db
 
+import com.trailmix.app.data.model.TranscriptLine
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -79,6 +80,24 @@ object NoteSearch {
      */
     fun matches(note: NoteEntity, query: String): Boolean =
         matches(tokenize(query), { summaryText(note) }, { transcriptText(note) })
+
+    /**
+     * UX-19/UX-20 (conference scale): the first transcript line containing any of [tokens],
+     * in transcript order — surfaced by [HomeNoteIndex] as a jump-to-moment result instead of
+     * only "this note matched somewhere". A 90-minute keynote makes "which note" answer far
+     * less than "which minute", so once a search has fallen through to the transcript at all
+     * (see [matches]) the specific line is worth keeping, not just the boolean.
+     *
+     * Null on an empty token list or no match — a caller should only ask this once [matches]
+     * has already fallen through to the transcript, exactly like [transcriptText].
+     */
+    fun firstMatchingLine(tokens: List<String>, lines: List<TranscriptLine>): TranscriptLine? {
+        if (tokens.isEmpty()) return null
+        return lines.firstOrNull { line ->
+            val lower = line.text.lowercase(Locale.getDefault())
+            tokens.any { it in lower }
+        }
+    }
 
     private val DATE_PATTERNS = listOf("MMM d", "MMMM d", "MMM d yyyy", "M/d", "M/d/yyyy", "yyyy-MM-dd", "h:mm a")
 

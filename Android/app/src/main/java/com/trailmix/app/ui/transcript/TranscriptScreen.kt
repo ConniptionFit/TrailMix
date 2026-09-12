@@ -14,18 +14,22 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -45,6 +49,8 @@ import com.trailmix.app.ui.theme.TrailMix
 @Composable
 fun TranscriptScreen(
     onBack: () -> Unit,
+    /** UX-19/UX-20: scroll to and highlight the transcript line with this label, if any. */
+    highlightLabel: String? = null,
     viewModel: NoteDetailViewModel = hiltViewModel(),
 ) {
     val note by viewModel.note.collectAsStateWithLifecycle()
@@ -117,7 +123,17 @@ fun TranscriptScreen(
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
             )
         } else {
+            val listState = rememberLazyListState()
+            val highlightIndex = remember(lines, highlightLabel) {
+                highlightLabel?.let { label -> lines.indexOfFirst { it.label == label } }?.takeIf { it >= 0 }
+            }
+            // UX-19/UX-20: land the user on the moment their search actually matched,
+            // not just somewhere in a possibly 90-minute transcript.
+            LaunchedEffect(highlightIndex) {
+                highlightIndex?.let { listState.animateScrollToItem(it) }
+            }
             LazyColumn(
+                state = listState,
                 modifier = Modifier
                     .fillMaxSize()
                     .navigationBarsPadding(),
@@ -127,7 +143,7 @@ fun TranscriptScreen(
                 ),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                items(lines) { line ->
+                itemsIndexed(lines) { index, line ->
                     Text(
                         text = buildAnnotatedString {
                             withStyle(
@@ -139,6 +155,14 @@ fun TranscriptScreen(
                         color = c.dim,
                         fontSize = 14.sp,
                         lineHeight = 23.8.sp, // 1.7
+                        modifier = if (index == highlightIndex) {
+                            Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(c.amberTint)
+                                .padding(6.dp)
+                        } else {
+                            Modifier
+                        },
                     )
                 }
             }

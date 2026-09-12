@@ -219,4 +219,29 @@ class HomeNoteIndexTest {
         index.filter(notes, "jul", false)
         assertEquals("dates render per locale, so they cannot be reused across one", 6, index.summaryBuilds)
     }
+
+    // ── UX-19/UX-20: the specific moment a transcript-only match came from ────
+
+    @Test
+    fun `a note that matched via the transcript carries the matching line`() {
+        val notes = library() // note 3 matches "henderson" only in its transcript
+        val result = HomeNoteIndex().filter(notes, "henderson", meetingsOnly = false)
+        assertEquals(1, result.size)
+        assertEquals("Henderson raised the forecast", result.single().matchedMoment?.text)
+    }
+
+    @Test
+    fun `a note that matched via the summary alone carries no moment`() {
+        val notes = library()
+        val result = HomeNoteIndex().filter(notes, "roadmap", meetingsOnly = false)
+        assertEquals(1, result.size)
+        assertEquals(null, result.single().matchedMoment)
+    }
+
+    @Test
+    fun `an empty query carries no moment for anyone`() {
+        val notes = library()
+        val result = HomeNoteIndex().filter(notes, "", meetingsOnly = false)
+        assertTrue(result.all { it.matchedMoment == null })
+    }
 }
