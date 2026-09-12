@@ -351,6 +351,10 @@ fun HomeScreen(
                 )
             }
 
+            // CAL-06 (conference scale): a multi-session day gets a header naming how many
+            // sessions it holds — a flat list gives no sense that three notes are today's
+            // conference track versus three unrelated notes from three weeks.
+            val listItems = remember(notes) { groupByConferenceDay(notes) }
             LazyColumn(modifier = Modifier.weight(1f)) {
                 if (notes.isEmpty()) {
                     item {
@@ -366,20 +370,38 @@ fun HomeScreen(
                         )
                     }
                 }
-                items(notes, key = { it.id }) { row ->
-                    NoteRow(
-                        row = row,
-                        // UX-10: null when not in selection mode; row shows an indicator
-                        // and taps toggle instead of opening while selecting.
-                        selected = selectedIds?.contains(row.id),
-                        onClick = {
-                            if (selecting) viewModel.toggleSelected(row.id) else onOpenNote(row.id)
-                        },
-                        onLongClick = {
-                            if (selecting) viewModel.toggleSelected(row.id) else contextMenuNote = row.note
-                        },
-                        onMomentClick = { label -> onOpenTranscriptMoment(row.id, label) },
-                    )
+                items(
+                    listItems,
+                    key = { item ->
+                        when (item) {
+                            is HomeListItem.DayHeader -> "day:${item.label}"
+                            is HomeListItem.NoteRow -> item.note.id
+                        }
+                    },
+                ) { item ->
+                    when (item) {
+                        is HomeListItem.DayHeader -> DayHeaderRow(item)
+                        is HomeListItem.NoteRow -> {
+                            val row = item.note
+                            NoteRow(
+                                row = row,
+                                // UX-10: null when not in selection mode; row shows an
+                                // indicator and taps toggle instead of opening while selecting.
+                                selected = selectedIds?.contains(row.id),
+                                onClick = {
+                                    if (selecting) viewModel.toggleSelected(row.id) else onOpenNote(row.id)
+                                },
+                                onLongClick = {
+                                    if (selecting) {
+                                        viewModel.toggleSelected(row.id)
+                                    } else {
+                                        contextMenuNote = row.note
+                                    }
+                                },
+                                onMomentClick = { label -> onOpenTranscriptMoment(row.id, label) },
+                            )
+                        }
+                    }
                 }
                 // REL-06: entry to the recovery screen, only when something is in it.
                 if (deletedCount > 0 && !searching && !selecting) {
@@ -980,6 +1002,32 @@ private fun UpcomingCard(
                 )
             }
         }
+    }
+}
+
+/** CAL-06: the "N sessions" label above a multi-session conference day's notes. */
+@Composable
+private fun DayHeaderRow(header: HomeListItem.DayHeader) {
+    val c = TrailMix.colors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = header.label,
+            color = c.text,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            text = "${header.sessionCount} sessions",
+            color = c.amber,
+            fontSize = 11.5.sp,
+            fontWeight = FontWeight.Medium,
+        )
     }
 }
 
