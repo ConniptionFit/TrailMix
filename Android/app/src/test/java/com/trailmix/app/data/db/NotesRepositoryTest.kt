@@ -443,6 +443,7 @@ private class FakeExportSink : ExportSink {
     override suspend fun exportNote(
         note: NoteEntity,
         recipeOutputs: List<Pair<String, String>>,
+        selectedPhotoUris: List<String>,
     ): ExportedFiles? {
         exportCount++
         onExport?.invoke()
@@ -515,6 +516,11 @@ private class FakeNoteDao : NoteDao {
     override suspend fun setExportUris(id: Long, noteUri: String?, transcriptUri: String?) {
         rows[id] = rows[id]?.copy(obsidianFileUri = noteUri, transcriptFileUri = transcriptUri)
             ?: return
+        changes.value++
+    }
+
+    override suspend fun setExportedPhotoUris(id: Long, photoUrisJson: String?) {
+        rows[id] = rows[id]?.copy(exportedPhotoUrisJson = photoUrisJson) ?: return
         changes.value++
     }
 

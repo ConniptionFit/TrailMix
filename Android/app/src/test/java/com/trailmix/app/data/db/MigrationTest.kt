@@ -227,7 +227,7 @@ class MigrationTest {
     }
 
     @Test
-    fun migrate8To9_addsTranscriptFileUri_andFinalShapeMatchesV9Schema() {
+    fun migrate8To9_addsTranscriptFileUri() {
         connect().use { c ->
             c.createStatement().use {
                 it.execute(
@@ -249,19 +249,55 @@ class MigrationTest {
 
             migrate(c, Migrations.MIGRATION_8_9)
 
-            val cols = columns(c, "notes")
-            assertTrue(cols.containsKey("transcriptFileUri"))
+            assertTrue(columns(c, "notes").containsKey("transcriptFileUri"))
+        }
+    }
 
-            // Pinned against app/schemas/com.trailmix.app.data.db.TrailMixDatabase/9.json —
+    @Test
+    fun migrate9To10_addsExportedPhotoUris_andFinalShapeMatchesV10Schema() {
+        connect().use { c ->
+            c.createStatement().use {
+                it.execute(
+                    "CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "title TEXT NOT NULL, segmentsJson TEXT NOT NULL, transcriptJson TEXT NOT NULL, " +
+                        "typedFragments TEXT NOT NULL, durationMs INTEGER NOT NULL, " +
+                        "createdAtEpochMs INTEGER NOT NULL, showSources INTEGER NOT NULL, " +
+                        "mergedWithAi INTEGER NOT NULL, meetingTitle TEXT, " +
+                        "capturedInCall INTEGER NOT NULL DEFAULT 0, bodyOverride TEXT, " +
+                        "attendeesJson TEXT, summaryJson TEXT, template TEXT, " +
+                        "obsidianFileUri TEXT, driveFileUri TEXT, deletedAtEpochMs INTEGER, " +
+                        "transcriptFileUri TEXT)",
+                )
+                it.execute(
+                    "INSERT INTO notes (title, segmentsJson, transcriptJson, typedFragments, " +
+                        "durationMs, createdAtEpochMs, showSources, mergedWithAi) VALUES " +
+                        "('Conference keynote', '[]', '[]', '', 5400000, 7000, 1, 1)",
+                )
+            }
+
+            migrate(c, Migrations.MIGRATION_9_10)
+
+            val cols = columns(c, "notes")
+            assertTrue(cols.containsKey("exportedPhotoUrisJson"))
+
+            // Pinned against app/schemas/com.trailmix.app.data.db.TrailMixDatabase/10.json —
             // this is the check that would catch a column silently added/renamed/dropped
             // anywhere in the chain, not just in this last step.
-            val expectedV9Columns = setOf(
+            val expectedV10Columns = setOf(
                 "id", "title", "segmentsJson", "transcriptJson", "typedFragments", "durationMs",
                 "createdAtEpochMs", "showSources", "mergedWithAi", "meetingTitle", "capturedInCall",
                 "bodyOverride", "attendeesJson", "summaryJson", "template", "obsidianFileUri",
-                "driveFileUri", "deletedAtEpochMs", "transcriptFileUri",
+                "driveFileUri", "deletedAtEpochMs", "transcriptFileUri", "exportedPhotoUrisJson",
             )
-            assertEquals(expectedV9Columns, cols.keys)
+            assertEquals(expectedV10Columns, cols.keys)
+
+            c.createStatement().use { stmt ->
+                stmt.executeQuery("SELECT title, exportedPhotoUrisJson FROM notes").use { rs ->
+                    assertTrue(rs.next())
+                    assertEquals("Conference keynote", rs.getString("title"))
+                    assertNull(rs.getString("exportedPhotoUrisJson"))
+                }
+            }
         }
     }
 }

@@ -86,8 +86,22 @@ object Migrations {
         }
     }
 
+    /**
+     * Photo-export feature (v1.20.0): tracks which MediaStore photo URIs were selected and
+     * copied into this note's `photos/` export subfolder, as a JSON-encoded string list —
+     * same pattern as [com.trailmix.app.data.model.StringListJson]-backed `attendeesJson`.
+     * Supports update-in-place re-export without re-showing the picker. Nullable/additive:
+     * existing notes simply have no exported photos yet. Only the URI references are stored,
+     * never photo bytes, matching every other tracked-file column on this entity.
+     */
+    val MIGRATION_9_10 = object : Migration(9, 10) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE notes ADD COLUMN exportedPhotoUrisJson TEXT")
+        }
+    }
+
     val ALL: Array<Migration> = arrayOf(
         MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
-        MIGRATION_7_8, MIGRATION_8_9,
+        MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10,
     )
 }

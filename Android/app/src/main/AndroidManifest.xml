@@ -14,6 +14,16 @@
     <!-- Optional, requested at runtime only when the user taps the Home
          "Upcoming" card. Read-only. -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <!-- Optional, requested at runtime only when the user opens the photo
+         picker on the export/share sheet. Read-only — matches photos taken
+         during a note's timeframe so they can be selectively included in an
+         export; nothing is scanned in the background. READ_MEDIA_IMAGES is
+         the API 33+ scoped-storage permission; READ_EXTERNAL_STORAGE covers
+         31-32 only (minSdk is 31, so this fallback is required, not optional). -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
     <!-- Keeps a capture session alive when the user switches to the meeting
          or video app. mediaProjection covers the opt-in device-audio lane,
          which only ever activates after the system consent dialog. -->

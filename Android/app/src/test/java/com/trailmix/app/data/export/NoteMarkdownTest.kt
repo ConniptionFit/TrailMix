@@ -367,6 +367,46 @@ class NoteMarkdownTest {
         assertTrue(md.contains("# Scaling Postgres — transcript"))
     }
 
+    // ── Photo-export feature ───────────────────────────────────────────────
+
+    private val photos = listOf(
+        ExportedPhoto("IMG_0001.jpg", takenAtEpochMs = 1_785_003_120_000),
+        ExportedPhoto("IMG_0002.jpg", takenAtEpochMs = 1_785_003_600_000),
+    )
+
+    @Test
+    fun `LLM-optimized lists photos as frontmatter metadata, never inline images`() {
+        val md = NoteMarkdown.buildNote(source().copy(photos = photos), ExportFormat.LLM_OPTIMIZED)
+        val fm = md.substringAfter("---").substringBefore("---")
+        assertTrue(fm.contains("photos: [{name: IMG_0001.jpg, taken:"))
+        assertTrue(fm.contains("IMG_0002.jpg"))
+        assertFalse(md.contains("!["))
+        assertFalse(md.contains("## Photos"))
+    }
+
+    @Test
+    fun `human-readable renders photos as inline image links in their own section`() {
+        val md = NoteMarkdown.buildNote(source().copy(photos = photos), ExportFormat.HUMAN_READABLE)
+        assertTrue(md.contains("## Photos"))
+        assertTrue(md.contains("![IMG_0001.jpg](photos/IMG_0001.jpg)"))
+        assertTrue(md.contains("![IMG_0002.jpg](photos/IMG_0002.jpg)"))
+    }
+
+    @Test
+    fun `plain text lists photos as a flat block with no markdown`() {
+        val md = NoteMarkdown.buildNote(source().copy(photos = photos), ExportFormat.PLAIN_TEXT)
+        assertTrue(md.contains("PHOTOS"))
+        assertTrue(md.contains("IMG_0001.jpg"))
+        assertFalse(md.contains("!["))
+        assertFalse(md.contains("photos/"))
+    }
+
+    @Test
+    fun `no photos section at all when none were selected`() {
+        val md = NoteMarkdown.buildNote(source(), ExportFormat.HUMAN_READABLE)
+        assertFalse(md.contains("Photos"))
+    }
+
     @Test
     fun `file names use txt for plain text and md otherwise`() {
         val at = 1_785_000_000_000

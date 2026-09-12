@@ -73,11 +73,19 @@ data class NoteEntity(
      * Null until the note has been exported with a non-empty transcript.
      */
     val transcriptFileUri: String? = null,
+    /**
+     * Photo-export feature (v1.20.0): JSON-encoded `List<String>` of `content://` MediaStore
+     * URIs the user selected for this note's export, copied into its `photos/` export
+     * subfolder. Only the references are stored, never photo bytes. Null until the note has
+     * been exported with at least one photo attached.
+     */
+    val exportedPhotoUrisJson: String? = null,
 ) {
     val segments: List<NoteSegment> get() = SegmentsJson.decode(segmentsJson)
     val transcript: List<TranscriptLine> get() = TranscriptJson.decode(transcriptJson)
     val attendees: List<String> get() = StringListJson.decode(attendeesJson)
     val structuredSummary: StructuredSummary? get() = StructuredSummaryJson.decode(summaryJson)
+    val exportedPhotoUris: List<String> get() = StringListJson.decode(exportedPhotoUrisJson)
 
     /** The text shown as the note body: the hand-edited override if present, else the merged segments. */
     val displayBody: String

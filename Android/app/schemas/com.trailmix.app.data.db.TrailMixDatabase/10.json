@@ -1,0 +1,182 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 10,
+    "identityHash": "fd2731714ca7b51ba719261a488f8690",
+    "entities": [
+      {
+        "tableName": "notes",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `title` TEXT NOT NULL, `segmentsJson` TEXT NOT NULL, `transcriptJson` TEXT NOT NULL, `typedFragments` TEXT NOT NULL, `durationMs` INTEGER NOT NULL, `createdAtEpochMs` INTEGER NOT NULL, `showSources` INTEGER NOT NULL, `mergedWithAi` INTEGER NOT NULL, `meetingTitle` TEXT, `capturedInCall` INTEGER NOT NULL, `bodyOverride` TEXT, `attendeesJson` TEXT, `summaryJson` TEXT, `template` TEXT, `obsidianFileUri` TEXT, `driveFileUri` TEXT, `deletedAtEpochMs` INTEGER, `transcriptFileUri` TEXT, `exportedPhotoUrisJson` TEXT)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "segmentsJson",
+            "columnName": "segmentsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "transcriptJson",
+            "columnName": "transcriptJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "typedFragments",
+            "columnName": "typedFragments",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "durationMs",
+            "columnName": "durationMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtEpochMs",
+            "columnName": "createdAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "showSources",
+            "columnName": "showSources",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mergedWithAi",
+            "columnName": "mergedWithAi",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "meetingTitle",
+            "columnName": "meetingTitle",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "capturedInCall",
+            "columnName": "capturedInCall",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bodyOverride",
+            "columnName": "bodyOverride",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "attendeesJson",
+            "columnName": "attendeesJson",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "summaryJson",
+            "columnName": "summaryJson",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "template",
+            "columnName": "template",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "obsidianFileUri",
+            "columnName": "obsidianFileUri",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "driveFileUri",
+            "columnName": "driveFileUri",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "deletedAtEpochMs",
+            "columnName": "deletedAtEpochMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "transcriptFileUri",
+            "columnName": "transcriptFileUri",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "exportedPhotoUrisJson",
+            "columnName": "exportedPhotoUrisJson",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "chat_messages",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `noteId` INTEGER NOT NULL, `role` TEXT NOT NULL, `text` TEXT NOT NULL, `createdAtEpochMs` INTEGER NOT NULL, `recipeName` TEXT)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "noteId",
+            "columnName": "noteId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "role",
+            "columnName": "role",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "text",
+            "columnName": "text",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtEpochMs",
+            "columnName": "createdAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "recipeName",
+            "columnName": "recipeName",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'fd2731714ca7b51ba719261a488f8690')"
+    ]
+  }
+}
