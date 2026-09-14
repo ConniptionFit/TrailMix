@@ -60,6 +60,9 @@ object MarkdownExportWriter {
         markdown: String,
         existingFileUri: String?,
     ): Uri? {
+        // REL-15: recover before anything else touches this name — see [recoverStaleTempFile].
+        recoverStaleTempFile(folder, fileName)
+
         val existing = existingFileUri
             ?.let { runCatching { DocumentFile.fromSingleUri(context, Uri.parse(it)) }.getOrNull() }
             ?.takeIf { it.exists() }
@@ -67,27 +70,59 @@ object MarkdownExportWriter {
         // providers use the create-time MIME type to influence the actual extension they
         // append — a "text/markdown" .txt file has been observed growing a second .md suffix.
         val mimeType = if (fileName.endsWith(".txt")) "text/plain" else "text/markdown"
-        val target = existing
-            ?: folder.findFile(fileName)
-            ?: folder.createFile(mimeType, fileName)
-            ?: return null
+        val target = existing ?: folder.findFile(fileName)
 
         val bytes = markdown.toByteArray(Charsets.UTF_8)
-        context.contentResolver.openOutputStream(target.uri, "wt")?.use { out ->
-            out.write(bytes)
-        } ?: return null
+        val tempName = "$fileName.tmp"
+        // A leftover from an earlier failed attempt at *this* write (not the crash-recovery
+        // case above, which already handled a temp with no target) — createFile would
+        // otherwise uniquify onto "$fileName.tmp (1)" and this call's own temp would never be
+        // found again next time.
+        folder.findFile(tempName)?.delete()
+        val temp = folder.createFile(mimeType, tempName) ?: return null
 
+        val wrote = runCatching {
+            context.contentResolver.openOutputStream(temp.uri, "wt")?.use { it.write(bytes) }
+        }.getOrNull() != null
         // REL-15: "wt" truncates and then writes, so a write that ends early leaves a file
         // shorter than the note it is supposed to hold. An `IOException` on the way (a
-        // revoked grant, a dead provider) already surfaces as a null from the caller's
-        // `runCatching`, but a full disk can end a write short *without* throwing, and the
-        // export would then be recorded as a success — a URI pointing at a truncated note,
-        // and an OBS-04 counter saying everything is backed up.
-        if (isShortWrite(runCatching { target.length() }.getOrDefault(UNKNOWN_LENGTH), bytes.size)) {
+        // revoked grant, a dead provider) already surfaces as a failure here, but a full disk
+        // can end a write short *without* throwing — checked the same one-sided way either
+        // way, on the *temp* file, so a bad write never touches the real target at all.
+        if (!wrote || isShortWrite(runCatching { temp.length() }.getOrDefault(UNKNOWN_LENGTH), bytes.size)) {
+            runCatching { temp.delete() }
             return null
         }
 
-        return target.uri
+        // The complete new content is safely on disk under the temp name — only now do we
+        // touch the real target. `DocumentsContract.renameDocument` can't overwrite an
+        // existing name (providers uniquify to "name (1).md" instead), so the target has to
+        // go first; a process death between these two lines leaves no file at `fileName`, but
+        // the temp file (recovered by the next export's [recoverStaleTempFile] call, or found
+        // by this same file's own `existingFileUri` fallback if the DB row already forgot
+        // about it) still holds the complete content, which is the point of doing it this way
+        // instead of the ordinary "wt" truncate-in-place this replaced.
+        if (target != null && target.uri != temp.uri) runCatching { target.delete() }
+        return if (runCatching { temp.renameTo(fileName) }.getOrDefault(false)) temp.uri else null
+    }
+
+    /**
+     * REL-15: a crash between this file's own delete-target and rename-temp-into-place steps,
+     * on a *previous* export of this exact [fileName], leaves a `<fileName>.tmp` holding the
+     * last complete write and no file at `fileName` at all. Must run before anything else in
+     * [write] touches this name, since a fresh export creating a brand-new target at
+     * [fileName] would otherwise mask that the recovery was ever needed. If a real target
+     * *does* still exist alongside the temp, the crash was earlier than that window (or two
+     * attempts overlapped) — the target is authoritative there and the temp is discarded, not
+     * promoted, since it may be an incomplete write that never reached the short-write check.
+     */
+    private fun recoverStaleTempFile(folder: DocumentFile, fileName: String) {
+        val temp = folder.findFile("$fileName.tmp") ?: return
+        if (folder.findFile(fileName) == null) {
+            runCatching { temp.renameTo(fileName) }
+        } else {
+            runCatching { temp.delete() }
+        }
     }
 
     /** Reported length is 0 on providers that don't track size; not an answer, so not a failure. */
