@@ -110,6 +110,10 @@ interface NoteDao {
     @Query("SELECT * FROM notes WHERE deletedAtEpochMs IS NOT NULL AND deletedAtEpochMs < :cutoff")
     suspend fun getDeletedBefore(cutoff: Long): List<NoteEntity>
 
+    /** Cross-note chat (AI-10): the notes a multi-select chat was launched against. */
+    @Query("SELECT * FROM notes WHERE id IN (:ids) AND deletedAtEpochMs IS NULL")
+    suspend fun getByIds(ids: List<Long>): List<NoteEntity>
+
     @Insert
     suspend fun insert(note: NoteEntity): Long
 
@@ -140,4 +144,31 @@ interface ChatDao {
 
     @Query("DELETE FROM chat_messages WHERE noteId = :noteId")
     suspend fun deleteForNote(noteId: Long)
+}
+
+@Dao
+interface SpeakerProfileDao {
+    @Query("SELECT * FROM speaker_profiles ORDER BY name ASC")
+    fun observeAll(): Flow<List<SpeakerProfileEntity>>
+
+    @Query("SELECT * FROM speaker_profiles ORDER BY name ASC")
+    suspend fun getAll(): List<SpeakerProfileEntity>
+
+    @Insert
+    suspend fun insert(profile: SpeakerProfileEntity): Long
+
+    @Query("UPDATE speaker_profiles SET name = :name WHERE id = :id")
+    suspend fun rename(id: Long, name: String)
+
+    @Query("DELETE FROM speaker_profiles WHERE id = :id")
+    suspend fun deleteById(id: Long)
+}
+
+@Dao
+interface ConversationDao {
+    @Query("SELECT * FROM conversation_messages WHERE noteIdsKey = :noteIdsKey ORDER BY createdAtEpochMs ASC, id ASC")
+    fun observeForNoteIds(noteIdsKey: String): Flow<List<ConversationMessageEntity>>
+
+    @Insert
+    suspend fun insert(message: ConversationMessageEntity): Long
 }

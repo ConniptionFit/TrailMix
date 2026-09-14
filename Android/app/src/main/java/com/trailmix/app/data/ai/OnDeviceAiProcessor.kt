@@ -15,7 +15,6 @@ import com.trailmix.app.data.model.SummaryTemplate
 import com.trailmix.app.data.model.TranscriptLine
 import java.text.SimpleDateFormat
 import java.util.Date
-import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
@@ -219,6 +218,72 @@ class OnDeviceAiProcessor @Inject constructor() {
         }
     }
 
+    /**
+     * Cross-note chat (AI-10): like [chat], but for a question spanning several notes at once.
+     * [context] is pre-assembled by [CrossNoteRetrieval] — already relevance-ranked and
+     * char-budgeted against the question — so unlike [chat]'s single-note `.take()`, this
+     * never needs its own truncation; whatever didn't make the cut was already the least
+     * relevant material, not just whatever sorted last.
+     */
+    suspend fun chatAcrossNotes(
+        context: String,
+        noteTitles: List<String>,
+        history: List<Pair<String, String>>,
+        userMessage: String,
+    ): String = withContext(Dispatchers.Default) {
+        val availability = ensureModelReady()
+        if (availability !is AiAvailability.Available) {
+            return@withContext OFFLINE_ASSISTANT_REPLY
+        }
+        try {
+            val prompt = buildString {
+                appendLine("You are a concise assistant working across ${noteTitles.size} meeting notes.")
+                appendLine(
+                    "Answer using only the excerpts below. If they don't cover the question, " +
+                        "say so plainly rather than guessing. Plain text only.",
+                )
+                appendLine()
+                appendLine("Notes: ${noteTitles.joinToString(", ")}")
+                appendLine()
+                appendLine("Relevant excerpts:")
+                appendLine(context.ifBlank { "(none found)" })
+                if (history.isNotEmpty()) {
+                    appendLine()
+                    appendLine("Conversation so far:")
+                    history.takeLast(6).forEach { (role, text) ->
+                        appendLine("$role: ${text.take(500)}")
+                    }
+                }
+                appendLine()
+                appendLine("user: $userMessage")
+                append("assistant:")
+            }
+            generate(prompt).ifBlank { OFFLINE_ASSISTANT_REPLY }
+        } catch (_: Exception) {
+            OFFLINE_ASSISTANT_REPLY
+        }
+    }
+
+    /**
+     * AI-11: condense the transcript captured so far into a few live bullets, for the
+     * in-progress capture screen. Independent of [merge] — no typed fragments, no title, no
+     * provenance, just "what's been said so far" — and best-effort like every AI path here:
+     * unavailable or erroring yields null rather than surfacing a half-built result. Input is
+     * capped the same way [generateStructuredSummary]'s per-chunk calls are, so a long-running
+     * capture never makes this call more expensive the longer the session runs.
+     */
+    suspend fun rollingSummary(
+        transcript: List<TranscriptLine>,
+        templateGuidance: String = SummaryTemplate.NONE.guidance,
+    ): String? = withContext(Dispatchers.Default) {
+        if (transcript.isEmpty()) return@withContext null
+        val availability = ensureModelReady()
+        if (availability !is AiAvailability.Available) return@withContext null
+        val sample = TranscriptCoverage.evenSampleLines(transcript, CHUNK_CHARS)
+        if (sample.isEmpty()) return@withContext null
+        runCatching { condenseChunk(sample, templateGuidance) }.getOrNull()?.trim()?.takeIf { it.isNotBlank() }
+    }
+
     // ── Structured summary (UX-02) ───────────────────────────────────────────
 
     /**
@@ -286,16 +351,15 @@ class OnDeviceAiProcessor @Inject constructor() {
 
         // Tokenize the attribution corpora once — a long talk has hundreds of candidate
         // sentences and this runs per produced bullet.
-        val fragmentSentences = splitSentences(typedFragments).map { it to tokenize(it) }
         val transcriptUnits = transcript.flatMap { line ->
             splitSentences(line.text).map { TranscriptLine(line.label, it) }
-        }.map { it to tokenize(it.text) }
-        val fragWords = tokenize(typedFragments)
+        }.map { it to QuoteMatch.tokenize(it.text) }
+        val fragWords = QuoteMatch.tokenize(typedFragments)
         val transWords = transcriptUnits.flatMapTo(mutableSetOf()) { it.second }
 
         fun attribute(raw: String): SummaryBullet {
             val (stamp, text) = splitTimestamp(raw)
-            val match = classify(text, fragWords, transWords, fragmentSentences, transcriptUnits)
+            val match = classify(text, fragWords, transWords, transcriptUnits)
             return SummaryBullet(
                 text = text,
                 source = match.source,
@@ -322,7 +386,7 @@ class OnDeviceAiProcessor @Inject constructor() {
             (0 until arr.length()).map { i ->
                 val o = arr.getJSONObject(i)
                 val (stamp, text) = splitTimestamp(o.getString("text").trim())
-                val match = classify(text, fragWords, transWords, fragmentSentences, transcriptUnits)
+                val match = classify(text, fragWords, transWords, transcriptUnits)
                 ActionItem(
                     text = text,
                     owner = o.optString("owner").takeIf { it.isNotBlank() && it != "null" },
@@ -363,36 +427,26 @@ class OnDeviceAiProcessor @Inject constructor() {
 
     private data class Attribution(val source: Provenance, val excerpt: String?, val label: String?)
 
-    /** Same word-overlap logic as [attributeProvenance], plus the best-matching source excerpt
-     *  and — for transcript matches — the `mm:ss` of the line it matched (AI-05). */
+    /**
+     * Classifies which side a bullet leans on, then backs it with the transcript quote that
+     * best supports it (AI-09) — including when the bullet is fragment-sourced. Before this, a
+     * fragment-sourced bullet's excerpt was the best-matching *other typed sentence*, which is
+     * a self-quote: tapping "reveal source" on something the user typed just showed more of
+     * what they typed. The useful reveal is always the spoken moment it relates to, if any.
+     */
     private fun classify(
         text: String,
         fragWords: Set<String>,
         transWords: Set<String>,
-        fragmentSentences: List<Pair<String, Set<String>>>,
         transcriptUnits: List<Pair<TranscriptLine, Set<String>>>,
     ): Attribution {
-        val words = tokenize(text)
-        val fragScore = overlapScore(words, fragWords)
-        val transScore = overlapScore(words, transWords)
-        if (fragScore > transScore) {
-            val excerpt = fragmentSentences
-                .map { it.first to overlapScore(words, it.second) }
-                .maxByOrNull { it.second }
-                ?.takeIf { it.second > 0.0 }
-                ?.first
-            return Attribution(Provenance.FRAGMENT, excerpt, null)
-        }
-        val best = transcriptUnits
-            .map { it.first to overlapScore(words, it.second) }
-            .maxByOrNull { it.second }
-            ?.takeIf { it.second > 0.0 }
-            ?.first
-        return Attribution(Provenance.TRANSCRIPT, best?.text, best?.label?.takeIf { it.isNotBlank() })
+        val words = QuoteMatch.tokenize(text)
+        val fragScore = QuoteMatch.overlapScore(words, fragWords)
+        val transScore = QuoteMatch.overlapScore(words, transWords)
+        val source = if (fragScore > transScore) Provenance.FRAGMENT else Provenance.TRANSCRIPT
+        val best = QuoteMatch.bestOf(words, transcriptUnits)
+        return Attribution(source, best?.text, best?.label?.takeIf { it.isNotBlank() })
     }
-
-    private fun overlapScore(words: Set<String>, against: Set<String>): Double =
-        if (against.isEmpty() || words.isEmpty()) 0.0 else words.count { it in against } / words.size.toDouble()
 
     private suspend fun generate(prompt: String): String =
         generativeModel
@@ -444,32 +498,18 @@ class OnDeviceAiProcessor @Inject constructor() {
         fragments: String,
         transcript: String,
     ): List<NoteSegment> {
-        val fragWords = tokenize(fragments)
-        val transWords = tokenize(transcript)
+        val fragWords = QuoteMatch.tokenize(fragments)
+        val transWords = QuoteMatch.tokenize(transcript)
         return sentences.map { sentence ->
-            val words = tokenize(sentence)
-            val fragScore = if (fragWords.isEmpty() || words.isEmpty()) {
-                0.0
+            val words = QuoteMatch.tokenize(sentence)
+            val source = if (QuoteMatch.overlapScore(words, fragWords) > QuoteMatch.overlapScore(words, transWords)) {
+                Provenance.FRAGMENT
             } else {
-                words.count { it in fragWords } / words.size.toDouble()
+                Provenance.TRANSCRIPT
             }
-            val transScore = if (transWords.isEmpty() || words.isEmpty()) {
-                0.0
-            } else {
-                words.count { it in transWords } / words.size.toDouble()
-            }
-            NoteSegment(
-                text = sentence,
-                source = if (fragScore > transScore) Provenance.FRAGMENT else Provenance.TRANSCRIPT,
-            )
+            NoteSegment(text = sentence, source = source)
         }
     }
-
-    private fun tokenize(text: String): Set<String> =
-        text.lowercase(Locale.ROOT)
-            .split(Regex("[^a-z0-9']+"))
-            .filter { it.length > 2 }
-            .toSet()
 
     private fun splitSentences(text: String): List<String> = SummaryText.splitSentences(text)
 

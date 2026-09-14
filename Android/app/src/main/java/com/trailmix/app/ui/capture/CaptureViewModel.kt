@@ -120,6 +120,9 @@ class CaptureViewModel @Inject constructor(
     /** REL-10: chunk progress while the merge runs, so the screen shows the same "N of M"
      * the foreground notification does rather than a static "Merging on-device…". */
     val mergeStatus: StateFlow<MergeStatus?> = manager.mergeStatus
+
+    /** AI-11: the in-progress capture's periodically-refreshed "so far" summary. */
+    val rollingSummary: StateFlow<String?> = manager.rollingSummary
     val deviceAudioSupported: Boolean get() = manager.deviceAudioSupported
 
     /** The active session's stored template value (enum name or `custom:<name>`, AI-03). */
@@ -158,6 +161,9 @@ class CaptureViewModel @Inject constructor(
     fun pause() = manager.pause()
     fun resume() = manager.resume()
     fun consumeCallEndedPrompt() = manager.consumeCallEndedPrompt()
+
+    /** CAP-24: flag the current moment; returns its `mm:ss` label for an on-screen confirmation, or null if there's nothing to flag right now (not recording/paused). */
+    fun flagMoment(): String? = manager.flagMoment()
 
     fun endAndMerge(onDone: (Long) -> Unit) = manager.endAndMerge(onDone)
 

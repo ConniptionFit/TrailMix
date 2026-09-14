@@ -12,6 +12,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.trailmix.app.ui.capture.CaptureScreen
 import com.trailmix.app.ui.chat.ChatScreen
+import com.trailmix.app.ui.chat.CrossNoteChatScreen
 import com.trailmix.app.ui.home.HomeScreen
 import com.trailmix.app.ui.home.RecentlyDeletedScreen
 import com.trailmix.app.ui.meetings.MeetingsScreen
@@ -25,6 +26,9 @@ object Routes {
     const val NOTE = "note/{noteId}"
     const val TRANSCRIPT = "transcript/{noteId}?highlightLabel={highlightLabel}"
     const val CHAT = "chat/{noteId}"
+    // AI-10: comma-joined note ids — Compose Navigation has no native list-arg type, and
+    // this is the only spot in the app that's ever needed to pass more than one id.
+    const val CROSS_NOTE_CHAT = "cross-note-chat/{noteIds}"
     const val SETTINGS = "settings"
     const val MEETINGS = "meetings"
     // REL-06: the Recently deleted screen (1-day soft-delete recovery window).
@@ -41,6 +45,7 @@ object Routes {
     fun transcript(id: Long, highlightLabel: String? = null) =
         "transcript/$id" + (highlightLabel?.let { "?highlightLabel=${Uri.encode(it)}" } ?: "")
     fun chat(id: Long) = "chat/$id"
+    fun crossNoteChat(ids: Collection<Long>) = "cross-note-chat/${ids.joinToString(",")}"
 }
 
 @Composable
@@ -55,6 +60,7 @@ fun TrailMixNavHost(navController: NavHostController = rememberNavController()) 
                 onOpenTranscriptMoment = { id, label ->
                     navController.navigate(Routes.transcript(id, label))
                 },
+                onOpenCrossNoteChat = { ids -> navController.navigate(Routes.crossNoteChat(ids)) },
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
                 onOpenRecentlyDeleted = { navController.navigate(Routes.RECENTLY_DELETED) },
                 // CAP-10: reopen the still-running capture session — no title/resumeNoteId
@@ -147,6 +153,12 @@ fun TrailMixNavHost(navController: NavHostController = rememberNavController()) 
             arguments = listOf(navArgument("noteId") { type = NavType.LongType }),
         ) {
             ChatScreen(onBack = { navController.popBackStack() })
+        }
+        composable(
+            Routes.CROSS_NOTE_CHAT,
+            arguments = listOf(navArgument("noteIds") { type = NavType.StringType }),
+        ) {
+            CrossNoteChatScreen(onBack = { navController.popBackStack() })
         }
         composable(Routes.SETTINGS) {
             SettingsScreen(onBack = { navController.popBackStack() })

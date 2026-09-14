@@ -44,6 +44,7 @@ class NotesRepositoryTest {
     private lateinit var noteDao: FakeNoteDao
     private lateinit var chatDao: FakeChatDao
     private lateinit var exporter: FakeExportSink
+    private lateinit var conversationDao: FakeConversationDao
     private lateinit var repo: NotesRepository
 
     @Before
@@ -51,7 +52,8 @@ class NotesRepositoryTest {
         noteDao = FakeNoteDao()
         chatDao = FakeChatDao()
         exporter = FakeExportSink()
-        repo = NotesRepository(noteDao, chatDao, exporter)
+        conversationDao = FakeConversationDao()
+        repo = NotesRepository(noteDao, chatDao, exporter, conversationDao)
     }
 
     private fun seed(
@@ -610,6 +612,9 @@ private class FakeNoteDao : NoteDao {
     override suspend fun getDeletedBefore(cutoff: Long): List<NoteEntity> =
         rows.values.filter { it.deletedAtEpochMs != null && it.deletedAtEpochMs!! < cutoff }
 
+    override suspend fun getByIds(ids: List<Long>): List<NoteEntity> =
+        rows.values.filter { it.id in ids && it.deletedAtEpochMs == null }
+
     override suspend fun insert(note: NoteEntity): Long = runBlockingInsert(note)
 
     override suspend fun update(note: NoteEntity) {
@@ -647,5 +652,19 @@ private class FakeChatDao : ChatDao {
 
     override suspend fun deleteForNote(noteId: Long) {
         rows.removeAll { it.noteId == noteId }
+    }
+}
+
+private class FakeConversationDao : ConversationDao {
+    val rows = mutableListOf<ConversationMessageEntity>()
+    private var nextId = 1L
+
+    override fun observeForNoteIds(noteIdsKey: String): Flow<List<ConversationMessageEntity>> =
+        MutableStateFlow(rows.filter { it.noteIdsKey == noteIdsKey })
+
+    override suspend fun insert(message: ConversationMessageEntity): Long {
+        val id = nextId++
+        rows += message.copy(id = id)
+        return id
     }
 }

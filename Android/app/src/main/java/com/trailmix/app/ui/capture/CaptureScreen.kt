@@ -68,6 +68,7 @@ import androidx.core.content.ContextCompat
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.delay
 import com.trailmix.app.R
 import com.trailmix.app.data.speech.MergeStatus
 import com.trailmix.app.ui.theme.TrailMix
@@ -82,6 +83,7 @@ fun CaptureScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val mergeStatus by viewModel.mergeStatus.collectAsStateWithLifecycle()
+    val rollingSummary by viewModel.rollingSummary.collectAsStateWithLifecycle()
     val fragments by viewModel.fragments.collectAsStateWithLifecycle()
     val c = TrailMix.colors
     val context = LocalContext.current
@@ -295,6 +297,15 @@ fun CaptureScreen(
         )
     }
 
+    // CAP-24: brief on-screen echo of a flag tap — clears itself, no dismiss needed.
+    var flaggedConfirmation by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(flaggedConfirmation) {
+        if (flaggedConfirmation != null) {
+            delay(2_000)
+            flaggedConfirmation = null
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -355,7 +366,27 @@ fun CaptureScreen(
                     modifier = Modifier.padding(start = 6.dp),
                 )
             }
+            flaggedConfirmation?.let { label ->
+                Text(
+                    text = "· Flagged $label",
+                    color = c.flag,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(start = 6.dp),
+                )
+            }
             Spacer(modifier = Modifier.weight(1f))
+            // CAP-24: tap-to-flag an important moment — same gating as Pause/Resume, since
+            // there's nothing meaningful to flag before a session starts or after it merges.
+            if (state.recording || state.paused) {
+                IconButton(onClick = { flaggedConfirmation = viewModel.flagMoment() }) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_flag),
+                        contentDescription = "Flag this moment",
+                        tint = c.dim,
+                    )
+                }
+            }
             // CAP-12: same pause/resume the notification's actions drive — releases the
             // mic without ending the session. Hidden while merging (nothing to pause).
             if (state.recording || state.paused) {
@@ -519,6 +550,35 @@ fun CaptureScreen(
                     fontSize = 11.5.sp,
                     lineHeight = 15.sp,
                     modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+        }
+
+        // AI-11: the periodically-refreshed "so far" condensation — absent until the first
+        // pass finishes, and never shown as an empty/loading card in the meantime, since most
+        // short captures will end before it ever has anything to say.
+        rollingSummary?.let { summary ->
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(c.card)
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+            ) {
+                Text(
+                    text = "SO FAR",
+                    color = c.dim,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 0.4.sp,
+                )
+                Text(
+                    text = summary,
+                    color = c.text,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                    modifier = Modifier.padding(top = 6.dp),
                 )
             }
         }

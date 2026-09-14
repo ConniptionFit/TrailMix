@@ -80,6 +80,8 @@ fun HomeScreen(
     onOpenNote: (Long) -> Unit,
     /** UX-19/UX-20: open a note's transcript scrolled to the moment a search matched. */
     onOpenTranscriptMoment: (noteId: Long, label: String) -> Unit,
+    /** AI-10: open a chat spanning every currently-selected note (2+ required). */
+    onOpenCrossNoteChat: (Set<Long>) -> Unit,
     onOpenSettings: () -> Unit,
     /** REL-06: open the Recently deleted recovery screen. */
     onOpenRecentlyDeleted: () -> Unit,
@@ -485,6 +487,29 @@ fun HomeScreen(
                     modifier = Modifier
                         .weight(1f)
                         .clickable(enabled = count > 0) { pendingShare = PendingShare.Bulk(count) }
+                        .padding(vertical = 15.dp),
+                )
+                Box(
+                    modifier = Modifier
+                        .width(1.dp)
+                        .height(48.dp)
+                        .background(c.border),
+                )
+                // AI-10: cross-note chat needs at least 2 notes — a single note already has
+                // its own chat via the note detail screen.
+                Text(
+                    text = "Chat",
+                    color = if (count >= 2) c.amber else c.dim.copy(alpha = 0.5f),
+                    fontSize = 14.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable(enabled = count >= 2) {
+                            val ids = selectedIds.orEmpty()
+                            viewModel.exitSelectionMode()
+                            onOpenCrossNoteChat(ids)
+                        }
                         .padding(vertical = 15.dp),
                 )
             }

@@ -3,6 +3,7 @@ package com.trailmix.app.ui.transcript
 import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,8 +31,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
@@ -39,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.trailmix.app.R
 import com.trailmix.app.data.export.ExportFormat
 import com.trailmix.app.data.model.TranscriptLine
 import com.trailmix.app.ui.components.BackTitleBar
@@ -58,6 +63,24 @@ fun TranscriptScreen(
     val c = TrailMix.colors
     val context = LocalContext.current
     var showFormatPicker by remember { mutableStateOf(false) }
+    // UX-22: which line (if any) is being hand-corrected, and its in-progress draft text.
+    var editingIndex by remember { mutableStateOf<Int?>(null) }
+    var editDraft by remember { mutableStateOf("") }
+
+    /**
+     * UX-23: the audio/video-free analog of a competitor "clip" — TrailMix never writes
+     * captured audio to disk, so a flagged moment can only ever be shared as text. Reuses the
+     * exact ACTION_SEND pattern [shareTranscript] already uses rather than inventing another.
+     */
+    fun shareExcerpt(line: TranscriptLine, noteTitle: String) {
+        val text = "\"${line.text}\"\n\n— ${line.label}, $noteTitle"
+        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, noteTitle)
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+        context.startActivity(Intent.createChooser(sendIntent, "Share moment"))
+    }
 
     fun shareTranscript(format: ExportFormat, lines: List<TranscriptLine>, title: String) {
         val text = if (format == ExportFormat.PLAIN_TEXT) {
@@ -127,6 +150,9 @@ fun TranscriptScreen(
             val highlightIndex = remember(lines, highlightLabel) {
                 highlightLabel?.let { label -> lines.indexOfFirst { it.label == label } }?.takeIf { it >= 0 }
             }
+            val flaggedIndices = remember(lines, note?.flaggedLabels) {
+                note?.flaggedLabels.orEmpty().mapNotNull { flagLineIndex(lines, it) }.toSet()
+            }
             // UX-19/UX-20: land the user on the moment their search actually matched,
             // not just somewhere in a possibly 90-minute transcript.
             LaunchedEffect(highlightIndex) {
@@ -144,26 +170,112 @@ fun TranscriptScreen(
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 itemsIndexed(lines) { index, line ->
-                    Text(
-                        text = buildAnnotatedString {
-                            withStyle(
-                                SpanStyle(color = c.text, fontWeight = FontWeight.Bold),
-                            ) { append(line.label) }
-                            append(" — ")
-                            append(line.text)
-                        },
-                        color = c.dim,
-                        fontSize = 14.sp,
-                        lineHeight = 23.8.sp, // 1.7
-                        modifier = if (index == highlightIndex) {
-                            Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(c.amberTint)
-                                .padding(6.dp)
+                    Row(verticalAlignment = Alignment.Top) {
+                        // CAP-24: a flag marks the line that was being said when the user
+                        // tapped — separate signal from the amber search-highlight below, so
+                        // the two can coexist on the same line without fighting each other.
+                        if (index in flaggedIndices) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_flag),
+                                contentDescription = "Share this flagged moment",
+                                tint = c.flag,
+                                modifier = Modifier
+                                    .padding(top = 3.dp, end = 6.dp)
+                                    .height(16.dp)
+                                    .clickable { note?.let { shareExcerpt(line, it.title) } },
+                            )
+                        }
+                        if (index == editingIndex) {
+                            // UX-22: correct an ASR mistake in place — styled exactly like
+                            // NoteDetailScreen's existing whole-note edit mode.
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row {
+                                    line.speakerLabel?.let { speaker ->
+                                        Text(
+                                            text = speaker,
+                                            color = c.amber,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 14.sp,
+                                            modifier = Modifier.padding(end = 6.dp),
+                                        )
+                                    }
+                                    Text(
+                                        text = line.label,
+                                        color = c.text,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                    )
+                                }
+                                BasicTextField(
+                                    value = editDraft,
+                                    onValueChange = { editDraft = it },
+                                    textStyle = TextStyle(color = c.text, fontSize = 14.sp, lineHeight = 23.8.sp),
+                                    cursorBrush = SolidColor(c.amber),
+                                    modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+                                )
+                                Row(
+                                    horizontalArrangement = Arrangement.End,
+                                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                ) {
+                                    Text(
+                                        text = "Cancel",
+                                        color = c.dim,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        modifier = Modifier.clickable { editingIndex = null }.padding(4.dp),
+                                    )
+                                    Text(
+                                        text = "Save",
+                                        color = c.amber,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier
+                                            .clickable {
+                                                viewModel.updateTranscriptLine(index, editDraft) {
+                                                    editingIndex = null
+                                                }
+                                            }
+                                            .padding(start = 12.dp, top = 4.dp, bottom = 4.dp, end = 4.dp),
+                                    )
+                                }
+                            }
                         } else {
-                            Modifier
-                        },
-                    )
+                            Text(
+                                text = buildAnnotatedString {
+                                    // AI-01 (Falcon path): the label was landing in the data
+                                    // model all session with nowhere to be seen — first real UI
+                                    // consumer, additive (blank when diarization was never run).
+                                    line.speakerLabel?.let { speaker ->
+                                        withStyle(
+                                            SpanStyle(color = c.amber, fontWeight = FontWeight.SemiBold),
+                                        ) { append(speaker) }
+                                        append("  ")
+                                    }
+                                    withStyle(
+                                        SpanStyle(color = c.text, fontWeight = FontWeight.Bold),
+                                    ) { append(line.label) }
+                                    append(" — ")
+                                    append(line.text)
+                                },
+                                color = c.dim,
+                                fontSize = 14.sp,
+                                lineHeight = 23.8.sp, // 1.7
+                                modifier = (
+                                    if (index == highlightIndex) {
+                                        Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(c.amberTint)
+                                            .padding(6.dp)
+                                    } else {
+                                        Modifier
+                                    }
+                                    ).clickable {
+                                    editingIndex = index
+                                    editDraft = line.text
+                                },
+                            )
+                        }
+                    }
                 }
             }
         }

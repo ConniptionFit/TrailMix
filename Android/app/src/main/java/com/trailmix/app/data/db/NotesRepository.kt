@@ -49,6 +49,7 @@ class NotesRepository @Inject constructor(
     private val noteDao: NoteDao,
     private val chatDao: ChatDao,
     private val exportSink: ExportSink,
+    private val conversationDao: ConversationDao,
 ) {
     fun observeNotes(): Flow<List<NoteEntity>> = noteDao.observeAll()
 
@@ -57,6 +58,23 @@ class NotesRepository @Inject constructor(
     suspend fun getNote(id: Long): NoteEntity? = noteDao.getById(id)
 
     fun observeChat(noteId: Long): Flow<List<ChatMessageEntity>> = chatDao.observeForNote(noteId)
+
+    /** Cross-note chat (AI-10): the live notes a multi-select chat was launched against. */
+    suspend fun getNotesByIds(ids: List<Long>): List<NoteEntity> = noteDao.getByIds(ids)
+
+    fun observeConversation(noteIdsKey: String): Flow<List<ConversationMessageEntity>> =
+        conversationDao.observeForNoteIds(noteIdsKey)
+
+    suspend fun addConversationMessage(noteIdsKey: String, role: String, text: String) {
+        conversationDao.insert(
+            ConversationMessageEntity(
+                noteIdsKey = noteIdsKey,
+                role = role,
+                text = text,
+                createdAtEpochMs = System.currentTimeMillis(),
+            ),
+        )
+    }
 
     suspend fun saveMergedNote(
         title: String,
@@ -71,6 +89,7 @@ class NotesRepository @Inject constructor(
         attendees: List<String> = emptyList(),
         structuredSummary: StructuredSummary? = null,
         template: String? = null,
+        flags: List<String> = emptyList(),
     ): Long {
         val id = noteDao.insert(
             NoteEntity(
@@ -87,6 +106,7 @@ class NotesRepository @Inject constructor(
                 attendeesJson = attendees.takeIf { it.isNotEmpty() }?.let { StringListJson.encode(it) },
                 summaryJson = structuredSummary?.let { StructuredSummaryJson.encode(it) },
                 template = template,
+                flaggedLabelsJson = flags.takeIf { it.isNotEmpty() }?.let { StringListJson.encode(it) },
             ),
         )
         // REL-14: was `getById(id)!!`. Room hands back the row it just inserted in every
@@ -117,6 +137,7 @@ class NotesRepository @Inject constructor(
         attendees: List<String> = emptyList(),
         structuredSummary: StructuredSummary? = null,
         template: String? = null,
+        flags: List<String> = emptyList(),
     ) {
         val existing = noteDao.getById(id) ?: return
         val updated = existing.copy(
@@ -140,6 +161,11 @@ class NotesRepository @Inject constructor(
                 ?: existing.attendeesJson,
             summaryJson = structuredSummary?.let { StructuredSummaryJson.encode(it) },
             template = template ?: existing.template,
+            // CAP-24: a resume's freshly-flagged moments replace the prior set, same "new
+            // merge replaces old value" rule as transcript/segments — flags from before a
+            // resume are still in the transcript's time range and were already offered once.
+            flaggedLabelsJson = flags.takeIf { it.isNotEmpty() }?.let { StringListJson.encode(it) }
+                ?: existing.flaggedLabelsJson,
         )
         noteDao.update(updated)
         exportIfConfigured(updated)
@@ -152,6 +178,25 @@ class NotesRepository @Inject constructor(
             title = title.ifBlank { existing.title },
             bodyOverride = body,
         )
+        noteDao.update(updated)
+        exportIfConfigured(updated)
+    }
+
+    /**
+     * UX-22: correct one ASR mistake in a saved transcript, in place — the same "fetch,
+     * decode, mutate, re-encode, update, re-export" shape as [updateNoteContent], scoped to a
+     * single line instead of the whole body. Out-of-range [lineIndex] is a no-op rather than
+     * throwing: the transcript can't have changed shape under the UI between it rendering a
+     * row and the user saving an edit to it, but failing soft costs nothing if it ever did.
+     */
+    suspend fun updateTranscriptLine(id: Long, lineIndex: Int, newText: String) {
+        val existing = noteDao.getById(id) ?: return
+        val lines = existing.transcript
+        if (lineIndex !in lines.indices) return
+        val updatedLines = lines.toMutableList().apply {
+            this[lineIndex] = this[lineIndex].copy(text = newText)
+        }
+        val updated = existing.copy(transcriptJson = TranscriptJson.encode(updatedLines))
         noteDao.update(updated)
         exportIfConfigured(updated)
     }

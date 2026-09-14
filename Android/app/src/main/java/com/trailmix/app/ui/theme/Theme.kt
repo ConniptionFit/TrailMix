@@ -26,6 +26,11 @@ data class TrailMixColors(
     val recordingRed: Color,
     val amberTint: Color,
     val tealTint: Color,
+    /** CAP-24: flagged-moment marker/highlight — violet, distinct from amber/teal/recordingRed
+     * so a flag never reads as "typed", "spoken", or "recording". Not from the original design
+     * handoff (flags are a new feature); follows the same paired-tint convention regardless. */
+    val flag: Color,
+    val flagTint: Color,
     /** Fixed dark text used inside pale tint spans in both modes. */
     val spanText: Color,
     val isDark: Boolean,
@@ -42,6 +47,8 @@ val LightTrailMixColors = TrailMixColors(
     recordingRed = Color(0xFFC53637), // oklch(55% 0.18 25)
     amberTint = Color(0xFFFFE0C9),   // oklch(93% 0.05 55)
     tealTint = Color(0xFFCEEFF1),    // oklch(93% 0.035 200)
+    flag = Color(0xFF7C3AED),
+    flagTint = Color(0xFFE9DFFC),
     spanText = Color(0xFF1D1A15),    // oklch(22% 0.01 80)
     isDark = false,
 )

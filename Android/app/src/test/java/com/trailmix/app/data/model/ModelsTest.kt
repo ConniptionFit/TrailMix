@@ -26,6 +26,21 @@ class ModelsTest {
     }
 
     @Test
+    fun `transcript lines with a speaker label round-trip through JSON`() {
+        val lines = listOf(TranscriptLine("0:12", "Let's ship it.", speakerLabel = "Speaker 1"))
+        assertEquals(lines, TranscriptJson.decode(TranscriptJson.encode(lines)))
+    }
+
+    @Test
+    fun `transcript JSON saved before AI-01 decodes with a null speaker label`() {
+        val preAi01Json = """[{"l":"0:12","t":"Budget's approved."}]"""
+        assertEquals(
+            listOf(TranscriptLine("0:12", "Budget's approved.", speakerLabel = null)),
+            TranscriptJson.decode(preAi01Json),
+        )
+    }
+
+    @Test
     fun `decode of malformed JSON returns empty rather than crashing`() {
         assertTrue(SegmentsJson.decode("not json").isEmpty())
         assertTrue(TranscriptJson.decode("{\"broken\":").isEmpty())

@@ -98,6 +98,14 @@ class NoteDetailViewModel @Inject constructor(
         }
     }
 
+    /** UX-22: correct one transcript line in place, re-exporting so the file on disk picks it up. */
+    fun updateTranscriptLine(lineIndex: Int, newText: String, onDone: () -> Unit) {
+        viewModelScope.launch {
+            notesRepository.updateTranscriptLine(noteId, lineIndex, newText)
+            onDone()
+        }
+    }
+
     /** UX-04: move a structured-summary topic section up/down; persists + re-exports. */
     fun moveSummarySection(from: Int, to: Int) {
         viewModelScope.launch {

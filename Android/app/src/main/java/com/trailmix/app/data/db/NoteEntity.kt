@@ -80,12 +80,20 @@ data class NoteEntity(
      * been exported with at least one photo attached.
      */
     val exportedPhotoUrisJson: String? = null,
+    /**
+     * CAP-24 (v1.20.0): JSON-encoded `List<String>` of `mm:ss` labels the user flagged during
+     * capture — jump points into this note's transcript, not a separate value object, so no
+     * migration is needed if flags ever grow more fields (they'd move to their own JSON shape
+     * without touching this column's meaning). Null/empty = no flags on this note.
+     */
+    val flaggedLabelsJson: String? = null,
 ) {
     val segments: List<NoteSegment> get() = SegmentsJson.decode(segmentsJson)
     val transcript: List<TranscriptLine> get() = TranscriptJson.decode(transcriptJson)
     val attendees: List<String> get() = StringListJson.decode(attendeesJson)
     val structuredSummary: StructuredSummary? get() = StructuredSummaryJson.decode(summaryJson)
     val exportedPhotoUris: List<String> get() = StringListJson.decode(exportedPhotoUrisJson)
+    val flaggedLabels: List<String> get() = StringListJson.decode(flaggedLabelsJson)
 
     /** The text shown as the note body: the hand-edited override if present, else the merged segments. */
     val displayBody: String
@@ -110,3 +118,41 @@ data class ChatMessageEntity(
      */
     val recipeName: String? = null,
 )
+
+/**
+ * Cross-note chat (AI-10): a conversation isn't keyed by its own allocated id — like single-note
+ * chat is keyed directly by `noteId`, not a separate "chat session" concept — it's keyed by
+ * [noteIdsKey], a canonical (sorted, deduped, comma-joined) encoding of the note set being
+ * discussed (see [ConversationKey]). Selecting the same set of notes again resumes the same
+ * conversation, mirroring how reopening one note's chat resumes its history.
+ */
+@Entity(tableName = "conversation_messages")
+data class ConversationMessageEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val noteIdsKey: String,
+    val role: String, // "user" | "assistant"
+    val text: String,
+    val createdAtEpochMs: Long,
+)
+
+/**
+ * Speaker recognition (Eagle path): one enrolled voiceprint, opaque outside the SDK boundary —
+ * [profileBytes] is exactly `EagleProfile.getBytes()`, reconstructed via `EagleProfile(ByteArray)`
+ * only where actually needed (never held open here — `EagleProfile` owns a native handle that
+ * must be `delete()`d, so this row stores inert bytes, not a live SDK object).
+ */
+@Entity(tableName = "speaker_profiles")
+data class SpeakerProfileEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val profileBytes: ByteArray,
+    val createdAtEpochMs: Long,
+) {
+    // ByteArray gives the compiler-generated equals/hashCode reference identity, not content
+    // equality — override so two loads of the same row compare equal by id, not by array ref.
+    override fun equals(other: Any?): Boolean =
+        other is SpeakerProfileEntity && id == other.id && name == other.name &&
+            createdAtEpochMs == other.createdAtEpochMs && profileBytes.contentEquals(other.profileBytes)
+
+    override fun hashCode(): Int = id.hashCode()
+}
