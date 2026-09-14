@@ -21,8 +21,8 @@ android {
         applicationId = "com.trailmix.app"
         minSdk = 31
         targetSdk = 35
-        versionCode = 22
-        versionName = "1.19.0"
+        versionCode = 23
+        versionName = "1.20.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // sherpa-onnx's AAR bundles all 4 ABIs (~50MB uncompressed: ONNX Runtime + its own
