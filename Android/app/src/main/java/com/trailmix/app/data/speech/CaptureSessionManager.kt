@@ -331,7 +331,7 @@ class CaptureSessionManager @Inject constructor(
                 // Ordinary teardown — stopCapture()/pause() cancel this job, and endAndMerge
                 // joins it. Swallowing this would break that handshake.
                 throw e
-            } catch (e: Exception) {
+            } catch (e: AudioUnavailableException) {
                 // REL-11: a capture that cannot listen is still a capture the user can type
                 // into and save. Say so plainly and keep the session alive rather than
                 // crashing or sitting on "Listening…" forever while nothing arrives.
@@ -339,6 +339,18 @@ class CaptureSessionManager @Inject constructor(
                 _state.value = _state.value.copy(
                     speechAvailable = false,
                     captureError = MIC_UNAVAILABLE,
+                    livePartial = "",
+                )
+            } catch (e: Exception) {
+                // CAP-19: everything past engine.begin() succeeding runs through the ASR
+                // recognizer (ML Kit/AICore), not the mic — a failure here (AICore gone away,
+                // a transient IPC error) is a different fault than REL-11's mic-contention
+                // case above, and telling the user "the microphone is busy" when the mic is
+                // fine is the same class of lie CAP-17 found in the LEGACY lane's own message.
+                Log.w(TAG, "capture listen session failed", e)
+                _state.value = _state.value.copy(
+                    speechAvailable = false,
+                    captureError = RECOGNIZER_UNAVAILABLE,
                     livePartial = "",
                 )
             }
@@ -1093,6 +1105,11 @@ class CaptureSessionManager @Inject constructor(
          */
         const val MIC_UNAVAILABLE =
             "Couldn't start the microphone — another app or a call may be using it. " +
+                "Typed notes still save."
+
+        /** CAP-19: distinct from [MIC_UNAVAILABLE] — the mic started fine, the recognizer died. */
+        const val RECOGNIZER_UNAVAILABLE =
+            "Speech recognition stopped unexpectedly — the microphone is fine. " +
                 "Typed notes still save."
 
         const val SILENCE_PEAK = 64

@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -357,7 +358,20 @@ fun HomeScreen(
             // sessions it holds — a flat list gives no sense that three notes are today's
             // conference track versus three unrelated notes from three weeks.
             val listItems = remember(notes) { groupByConferenceDay(notes) }
-            LazyColumn(modifier = Modifier.weight(1f)) {
+            val listState = rememberLazyListState()
+            // UX-21: LazyColumn anchors scroll to the previously-first visible item by key, so
+            // a newly inserted (newer) note lands *above* that anchor and renders just off the
+            // top of the viewport — it reads exactly like a missing note. Only correct this
+            // when the user was already at/near the top (index <= 1: the previously-first item
+            // shifting to index 1 is exactly the symptom), so this never yanks the list out
+            // from under someone deliberately scrolled down further to browse.
+            val newestNoteId = notes.firstOrNull()?.note?.id
+            LaunchedEffect(newestNoteId) {
+                if (newestNoteId != null && listState.firstVisibleItemIndex <= 1) {
+                    listState.animateScrollToItem(0)
+                }
+            }
+            LazyColumn(state = listState, modifier = Modifier.weight(1f)) {
                 if (notes.isEmpty()) {
                     item {
                         Text(

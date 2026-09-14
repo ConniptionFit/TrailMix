@@ -8,7 +8,7 @@ import androidx.room.RoomDatabase
         NoteEntity::class, ChatMessageEntity::class, SpeakerProfileEntity::class,
         ConversationMessageEntity::class,
     ],
-    version = 13,
+    version = 14,
     exportSchema = true,
 )
 abstract class TrailMixDatabase : RoomDatabase() {

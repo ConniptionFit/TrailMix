@@ -90,6 +90,12 @@ class MlKitTranscriber @Inject constructor(
         } finally {
             runCatching { client.stopRecognition() }
             runCatching { client.close() }
+            // CAP-18: nobody else owns this fd on the graceful (non-abandon) path — the
+            // caller (AudioPipeline.release()) only closes readSide itself when tearing
+            // down early. runCatching matches that same call's guard, since a ParcelFileDescriptor
+            // close is expected to be safe to call more than once but ML Kit's own handling
+            // of the fd it was handed is not this class's contract to assume.
+            runCatching { pfd.close() }
         }
     }
 

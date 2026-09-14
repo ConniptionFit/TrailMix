@@ -1,6 +1,7 @@
 package com.trailmix.app.data.db
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.trailmix.app.data.model.NoteSegment
 import com.trailmix.app.data.model.SegmentsJson
@@ -10,7 +11,9 @@ import com.trailmix.app.data.model.StructuredSummaryJson
 import com.trailmix.app.data.model.TranscriptJson
 import com.trailmix.app.data.model.TranscriptLine
 
-@Entity(tableName = "notes")
+// REL-18 (v1.20.0-dev): every Home query filters on this column (soft-delete visibility) —
+// unindexed, it was a full table scan on every one of them.
+@Entity(tableName = "notes", indices = [Index("deletedAtEpochMs")])
 data class NoteEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val title: String,
@@ -103,7 +106,9 @@ data class NoteEntity(
         get() = displayBody.replace('\n', ' ').take(120)
 }
 
-@Entity(tableName = "chat_messages")
+// REL-18 (v1.20.0-dev): observeForNote/getRecipeOutputs/deleteForNote all full-scan this table
+// filtering on noteId — unindexed, since it's an FK column Room does not index by default.
+@Entity(tableName = "chat_messages", indices = [Index("noteId")])
 data class ChatMessageEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val noteId: Long,
