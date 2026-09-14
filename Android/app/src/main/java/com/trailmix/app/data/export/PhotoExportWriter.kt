@@ -18,22 +18,19 @@ object PhotoExportWriter {
      * Best-effort: each photo either copies or is silently skipped (a revoked permission, a
      * since-deleted photo, a SAF failure) — one bad photo must never fail the whole export,
      * which is why this returns only the successes rather than throwing.
+     *
+     * INT-05: takes the already-resolved note [folder] rather than re-resolving it from a
+     * tree URI + name — see [MarkdownExportWriter.writeIntoFolder]'s doc for why.
      */
     fun copyInto(
         context: Context,
-        treeUri: Uri,
-        folderName: String,
+        folder: DocumentFile,
         photoUriStrings: List<String>,
     ): List<ExportedPhoto> {
         if (photoUriStrings.isEmpty()) return emptyList()
-        val tree = runCatching { DocumentFile.fromTreeUri(context, treeUri) }.getOrNull()
-            ?: return emptyList()
-        val noteFolder = runCatching {
-            tree.findFile(folderName)?.takeIf { it.isDirectory } ?: tree.createDirectory(folderName)
-        }.getOrNull() ?: return emptyList()
         val photosFolder = runCatching {
-            noteFolder.findFile(PHOTOS_SUBFOLDER)?.takeIf { it.isDirectory }
-                ?: noteFolder.createDirectory(PHOTOS_SUBFOLDER)
+            folder.findFile(PHOTOS_SUBFOLDER)?.takeIf { it.isDirectory }
+                ?: folder.createDirectory(PHOTOS_SUBFOLDER)
         }.getOrNull() ?: return emptyList()
 
         return photoUriStrings.mapNotNull { uriString -> copyOne(context, photosFolder, uriString) }

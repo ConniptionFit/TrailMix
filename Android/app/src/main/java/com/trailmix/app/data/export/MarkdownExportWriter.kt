@@ -14,24 +14,25 @@ import androidx.documentfile.provider.DocumentFile
 object MarkdownExportWriter {
 
     /**
-     * Writes [markdown] into [folderName] under [treeUri]. Reuses the file at
+     * Writes [markdown] into the already-resolved [folder]. Reuses the file at
      * [existingFileUri] in place (update, not a new file) if that URI still resolves and
      * exists; otherwise finds-or-creates by [fileName]. Returns the file's `content://` URI
      * on success, or null on any SAF failure (missing permission, revoked grant, provider
      * error, tree gone) — callers must treat every export as best-effort.
+     *
+     * INT-05: this used to take `treeUri`/`folderName` and resolve the folder itself via
+     * `tree.findFile(folderName)`, which enumerates every child of the tree root — a full SAF
+     * directory listing on every single call. [NoteExporter] now resolves and caches the
+     * folder once per export (or reuses last export's), so a note+transcript export issues
+     * one listing total instead of one per file.
      */
     fun writeIntoFolder(
         context: Context,
-        treeUri: Uri,
-        folderName: String,
+        folder: DocumentFile,
         fileName: String,
         markdown: String,
         existingFileUri: String?,
     ): Uri? = runCatching {
-        val tree = DocumentFile.fromTreeUri(context, treeUri) ?: return@runCatching null
-        val folder = tree.findFile(folderName)?.takeIf { it.isDirectory }
-            ?: tree.createDirectory(folderName)
-            ?: return@runCatching null
         write(context, folder, fileName, markdown, existingFileUri)
     }.getOrNull()
 
