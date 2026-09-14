@@ -13,6 +13,7 @@ import android.media.projection.MediaProjection
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import java.io.OutputStream
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 
 /**
@@ -85,13 +86,13 @@ class AudioPipeline {
      * -1 when the lane isn't attached. Lets the UI tell the user when the
      * playing app is delivering silence (opted out of capture / voice call).
      */
-    @Volatile private var playbackPeak = -1
+    // CAP-20: was a @Volatile Int with a separate read-then-write reset — @Volatile only
+    // guarantees visibility, not atomicity, so a pump-thread bump landing between this call's
+    // read and its write-back-to-zero was silently clobbered a tick early. AtomicInteger makes
+    // both the "bump to the new peak" and "read and reset" operations genuinely indivisible.
+    private val playbackPeak = AtomicInteger(-1)
 
-    fun readAndResetPlaybackPeak(): Int {
-        val v = playbackPeak
-        if (v >= 0) playbackPeak = 0
-        return v
-    }
+    fun readAndResetPlaybackPeak(): Int = playbackPeak.getAndUpdate { v -> if (v >= 0) 0 else v }
 
     /**
      * Starts the mic pump and returns the read end of the PCM pipe.
@@ -271,7 +272,7 @@ class AudioPipeline {
             record.release()
             return false
         }
-        playbackPeak = 0
+        playbackPeak.set(0)
         playbackThread = thread(name = "trailmix-playback-pump") {
             // 100 ms of 48 kHz stereo per read.
             val raw = ShortArray(Pcm.PLAYBACK_SAMPLE_RATE / 10 * 2)
@@ -286,8 +287,14 @@ class AudioPipeline {
                     val mono = Pcm.downmixStereoToMono(raw, n)
                     val at16k = Pcm.decimate3(mono, mono.size)
                     val peak = Pcm.peak(at16k, at16k.size)
-                    if (peak > playbackPeak) playbackPeak = peak
-                    playbackRing.push(at16k, at16k.size)
+                    playbackPeak.getAndUpdate { v -> maxOf(v, peak) }
+                    // CAP-20: push's false return (ring full, chunk dropped) went unchecked —
+                    // device-audio dropout was silently invisible. This is real signal loss
+                    // (unlike low peak, which can legitimately mean the captured app is quiet),
+                    // so it's worth its own log line rather than folding into the silence hint.
+                    if (!playbackRing.push(at16k, at16k.size)) {
+                        Log.w(TAG, "device-audio ring buffer full, dropped a chunk")
+                    }
                 }
             } catch (e: Exception) {
                 if (running) Log.w(TAG, "playback pump ended: $e")
@@ -302,9 +309,17 @@ class AudioPipeline {
     /** Detach the device-audio lane; the mic lane keeps running. */
     fun detachPlayback() {
         val record = playbackRecord ?: return
+        val thread = playbackThread
         playbackRecord = null
-        playbackPeak = -1
+        playbackPeak.set(-1)
         runCatching { record.stop() } // pump thread sees the swap and releases
+        // CAP-20: nulling playbackThread here without waiting for it meant a fast
+        // detach-then-reattach could start a second pump before this one noticed
+        // `playbackRecord !== record` and exited — both threads pushing into the same
+        // playbackRing at once. The pump still owns releasing its own record in its own
+        // finally regardless of whether this join times out (REL-12's rule); this join only
+        // closes the reattach race, it isn't what makes cleanup happen.
+        runCatching { thread?.join(PUMP_JOIN_MS) }
         playbackThread = null
     }
 

@@ -257,7 +257,27 @@ class CaptureSessionManager @Inject constructor(
      * one error boundary — previously any throw in here (most plausibly the mic being busy)
      * escaped an unguarded `launch` and killed the process.
      */
+    /**
+     * REL-16: [engine].endInput()/detachDeviceAudio() each join a pump thread (up to
+     * `PUMP_JOIN_MS`) to make sure the mic/device-audio hardware is genuinely free before a
+     * caller might try to start a new pipeline. [pause]/[cancel]/[disableDeviceAudio] are
+     * plain functions called directly from Compose callbacks and from `CaptureService`'s
+     * notification action — both the main thread — so that join must never run inline there.
+     * Routing it through here instead moves the wait onto [scope]; the one place that must
+     * not race ahead of it, [runListenSession] (every path that can call `engine.begin()`),
+     * awaits this job first rather than the caller of [pause]/[cancel] blocking on it.
+     */
+    private var pendingAudioTeardown: Job? = null
+
+    private fun launchAudioTeardown() {
+        pendingAudioTeardown = scope.launch {
+            engine.endInput()
+            engine.detachDeviceAudio()
+        }
+    }
+
     private suspend fun runListenSession(applyPriorResume: Boolean) {
+        pendingAudioTeardown?.join()
         if (applyPriorResume && resumeNoteId > 0) applyResume()
         detectMeetingContext()
         // AI-01: set up (or confirm the absence of) audio retention exactly once per session,
@@ -400,8 +420,7 @@ class CaptureSessionManager @Inject constructor(
         tickerJob?.cancel()
         tickerJob = null
         disarmBumpTimer()
-        engine.endInput()
-        engine.detachDeviceAudio()
+        launchAudioTeardown()
         silentSeconds = 0
         _state.value = _state.value.copy(
             recording = false,
@@ -514,7 +533,11 @@ class CaptureSessionManager @Inject constructor(
     }
 
     fun disableDeviceAudio() {
-        engine.detachDeviceAudio()
+        // REL-16: called directly from a Compose toggle, the main thread — see
+        // launchAudioTeardown's doc. detachDeviceAudio() alone (no endInput()) is deliberate
+        // here too, matching this function's pre-existing scope: only the device-audio lane,
+        // not the mic.
+        pendingAudioTeardown = scope.launch { engine.detachDeviceAudio() }
         silentSeconds = 0
         _state.value = _state.value.copy(deviceAudioActive = false, deviceAudioSilent = false)
     }
@@ -699,7 +722,11 @@ class CaptureSessionManager @Inject constructor(
     }
 
     fun cancel() {
-        engine.endInput()
+        // REL-16: endInput() used to be called here directly, redundantly with stopCapture()'s
+        // own call just below (harmless — endInput() is idempotent — but both used to block
+        // synchronously on the main thread; stopCapture() now routes through
+        // launchAudioTeardown(), so this standalone call is both unnecessary and would have
+        // been the one synchronous blocking call left in this function).
         stopCapture()
         // REL-09: an explicit discard is the user saying they don't want this capture. That
         // is the one case where the journal should go without being offered back to them.
@@ -768,8 +795,9 @@ class CaptureSessionManager @Inject constructor(
         // finishes stopRecognition()/close(), an IPC round trip into AICore. Until then the
         // AudioRecord is still open and the privacy indicator still lit, after the user has
         // already stopped. endInput() is idempotent, so the paths that already call it first
-        // (cancel, the merge) are unaffected.
-        engine.endInput()
+        // (the merge) are unaffected. REL-16: routed through launchAudioTeardown() rather than
+        // called inline — this function is also reached from cancel(), directly off a Compose
+        // callback on the main thread.
         tickerJob?.cancel()
         tickerJob = null
         // REL-09: one last flush before the periodic writer stops, so the journal's duration
@@ -782,7 +810,7 @@ class CaptureSessionManager @Inject constructor(
         rollingSummaryJob?.cancel()
         rollingSummaryJob = null
         disarmBumpTimer()
-        engine.detachDeviceAudio()
+        launchAudioTeardown()
         if (handOffToMerge) CaptureService.merge(appContext) else CaptureService.stop(appContext)
         silentSeconds = 0
         _state.value = _state.value.copy(
