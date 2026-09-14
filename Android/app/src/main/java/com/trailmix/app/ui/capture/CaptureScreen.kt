@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.Box
@@ -441,173 +442,186 @@ fun CaptureScreen(
             )
         }
 
-        // Live transcript card — tap to expand into the recent transcript
-        val liveLines by viewModel.liveLines.collectAsStateWithLifecycle()
+        // UX-25: the transcript/summary/notes stack scrolls as one unit. The "so far"
+        // card and live transcript have no bound on how tall they grow over a long
+        // capture, and this section used to sit in the same non-scrolling Column as the
+        // template chips and End & Merge button below it — past several minutes those
+        // got pushed off the bottom of the screen with no way to reach them, including
+        // no way to end the capture at all. weight(1f) + verticalScroll keeps the header
+        // above and the chips/End & Merge button below always on-screen, however long
+        // the session runs.
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 14.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(c.card)
-                .clickable { transcriptExpanded = !transcriptExpanded }
-                .animateContentSize()
-                .padding(horizontal = 14.dp, vertical = 12.dp),
+                .weight(1f)
+                .verticalScroll(rememberScrollState()),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = "LIVE TRANSCRIPT",
-                    color = c.dim,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    letterSpacing = 0.4.sp,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    text = if (transcriptExpanded) "collapse" else "tap to expand",
-                    color = c.dim,
-                    fontSize = 10.sp,
-                )
-            }
-            if (transcriptExpanded) {
-                val listState = rememberLazyListState()
-                LaunchedEffect(liveLines.size, state.livePartial) {
-                    val last = liveLines.size + (if (state.livePartial.isNotBlank()) 1 else 0) - 1
-                    if (last >= 0) listState.animateScrollToItem(last)
-                }
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(240.dp)
-                        .padding(top = 8.dp),
-                ) {
-                    if (liveLines.isEmpty() && state.livePartial.isBlank()) {
-                        item {
-                            Text(
-                                text = "Nothing transcribed yet.",
-                                color = c.dim,
-                                fontSize = 13.sp,
-                            )
-                        }
-                    }
-                    items(liveLines.size) { i ->
-                        val line = liveLines[i]
-                        Row(modifier = Modifier.padding(bottom = 8.dp)) {
-                            Text(
-                                text = line.label,
-                                color = c.teal,
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Medium,
-                                modifier = Modifier.padding(end = 8.dp, top = 1.dp),
-                            )
-                            Text(
-                                text = line.text,
-                                color = c.text,
-                                fontSize = 13.5.sp,
-                                lineHeight = 19.sp,
-                            )
-                        }
-                    }
-                    if (state.livePartial.isNotBlank()) {
-                        item {
-                            Text(
-                                text = "…${state.livePartial}",
-                                color = c.dim,
-                                fontSize = 13.5.sp,
-                                lineHeight = 19.sp,
-                            )
-                        }
-                    }
-                }
-            } else {
-                // Bound to a local: `state` is a delegated property, so it can't smart-cast.
-                val captureError = state.captureError
-                val liveLine = when {
-                    // REL-11: a situational failure (mic held by a call or another app) is
-                    // reported as itself. It is checked first because the generic
-                    // "not available on this device" below would be actively misleading —
-                    // the device is fine, and retrying in a minute will work.
-                    captureError != null -> captureError
-                    !state.speechAvailable ->
-                        "On-device speech recognition isn't available on this device."
-                    state.livePartial.isNotBlank() -> "“…${state.livePartial}”"
-                    state.lastFinalLine.isNotBlank() -> "“…${state.lastFinalLine}”"
-                    else -> "Listening…"
-                }
-                Text(
-                    text = liveLine,
-                    color = c.dim,
-                    fontSize = 13.sp,
-                    modifier = Modifier.padding(top = 6.dp),
-                    maxLines = 2,
-                )
-            }
-            if (state.deviceAudioActive && state.deviceAudioSilent) {
-                Text(
-                    text = "No device audio detected — the playing app may not allow " +
-                        "capture (calls never do). The mic is still listening.",
-                    color = c.amber,
-                    fontSize = 11.5.sp,
-                    lineHeight = 15.sp,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
-            }
-        }
-
-        // AI-11: the periodically-refreshed "so far" condensation — absent until the first
-        // pass finishes, and never shown as an empty/loading card in the meantime, since most
-        // short captures will end before it ever has anything to say.
-        rollingSummary?.let { summary ->
+            // Live transcript card — tap to expand into the recent transcript
+            val liveLines by viewModel.liveLines.collectAsStateWithLifecycle()
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 10.dp)
+                    .padding(top = 14.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .background(c.card)
+                    .clickable { transcriptExpanded = !transcriptExpanded }
+                    .animateContentSize()
                     .padding(horizontal = 14.dp, vertical = 12.dp),
             ) {
-                Text(
-                    text = "SO FAR",
-                    color = c.dim,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    letterSpacing = 0.4.sp,
-                )
-                Text(
-                    text = summary,
-                    color = c.text,
-                    fontSize = 13.sp,
-                    lineHeight = 19.sp,
-                    modifier = Modifier.padding(top = 6.dp),
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "LIVE TRANSCRIPT",
+                        color = c.dim,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 0.4.sp,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = if (transcriptExpanded) "collapse" else "tap to expand",
+                        color = c.dim,
+                        fontSize = 10.sp,
+                    )
+                }
+                if (transcriptExpanded) {
+                    val listState = rememberLazyListState()
+                    LaunchedEffect(liveLines.size, state.livePartial) {
+                        val last = liveLines.size + (if (state.livePartial.isNotBlank()) 1 else 0) - 1
+                        if (last >= 0) listState.animateScrollToItem(last)
+                    }
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(240.dp)
+                            .padding(top = 8.dp),
+                    ) {
+                        if (liveLines.isEmpty() && state.livePartial.isBlank()) {
+                            item {
+                                Text(
+                                    text = "Nothing transcribed yet.",
+                                    color = c.dim,
+                                    fontSize = 13.sp,
+                                )
+                            }
+                        }
+                        items(liveLines.size) { i ->
+                            val line = liveLines[i]
+                            Row(modifier = Modifier.padding(bottom = 8.dp)) {
+                                Text(
+                                    text = line.label,
+                                    color = c.teal,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.padding(end = 8.dp, top = 1.dp),
+                                )
+                                Text(
+                                    text = line.text,
+                                    color = c.text,
+                                    fontSize = 13.5.sp,
+                                    lineHeight = 19.sp,
+                                )
+                            }
+                        }
+                        if (state.livePartial.isNotBlank()) {
+                            item {
+                                Text(
+                                    text = "…${state.livePartial}",
+                                    color = c.dim,
+                                    fontSize = 13.5.sp,
+                                    lineHeight = 19.sp,
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    // Bound to a local: `state` is a delegated property, so it can't smart-cast.
+                    val captureError = state.captureError
+                    val liveLine = when {
+                        // REL-11: a situational failure (mic held by a call or another app) is
+                        // reported as itself. It is checked first because the generic
+                        // "not available on this device" below would be actively misleading —
+                        // the device is fine, and retrying in a minute will work.
+                        captureError != null -> captureError
+                        !state.speechAvailable ->
+                            "On-device speech recognition isn't available on this device."
+                        state.livePartial.isNotBlank() -> "“…${state.livePartial}”"
+                        state.lastFinalLine.isNotBlank() -> "“…${state.lastFinalLine}”"
+                        else -> "Listening…"
+                    }
+                    Text(
+                        text = liveLine,
+                        color = c.dim,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(top = 6.dp),
+                        maxLines = 2,
+                    )
+                }
+                if (state.deviceAudioActive && state.deviceAudioSilent) {
+                    Text(
+                        text = "No device audio detected — the playing app may not allow " +
+                            "capture (calls never do). The mic is still listening.",
+                        color = c.amber,
+                        fontSize = 11.5.sp,
+                        lineHeight = 15.sp,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
             }
+
+            // AI-11: the periodically-refreshed "so far" condensation — absent until the first
+            // pass finishes, and never shown as an empty/loading card in the meantime, since most
+            // short captures will end before it ever has anything to say.
+            rollingSummary?.let { summary ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(c.card)
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                ) {
+                    Text(
+                        text = "SO FAR",
+                        color = c.dim,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 0.4.sp,
+                    )
+                    Text(
+                        text = summary,
+                        color = c.text,
+                        fontSize = 13.sp,
+                        lineHeight = 19.sp,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
+            }
+
+            Text(
+                text = "YOUR NOTES",
+                color = c.dim,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 0.4.sp,
+                modifier = Modifier.padding(top = 18.dp, bottom = 6.dp),
+            )
+
+            // Fragment textarea — plain editable text, 15sp, 1.7 line height
+            BasicTextField(
+                value = fragments,
+                onValueChange = { viewModel.fragments.value = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 120.dp),
+                textStyle = TextStyle(
+                    color = c.text,
+                    fontSize = 15.sp,
+                    lineHeight = 25.5.sp,
+                ),
+                cursorBrush = SolidColor(c.amber),
+                enabled = !state.merging,
+            )
         }
-
-        Text(
-            text = "YOUR NOTES",
-            color = c.dim,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.SemiBold,
-            letterSpacing = 0.4.sp,
-            modifier = Modifier.padding(top = 18.dp, bottom = 6.dp),
-        )
-
-        // Fragment textarea — plain editable text, 15sp, 1.7 line height
-        BasicTextField(
-            value = fragments,
-            onValueChange = { viewModel.fragments.value = it },
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .verticalScroll(rememberScrollState()),
-            textStyle = TextStyle(
-                color = c.text,
-                fontSize = 15.sp,
-                lineHeight = 25.5.sp,
-            ),
-            cursorBrush = SolidColor(c.amber),
-            enabled = !state.merging,
-        )
 
         // Summary template selector (UX-02) — steers the structured-summary prompt.
         // AI-03: chips list the built-ins plus the user's custom templates from Settings.
