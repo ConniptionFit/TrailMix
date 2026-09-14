@@ -305,6 +305,15 @@ class CaptureSessionManager @Inject constructor(
         // mid-capture edit in Settings applies from the next session, not retroactively.
         val vocabularyTerms = settingsRepository.vocabularyTerms.first()
         events.collect { event ->
+            // CAP-21: the LEGACY lane's one true dead-end (CAP-16 already retries every other
+            // error on a backoff) — reuse CAP-19's RECOGNIZER_UNAVAILABLE message rather than
+            // inventing a third one, since both mean exactly the same thing to the user: speech
+            // recognition stopped, the mic is fine, typed notes still work. Deliberately not
+            // `speechAvailable = false` — that flag means "no engine at all" (NONE), and this
+            // session still has one, it has just stopped producing anything.
+            if (event.recognizerDead) {
+                _state.value = _state.value.copy(captureError = RECOGNIZER_UNAVAILABLE)
+            }
             if (event.finalizedUtterance.isNotBlank()) {
                 val correctedText = VocabularyCorrection.apply(event.finalizedUtterance, vocabularyTerms)
                 val finalized = TranscriptLine(

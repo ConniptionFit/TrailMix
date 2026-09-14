@@ -27,6 +27,15 @@ data class SpeechEvent(
     val finalizedUtterance: String,
     /** The in-flight partial hypothesis. */
     val partialText: String,
+    /**
+     * CAP-21: true when this lane has permanently given up and will never emit again (e.g.
+     * [SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS]) — every *other* error already retries
+     * on a backoff (CAP-16), so this is specifically the dead-end case, not ordinary struggle.
+     * Previously silent: the session kept showing "Listening…" forever with nothing to show
+     * for it. Defaults false so [MlKitTranscriber]'s emits (which have no equivalent terminal
+     * state today) don't need to know this field exists.
+     */
+    val recognizerDead: Boolean = false,
 )
 
 /**
@@ -122,9 +131,14 @@ class OnDeviceSpeechRecognizer @Inject constructor(
                         }
 
                         // Nothing this app can do will ever fix these, so retrying only
-                        // burns battery. The session stays alive for typed notes.
+                        // burns battery. The session stays alive for typed notes. CAP-21:
+                        // this used to only log — the capture screen kept showing "Listening…"
+                        // with nothing ever going to arrive again.
                         SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS,
-                        -> Log.w(TAG, "recognizer permanently unavailable (error $error)")
+                        -> {
+                            Log.w(TAG, "recognizer permanently unavailable (error $error)")
+                            trySend(SpeechEvent("", "", recognizerDead = true))
+                        }
 
                         else -> restartAfterFailure(error)
                     }
