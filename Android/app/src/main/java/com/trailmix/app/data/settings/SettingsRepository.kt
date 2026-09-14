@@ -9,6 +9,8 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.trailmix.app.data.ai.Recipe
 import com.trailmix.app.data.ai.RecipesJson
+import com.trailmix.app.data.ai.VocabularyJson
+import com.trailmix.app.data.ai.VocabularyTerm
 import com.trailmix.app.data.export.ExportFormat
 import com.trailmix.app.data.model.CustomSummaryTemplate
 import com.trailmix.app.data.model.CustomTemplatesJson
@@ -39,10 +41,15 @@ class SettingsRepository @Inject constructor(
     private val customRecipesKey = stringPreferencesKey("custom_recipes")
     private val customTemplatesKey = stringPreferencesKey("custom_summary_templates")
     private val exportFormatKey = stringPreferencesKey("export_format")
+    private val vocabularyKey = stringPreferencesKey("vocabulary_terms")
+    private val speakerDiarizationEnabledKey = booleanPreferencesKey("speaker_diarization_enabled")
+    private val speakerRecognitionEnabledKey = booleanPreferencesKey("speaker_recognition_enabled")
 
     // Retired keys, deliberately no longer read or written:
     // - "name_variants" (CAL-04, v1.7.0)
     // - "drive_folder_uri" / "drive_folder_name" (INT-02, v1.7.0 — Google Drive sync removed)
+    // - "picovoice_access_key" (AI-01/AI-12, v1.20.0-dev, 2026-09-13 — Falcon and then Eagle
+    //   both removed in the sherpa-onnx migration; nothing left needs a Picovoice key at all)
 
     /** null = follow the system setting (design default). */
     val darkModeOverride: Flow<Boolean?> = context.dataStore.data.map { it[darkModeOverrideKey] }
@@ -146,6 +153,59 @@ class SettingsRepository @Inject constructor(
                 prefs[customTemplatesKey] = CustomTemplatesJson.encode(cleaned)
             }
         }
+    }
+
+    /**
+     * User-taught vocabulary corrections (AI-08) — same DataStore-list pattern as custom
+     * recipes/templates. Applied to each transcript line as it's finalized during capture
+     * ([com.trailmix.app.data.speech.CaptureSessionManager]), never retroactively to notes
+     * already saved, so editing the list can't silently rewrite an existing transcript.
+     */
+    val vocabularyTerms: Flow<List<VocabularyTerm>> =
+        context.dataStore.data.map { VocabularyJson.decode(it[vocabularyKey]) }
+
+    suspend fun setVocabularyTerms(terms: List<VocabularyTerm>) {
+        context.dataStore.edit { prefs ->
+            val cleaned = terms
+                .map { VocabularyTerm(it.wrong.trim(), it.correct.trim()) }
+                .filter { it.wrong.isNotBlank() && it.correct.isNotBlank() }
+                .distinctBy { it.wrong.lowercase() }
+            if (cleaned.isEmpty()) prefs.remove(vocabularyKey) else prefs[vocabularyKey] = VocabularyJson.encode(cleaned)
+        }
+    }
+
+    /**
+     * AI-01: off by default — turning this on is what makes
+     * [com.trailmix.app.data.speech.CaptureSessionManager] retain a session's raw audio in
+     * memory and, at merge time, run it through [com.trailmix.app.data.speech.SpeakerDiarizer]
+     * for on-device diarization. Needs no account or key of any kind — sherpa-onnx's bundled
+     * models since the 2026-09-13 migration, same as Falcon's own AAR-bundled model before it.
+     * See [[Security and Privacy]] for the full writeup of what this does and does not send
+     * anywhere.
+     */
+    val speakerDiarizationEnabled: Flow<Boolean> =
+        context.dataStore.data.map { it[speakerDiarizationEnabledKey] ?: false }
+
+    suspend fun setSpeakerDiarizationEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[speakerDiarizationEnabledKey] = enabled }
+    }
+
+    /**
+     * Speaker recognition (Eagle path): off by default, independent of [speakerDiarizationEnabled]
+     * — anonymous per-session diarization and persistent/live speaker recognition are separately
+     * useful capabilities, not a shared switch. Its Settings UI section is hidden as of Phase 3
+     * of the sherpa-onnx migration (2026-09-13, same session as the retired `picovoiceAccessKey`
+     * this used to share with diarization above) — Eagle itself is gone and enrollment was never
+     * built, so this currently has no consumer and no way for the user to even see the toggle.
+     * Left wired rather than also retired: it is already a plain, backend-agnostic boolean, and
+     * Phase 4 (AI-12, sherpa-onnx-based recognition) can bring the UI back onto this same key
+     * with no migration of its own.
+     */
+    val speakerRecognitionEnabled: Flow<Boolean> =
+        context.dataStore.data.map { it[speakerRecognitionEnabledKey] ?: false }
+
+    suspend fun setSpeakerRecognitionEnabled(enabled: Boolean) {
+        context.dataStore.edit { prefs -> prefs[speakerRecognitionEnabledKey] = enabled }
     }
 
     /**

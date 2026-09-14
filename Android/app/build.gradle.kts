@@ -24,6 +24,25 @@ android {
         versionCode = 22
         versionName = "1.19.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // sherpa-onnx's AAR bundles all 4 ABIs (~50MB uncompressed: ONNX Runtime + its own
+        // native libs, ×4). Real targets for this app are the Pixel 9 Pro (arm64-v8a) and the
+        // local emulator (x86_64) — armeabi-v7a/x86 are 32-bit and irrelevant to both, so
+        // filtering them out here roughly halves what actually ships.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
+    }
+
+    // sherpa-onnx's native loader mmaps these assets directly out of the APK rather than
+    // buffering through a decompressing read — real Pixel 9 Pro testing found this crashes
+    // the process with SIGABRT deep in libsherpa-onnx-jni.so's newFromAsset() when the asset
+    // is DEFLATE-compressed (Android's default for any extension not on its no-compress
+    // list), since there's then no contiguous byte range to map. Storing them uncompressed
+    // is the same fix TensorFlow Lite's own Android docs prescribe for the identical
+    // mmap-a-bundled-model pattern.
+    androidResources {
+        noCompress += listOf("onnx")
     }
 
     /**
@@ -126,6 +145,12 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.mlkit.genai.prompt)
     implementation(libs.mlkit.genai.speech)
+    // sherpa-onnx (AI-01/AI-12 migration spike): the real, officially pre-built Android AAR
+    // downloaded directly from the GitHub release, not a Maven Central/JitPack coordinate —
+    // k2-fsa doesn't publish to Maven Central, and this vendored-file approach avoids adding a
+    // dependency on JitPack's build service ever being up. Bumping to a newer sherpa-onnx
+    // release is: download its .aar, replace this file, update the version in its name/comment.
+    implementation(files("libs/sherpa-onnx-1.13.8.aar"))
     implementation(libs.androidx.documentfile)
     testImplementation(libs.junit)
     testImplementation(libs.org.json)

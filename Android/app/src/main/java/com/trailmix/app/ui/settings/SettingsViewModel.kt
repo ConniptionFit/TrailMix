@@ -6,6 +6,7 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.trailmix.app.data.ai.Recipe
+import com.trailmix.app.data.ai.VocabularyTerm
 import com.trailmix.app.data.db.NotesRepository
 import com.trailmix.app.data.export.ExportFormat
 import com.trailmix.app.data.model.CustomSummaryTemplate
@@ -60,6 +61,31 @@ class SettingsViewModel @Inject constructor(
 
     /** User-defined recipes (UX-06). */
     val customRecipes: StateFlow<List<Recipe>> = settingsRepository.customRecipes
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** AI-01: off by default — see [SettingsRepository.speakerDiarizationEnabled]. */
+    val speakerDiarizationEnabled: StateFlow<Boolean> = settingsRepository.speakerDiarizationEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    fun setSpeakerDiarizationEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setSpeakerDiarizationEnabled(enabled) }
+    }
+
+    /**
+     * Speaker recognition (Eagle path) — see [SettingsRepository.speakerRecognitionEnabled].
+     * Kept wired even though Phase 3 (2026-09-13) hid its Settings UI section and removed the
+     * Picovoice AccessKey it used to share with Speaker labels above: this is a plain,
+     * backend-agnostic boolean Phase 4 (AI-12, sherpa-onnx-based recognition) will reuse as-is.
+     */
+    val speakerRecognitionEnabled: StateFlow<Boolean> = settingsRepository.speakerRecognitionEnabled
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    fun setSpeakerRecognitionEnabled(enabled: Boolean) {
+        viewModelScope.launch { settingsRepository.setSpeakerRecognitionEnabled(enabled) }
+    }
+
+    /** User-taught vocabulary corrections (AI-08), applied to ASR output during capture. */
+    val vocabularyTerms: StateFlow<List<VocabularyTerm>> = settingsRepository.vocabularyTerms
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /**
@@ -258,6 +284,28 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             settingsRepository.setCustomRecipes(
                 settingsRepository.customRecipes.first().filterNot { it.name == name },
+            )
+        }
+    }
+
+    /** Create or update a vocabulary correction (AI-08) — [originalWrong] replaces the old
+     *  entry on rename; matching is case-insensitive, same as [SettingsRepository.setVocabularyTerms]. */
+    fun saveVocabularyTerm(wrong: String, correct: String, originalWrong: String? = null) {
+        val trimmedWrong = wrong.trim()
+        val trimmedCorrect = correct.trim()
+        if (trimmedWrong.isBlank() || trimmedCorrect.isBlank()) return
+        viewModelScope.launch {
+            val current = settingsRepository.vocabularyTerms.first().filterNot {
+                it.wrong.equals(originalWrong, ignoreCase = true) || it.wrong.equals(trimmedWrong, ignoreCase = true)
+            }
+            settingsRepository.setVocabularyTerms(current + VocabularyTerm(trimmedWrong, trimmedCorrect))
+        }
+    }
+
+    fun deleteVocabularyTerm(wrong: String) {
+        viewModelScope.launch {
+            settingsRepository.setVocabularyTerms(
+                settingsRepository.vocabularyTerms.first().filterNot { it.wrong.equals(wrong, ignoreCase = true) },
             )
         }
     }

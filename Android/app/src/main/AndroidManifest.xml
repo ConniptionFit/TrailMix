@@ -2,13 +2,20 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Local-only by construction: this app deliberately has NO INTERNET
-         permission. Audio is consumed in memory by the on-device recognizer
-         and never written to disk. -->
+    <!-- Local-only by construction, zero network permission (restored 2026-09-13, Phase 3 of
+         the sherpa-onnx migration): AI-01 speaker diarization ("Speaker labels") migrated off
+         Picovoice Falcon onto sherpa-onnx in Phase 1, and AI-12's Eagle ("Known speakers") —
+         the last consumer of the one disclosed INTERNET exception this app ever had — was
+         deleted outright in this phase, scaffolding and all, since it had no enrollment UI and
+         therefore no real caller yet. Both AccessKey-gated features are gone; nothing in this
+         app declares INTERNET anymore. See the plan at `i-have-a-github-prancy-lovelace.md` and
+         the Falcon/Eagle rows in this repo's CLAUDE.md, and [[Security and Privacy]] for the
+         full history. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <!-- The ML Kit GenAI client library declares these, but model downloads are
-         performed by the separate AICore system app, not this process. Strip
-         them so the OS enforces our local-only guarantee. -->
+    <!-- The ML Kit GenAI client library's manifest merges INTERNET/ACCESS_NETWORK_STATE back
+         in on its own — model downloads are performed by the separate AICore system app, not
+         this process, so neither is actually needed. Re-verify both strips with
+         `aapt2 dump permissions` after any dependency change, not just this one. -->
     <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" tools:node="remove" />
     <!-- Optional, requested at runtime only when the user taps the Home

@@ -7,6 +7,8 @@ import android.media.AudioFormat
 import android.media.AudioPlaybackCaptureConfiguration
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AutomaticGainControl
+import android.media.audiofx.NoiseSuppressor
 import android.media.projection.MediaProjection
 import android.os.ParcelFileDescriptor
 import android.util.Log
@@ -49,6 +51,22 @@ class AudioPipeline {
     private var micThread: Thread? = null
     private var playbackThread: Thread? = null
     private var writeSide: ParcelFileDescriptor? = null
+    private var noiseSuppressor: NoiseSuppressor? = null
+    private var gainControl: AutomaticGainControl? = null
+
+    /**
+     * AI-01: non-null only when the user has turned on speaker diarization — set by
+     * [CaptureSessionManager] before [start]. Every other consumer of this pipe reads and
+     * discards; this is the one exception that retains a copy, because whole-session
+     * diarization (a [SpeakerDiarizer] call) has no streaming API in either backend this app
+     * has used (Picovoice Falcon, then sherpa-onnx's `OfflineSpeakerDiarization`) — only a
+     * single whole-recording call.
+     */
+    @Volatile private var audioSink: AudioRetentionBuffer? = null
+
+    fun setAudioSink(sink: AudioRetentionBuffer?) {
+        audioSink = sink
+    }
 
     /**
      * REL-12: the read end of the PCM pipe, retained rather than handed away and forgotten.
@@ -129,6 +147,7 @@ class AudioPipeline {
             abandonPipe(readSide, out)
             throw AudioUnavailableException("microphone could not be started", e)
         }
+        attachAudioEffects(record.audioSessionId)
 
         micThread = thread(name = "trailmix-mic-pump") {
             val mic = ShortArray(chunkFrames)
@@ -143,6 +162,7 @@ class AudioPipeline {
                     }
                     val fromPlayback = playbackRing.pop(playback, n)
                     if (fromPlayback > 0) Pcm.mixInto(mic, playback, fromPlayback)
+                    audioSink?.append(mic, n)
                     out.write(Pcm.toLittleEndianBytes(mic, n))
                 }
             } catch (e: Exception) {
@@ -157,9 +177,39 @@ class AudioPipeline {
                 // times out precisely when the pump is wedged.
                 runCatching { record.stop() }
                 runCatching { record.release() }
+                releaseAudioEffects()
             }
         }
         return readSide
+    }
+
+    /**
+     * CAP-23: best-effort noise suppression + automatic gain ahead of the recognizer —
+     * Krisp's on-device-cleanup value prop, done with a platform [android.media.audiofx]
+     * effect instead of a new ML dependency. `isAvailable()` reports actual HAL/OEM
+     * support, not SDK level — either effect (or both) can be absent on a given device,
+     * and capture must work identically without them, so failure here is always silent.
+     */
+    private fun attachAudioEffects(sessionId: Int) {
+        if (NoiseSuppressor.isAvailable()) {
+            noiseSuppressor = runCatching { NoiseSuppressor.create(sessionId) }
+                .onFailure { Log.w(TAG, "NoiseSuppressor unavailable: $it") }
+                .getOrNull()
+                ?.apply { enabled = true }
+        }
+        if (AutomaticGainControl.isAvailable()) {
+            gainControl = runCatching { AutomaticGainControl.create(sessionId) }
+                .onFailure { Log.w(TAG, "AutomaticGainControl unavailable: $it") }
+                .getOrNull()
+                ?.apply { enabled = true }
+        }
+    }
+
+    private fun releaseAudioEffects() {
+        noiseSuppressor?.let { runCatching { it.release() } }
+        noiseSuppressor = null
+        gainControl?.let { runCatching { it.release() } }
+        gainControl = null
     }
 
     /**

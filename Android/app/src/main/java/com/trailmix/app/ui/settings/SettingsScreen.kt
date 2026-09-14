@@ -60,6 +60,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.trailmix.app.data.ai.DEFAULT_RECIPES
 import com.trailmix.app.data.ai.Recipe
+import com.trailmix.app.data.ai.VocabularyTerm
 import com.trailmix.app.data.export.ExportFormat
 import com.trailmix.app.data.model.CustomSummaryTemplate
 import com.trailmix.app.data.model.SummaryTemplate
@@ -85,6 +86,8 @@ fun SettingsScreen(
     val defaultTemplate by viewModel.defaultTemplate.collectAsStateWithLifecycle()
     val asrLocaleTag by viewModel.asrLocaleTag.collectAsStateWithLifecycle()
     val customRecipes by viewModel.customRecipes.collectAsStateWithLifecycle()
+    val vocabularyTerms by viewModel.vocabularyTerms.collectAsStateWithLifecycle()
+    val speakerDiarizationEnabled by viewModel.speakerDiarizationEnabled.collectAsStateWithLifecycle()
     val customTemplates by viewModel.customTemplates.collectAsStateWithLifecycle()
     val exportFormat by viewModel.exportFormat.collectAsStateWithLifecycle()
     val migrating by viewModel.migrating.collectAsStateWithLifecycle()
@@ -116,6 +119,10 @@ fun SettingsScreen(
     var viewingTemplate by remember { mutableStateOf<CustomSummaryTemplate?>(null) }
     var viewingTemplateIsCustom by remember { mutableStateOf(false) }
     var editingTemplate by remember { mutableStateOf<CustomSummaryTemplate?>(null) }
+
+    // AI-08 vocabulary editor dialog state: null = closed; VocabularyTerm("", "") = creating
+    // new. No built-ins and no separate viewer — a wrong/right pair is short enough to just edit.
+    var editingVocabularyTerm by remember { mutableStateOf<VocabularyTerm?>(null) }
 
     viewingRecipe?.let { recipe ->
         PromptViewerDialog(
@@ -212,6 +219,25 @@ fun SettingsScreen(
             onDismiss = { editingTemplate = null },
         )
     }
+    editingVocabularyTerm?.let { term ->
+        VocabularyEditorDialog(
+            initialWrong = term.wrong,
+            initialCorrect = term.correct,
+            onSave = { wrong, correct ->
+                viewModel.saveVocabularyTerm(wrong, correct, originalWrong = term.wrong.ifBlank { null })
+                editingVocabularyTerm = null
+            },
+            onDelete = if (term.wrong.isNotBlank()) {
+                {
+                    viewModel.deleteVocabularyTerm(term.wrong)
+                    editingVocabularyTerm = null
+                }
+            } else {
+                null
+            },
+            onDismiss = { editingVocabularyTerm = null },
+        )
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(c.background)) {
         Column(
@@ -260,6 +286,9 @@ fun SettingsScreen(
         // gone with the feature (INT-02); the one remaining nuance is that the user-chosen
         // export folder may itself be cloud-synced — that's the folder provider's behavior,
         // stated plainly instead of overclaiming "nothing ever leaves the device".
+        // Unconditional again as of Phase 3 of the sherpa-onnx migration (2026-09-13): Eagle,
+        // the last consumer of the disclosed AI-01/AI-12 INTERNET exception, is gone — see the
+        // Falcon row in CLAUDE.md and the plan at i-have-a-github-prancy-lovelace.md.
         SectionLabel(
             text = "Privacy & security",
             modifier = Modifier.padding(top = 24.dp, bottom = 10.dp),
@@ -271,21 +300,68 @@ fun SettingsScreen(
             lineHeight = 21.6.sp, // 1.6
         )
         Text(
-            text = "100% on-device — transcription and AI run locally. This app requests no network permission at all.",
+            text = "100% on-device — transcription and AI run locally. Nothing here requests " +
+                "any network permission.",
             color = c.dim,
             fontSize = 13.5.sp,
             lineHeight = 21.6.sp,
             modifier = Modifier.padding(top = 10.dp),
         )
         Text(
-            text = "One nuance: if the export location you pick below is a folder another app " +
-                "syncs to the cloud (like a Drive folder), that app may upload your note files. " +
-                "TrailMix itself only ever writes them locally.",
+            text = "One more nuance: if the export location you pick below is a folder " +
+                "another app syncs to the cloud (like a Drive folder), that app may upload " +
+                "your note files. TrailMix itself only ever writes them locally.",
             color = c.dim,
             fontSize = 13.5.sp,
             lineHeight = 21.6.sp,
             modifier = Modifier.padding(top = 10.dp),
         )
+
+        // AI-01 (2026-09-13): migrated off Picovoice Falcon onto sherpa-onnx (Apache-2.0,
+        // bundled on-device models, no account/key of any kind). Eagle ("Known speakers"),
+        // the only other consumer of the shared Picovoice AccessKey field, was removed the
+        // same session (Phase 3) — this toggle needs no key field of any kind anymore.
+        SectionLabel(
+            text = "Speaker labels",
+            modifier = Modifier.padding(top = 28.dp, bottom = 10.dp),
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                Text(
+                    text = "Identify who's speaking",
+                    color = c.text,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    text = "Runs fully on-device — no account, key, or internet connection " +
+                        "needed. Audio is diarized entirely on-device and never sent " +
+                        "anywhere. Requires holding that capture's raw audio in memory until " +
+                        "it ends (never written to disk).",
+                    color = c.dim,
+                    fontSize = 12.5.sp,
+                    lineHeight = 17.sp,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            TrackSwitch(
+                on = speakerDiarizationEnabled,
+                onToggle = { viewModel.setSpeakerDiarizationEnabled(!speakerDiarizationEnabled) },
+            )
+        }
+
+        // "Known speakers" (Eagle) removed here (Phase 3 of the sherpa-onnx migration,
+        // 2026-09-13) along with the shared Picovoice AccessKey field both toggles used —
+        // Eagle's SDK is gone, and nothing else in this screen needs a key of any kind.
+        // Deliberately not left behind as a disabled/explained-away section: an inert toggle
+        // with no real feature behind it reads worse than a temporarily-absent one, consistent
+        // with this app's aversion to zero-state UI "furniture". Comes back in Phase 4 (AI-12)
+        // once sherpa-onnx-based enrollment/recognition ships for real — see
+        // i-have-a-github-prancy-lovelace.md and the Eagle row in CLAUDE.md.
 
         SectionLabel(
             text = "Speech recognition language",
@@ -314,6 +390,43 @@ fun SettingsScreen(
                 )
             }
         }
+
+        // AI-08: user-taught corrections applied to ASR output as each line is finalized
+        // during capture — a name/term the recognizer keeps getting wrong.
+        SectionLabel(
+            text = "Custom vocabulary",
+            modifier = Modifier.padding(top = 28.dp, bottom = 6.dp),
+        )
+        Text(
+            text = "Words the recognizer keeps getting wrong — a product name, a teammate, " +
+                "team jargon. Applied to new captures only, as each line finishes; existing " +
+                "notes are never rewritten.",
+            color = c.dim,
+            fontSize = 12.5.sp,
+            lineHeight = 18.sp,
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
+        vocabularyTerms.forEach { term ->
+            PromptRow(
+                name = term.wrong,
+                preview = "→ ${term.correct}",
+                trailing = "Edit",
+                onTrailingClick = { editingVocabularyTerm = term },
+                onClick = { editingVocabularyTerm = term },
+                onLongClick = { editingVocabularyTerm = term },
+            )
+        }
+        Text(
+            text = "+ Add term",
+            color = c.amber,
+            fontSize = 13.5.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier
+                .clip(RoundedCornerShape(100.dp))
+                .background(c.card)
+                .clickable { editingVocabularyTerm = VocabularyTerm("", "") }
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+        )
 
         // Export location (INT-02, v1.7.0 — formerly "Obsidian export"): one
         // destination-agnostic SAF folder; picking a new one auto-migrates existing files.
@@ -798,6 +911,105 @@ private fun NamedPromptEditorDialog(
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier
                     .clickable(enabled = valid) { onSave(name, text) }
+                    .padding(8.dp),
+            )
+        },
+        dismissButton = {
+            Text(
+                text = "Cancel",
+                color = c.dim,
+                fontSize = 14.sp,
+                modifier = Modifier.clickable { onDismiss() }.padding(8.dp),
+            )
+        },
+    )
+}
+
+/** AI-08: a wrong/right pair editor — deliberately not [NamedPromptEditorDialog], whose big
+ *  multi-line text box and generic "NAME" label are built for prompts, not two short words. */
+@Composable
+private fun VocabularyEditorDialog(
+    initialWrong: String,
+    initialCorrect: String,
+    onSave: (wrong: String, correct: String) -> Unit,
+    onDelete: (() -> Unit)?,
+    onDismiss: () -> Unit,
+) {
+    val c = TrailMix.colors
+    var wrong by remember { mutableStateOf(initialWrong) }
+    var correct by remember { mutableStateOf(initialCorrect) }
+    val valid = wrong.isNotBlank() && correct.isNotBlank()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = c.card,
+        title = {
+            Text(
+                text = if (initialWrong.isBlank()) "New vocabulary term" else "Edit vocabulary term",
+                color = c.text,
+                fontSize = 17.sp,
+            )
+        },
+        text = {
+            Column {
+                Text(text = "TRANSCRIPT OFTEN SAYS", color = c.dim, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                BasicTextField(
+                    value = wrong,
+                    onValueChange = { wrong = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp, bottom = 12.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(c.background)
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    textStyle = TextStyle(color = c.text, fontSize = 14.sp),
+                    cursorBrush = SolidColor(c.amber),
+                    singleLine = true,
+                    decorationBox = { inner ->
+                        if (wrong.isEmpty()) Text("e.g. cooper netties", color = c.dim, fontSize = 14.sp)
+                        inner()
+                    },
+                )
+                Text(text = "SHOULD READ AS", color = c.dim, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                BasicTextField(
+                    value = correct,
+                    onValueChange = { correct = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(c.background)
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    textStyle = TextStyle(color = c.text, fontSize = 14.sp),
+                    cursorBrush = SolidColor(c.amber),
+                    singleLine = true,
+                    decorationBox = { inner ->
+                        if (correct.isEmpty()) Text("e.g. Kubernetes", color = c.dim, fontSize = 14.sp)
+                        inner()
+                    },
+                )
+                onDelete?.let { delete ->
+                    Text(
+                        text = "Delete term",
+                        color = c.recordingRed,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier
+                            .padding(top = 14.dp)
+                            .clickable { delete() }
+                            .padding(4.dp),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Text(
+                text = "Save",
+                color = if (valid) c.amber else c.dim.copy(alpha = 0.5f),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .clickable(enabled = valid) { onSave(wrong, correct) }
                     .padding(8.dp),
             )
         },

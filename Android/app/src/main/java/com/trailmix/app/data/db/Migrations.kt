@@ -100,8 +100,59 @@ object Migrations {
         }
     }
 
+    /**
+     * CAP-24 live bookmark/flag-a-moment: the `mm:ss` labels of moments the user flagged
+     * during capture, as a JSON-encoded string list — same [com.trailmix.app.data.model.StringListJson]
+     * pattern as `attendeesJson`/`exportedPhotoUrisJson`. Nullable/additive: existing notes
+     * simply have no flags.
+     */
+    val MIGRATION_10_11 = object : Migration(10, 11) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE notes ADD COLUMN flaggedLabelsJson TEXT")
+        }
+    }
+
+    /**
+     * Speaker recognition (Eagle path, v1.21.0): a new table for enrolled speaker voiceprints,
+     * each row an opaque `EagleProfile.getBytes()` export. The first `CREATE TABLE` migration
+     * in this chain — every prior one is `ALTER TABLE ... ADD COLUMN` — but additive in the
+     * same spirit: nothing existing is touched, an install with no enrolled speakers just has
+     * an empty table.
+     */
+    val MIGRATION_11_12 = object : Migration(11, 12) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS speaker_profiles (" +
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "name TEXT NOT NULL, " +
+                    "profileBytes BLOB NOT NULL, " +
+                    "createdAtEpochMs INTEGER NOT NULL)",
+            )
+        }
+    }
+
+    /**
+     * Cross-note chat (AI-10): a new table for conversations spanning more than one note,
+     * keyed by [ConversationMessageEntity.noteIdsKey] rather than a single `noteId` — see that
+     * entity's doc for why. Fully additive, same as [MIGRATION_11_12]: `chat_messages` and
+     * everything else is untouched, so single-note chat behaves exactly as before.
+     */
+    val MIGRATION_12_13 = object : Migration(12, 13) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS conversation_messages (" +
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                    "noteIdsKey TEXT NOT NULL, " +
+                    "role TEXT NOT NULL, " +
+                    "text TEXT NOT NULL, " +
+                    "createdAtEpochMs INTEGER NOT NULL)",
+            )
+        }
+    }
+
     val ALL: Array<Migration> = arrayOf(
         MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
-        MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10,
+        MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12,
+        MIGRATION_12_13,
     )
 }

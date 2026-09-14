@@ -103,6 +103,9 @@ class CaptureJournalStore internal constructor(private val dir: File) {
 
     fun line(line: com.trailmix.app.data.model.TranscriptLine) = write(CaptureJournal.lineRecord(line))
 
+    /** CAP-24: one flagged moment, same single-threaded write path as [line]. */
+    fun flag(label: String) = write(CaptureJournal.flagRecord(label))
+
     /** [CaptureJournal.deltaRecord] returns null when nothing changed — then there is nothing to write. */
     fun delta(record: String?) {
         if (record != null) write(record)

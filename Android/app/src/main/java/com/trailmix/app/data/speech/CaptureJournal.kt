@@ -50,6 +50,10 @@ object CaptureJournal {
     private const val KIND_LINE = "l"
     private const val KIND_DELTA = "d"
     private const val KIND_END = "e"
+    private const val KIND_FLAG = "f"
+
+    /** CAP-24: a user-flagged moment during capture — just the timestamp, nothing else. */
+    data class CaptureFlag(val label: String)
 
     /**
      * A capture reconstructed from a journal. Mirrors the fields [CaptureSessionManager] needs
@@ -69,6 +73,8 @@ object CaptureJournal {
         val durationMs: Long = 0L,
         val capturedInCall: Boolean = false,
         val attendees: List<String> = emptyList(),
+        /** CAP-24: moments the user flagged during this session, in the order they were tapped. */
+        val flags: List<CaptureFlag> = emptyList(),
         /**
          * True when the journal carried an explicit end marker — the session finished cleanly
          * and this file is just litter. Distinguishing this from a crash matters: offering to
@@ -144,6 +150,17 @@ object CaptureJournal {
     /** Written when a session ends cleanly, before the file is deleted. See [RecoveredSession.closedCleanly]. */
     fun endRecord(): String = JSONObject().put(KEY_KIND, KIND_END).toString()
 
+    /**
+     * CAP-24: one flagged moment. [label] matches [TranscriptLine.label]'s `mm:ss` format so it
+     * replays through the same [TranscriptCoverage.parseLabelSeconds] parsing everything else
+     * already uses — no separate offset representation to keep in sync.
+     */
+    fun flagRecord(label: String): String =
+        JSONObject()
+            .put(KEY_KIND, KIND_FLAG)
+            .put("l", label)
+            .toString()
+
     // ── Replay ─────────────────────────────────────────────────────────────
 
     /**
@@ -172,6 +189,7 @@ object CaptureJournal {
         var attendees: List<String> = emptyList()
         var closed = false
         val transcript = mutableListOf<TranscriptLine>()
+        val flags = mutableListOf<CaptureFlag>()
 
         for (raw in lines) {
             if (raw.isBlank()) continue
@@ -202,6 +220,11 @@ object CaptureJournal {
                     if (o.has("note")) resumeNoteId = o.optLong("note", resumeNoteId)
                 }
 
+                KIND_FLAG -> {
+                    val label = o.optString("l")
+                    if (label.isNotBlank()) flags += CaptureFlag(label)
+                }
+
                 KIND_END -> closed = true
             }
         }
@@ -222,6 +245,7 @@ object CaptureJournal {
             durationMs = maxOf(duration, lastLabelMs(transcript)),
             capturedInCall = inCall,
             attendees = attendees,
+            flags = flags,
             closedCleanly = closed,
         )
     }

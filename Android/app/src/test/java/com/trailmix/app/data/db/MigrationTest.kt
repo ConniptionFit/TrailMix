@@ -9,7 +9,7 @@ import java.sql.Connection
 import java.sql.DriverManager
 
 /**
- * Exercises the real v2→v9 migration chain ([Migrations]) against a pure-JVM SQLite engine
+ * Exercises the real v2→v11 migration chain ([Migrations]) against a pure-JVM SQLite engine
  * ([JdbcSupportSQLiteDatabase]) — previously an explicit, named gap (BLD-01/the migration
  * chain in `di/AppModule.kt` had zero coverage).
  *
@@ -296,6 +296,101 @@ class MigrationTest {
                     assertTrue(rs.next())
                     assertEquals("Conference keynote", rs.getString("title"))
                     assertNull(rs.getString("exportedPhotoUrisJson"))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun migrate10To11_addsFlaggedLabels_andFinalShapeMatchesV11Schema() {
+        connect().use { c ->
+            c.createStatement().use {
+                it.execute(
+                    "CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "title TEXT NOT NULL, segmentsJson TEXT NOT NULL, transcriptJson TEXT NOT NULL, " +
+                        "typedFragments TEXT NOT NULL, durationMs INTEGER NOT NULL, " +
+                        "createdAtEpochMs INTEGER NOT NULL, showSources INTEGER NOT NULL, " +
+                        "mergedWithAi INTEGER NOT NULL, meetingTitle TEXT, " +
+                        "capturedInCall INTEGER NOT NULL DEFAULT 0, bodyOverride TEXT, " +
+                        "attendeesJson TEXT, summaryJson TEXT, template TEXT, " +
+                        "obsidianFileUri TEXT, driveFileUri TEXT, deletedAtEpochMs INTEGER, " +
+                        "transcriptFileUri TEXT, exportedPhotoUrisJson TEXT)",
+                )
+                it.execute(
+                    "INSERT INTO notes (title, segmentsJson, transcriptJson, typedFragments, " +
+                        "durationMs, createdAtEpochMs, showSources, mergedWithAi) VALUES " +
+                        "('Conference keynote', '[]', '[]', '', 5400000, 7000, 1, 1)",
+                )
+            }
+
+            migrate(c, Migrations.MIGRATION_10_11)
+
+            val cols = columns(c, "notes")
+            assertTrue(cols.containsKey("flaggedLabelsJson"))
+
+            // Pinned against app/schemas/com.trailmix.app.data.db.TrailMixDatabase/11.json.
+            val expectedV11Columns = setOf(
+                "id", "title", "segmentsJson", "transcriptJson", "typedFragments", "durationMs",
+                "createdAtEpochMs", "showSources", "mergedWithAi", "meetingTitle", "capturedInCall",
+                "bodyOverride", "attendeesJson", "summaryJson", "template", "obsidianFileUri",
+                "driveFileUri", "deletedAtEpochMs", "transcriptFileUri", "exportedPhotoUrisJson",
+                "flaggedLabelsJson",
+            )
+            assertEquals(expectedV11Columns, cols.keys)
+
+            c.createStatement().use { stmt ->
+                stmt.executeQuery("SELECT title, flaggedLabelsJson FROM notes").use { rs ->
+                    assertTrue(rs.next())
+                    assertEquals("Conference keynote", rs.getString("title"))
+                    assertNull(rs.getString("flaggedLabelsJson"))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun migrate11To12_createsSpeakerProfilesTable() {
+        connect().use { c ->
+            migrate(c, Migrations.MIGRATION_11_12)
+
+            val cols = columns(c, "speaker_profiles")
+            assertEquals(setOf("id", "name", "profileBytes", "createdAtEpochMs"), cols.keys)
+
+            c.createStatement().use {
+                it.execute(
+                    "INSERT INTO speaker_profiles (name, profileBytes, createdAtEpochMs) VALUES " +
+                        "('Alice', X'0102', 9000)",
+                )
+            }
+            c.createStatement().use { stmt ->
+                stmt.executeQuery("SELECT name, createdAtEpochMs FROM speaker_profiles").use { rs ->
+                    assertTrue(rs.next())
+                    assertEquals("Alice", rs.getString("name"))
+                    assertEquals(9000L, rs.getLong("createdAtEpochMs"))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun migrate12To13_createsConversationMessagesTable() {
+        connect().use { c ->
+            migrate(c, Migrations.MIGRATION_12_13)
+
+            val cols = columns(c, "conversation_messages")
+            assertEquals(setOf("id", "noteIdsKey", "role", "text", "createdAtEpochMs"), cols.keys)
+
+            c.createStatement().use {
+                it.execute(
+                    "INSERT INTO conversation_messages (noteIdsKey, role, text, createdAtEpochMs) VALUES " +
+                        "('3,7', 'user', 'What did we decide?', 12000)",
+                )
+            }
+            c.createStatement().use { stmt ->
+                stmt.executeQuery("SELECT noteIdsKey, text FROM conversation_messages").use { rs ->
+                    assertTrue(rs.next())
+                    assertEquals("3,7", rs.getString("noteIdsKey"))
+                    assertEquals("What did we decide?", rs.getString("text"))
                 }
             }
         }

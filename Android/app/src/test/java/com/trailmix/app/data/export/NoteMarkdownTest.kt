@@ -210,6 +210,31 @@ class NoteMarkdownTest {
         assertTrue(md.contains("Use a \\| pipe here."))
     }
 
+    @Test
+    fun `a speaker label prefixes the table cell when present`() {
+        val md = NoteMarkdown.buildTranscript(
+            source(transcript = listOf(TranscriptLine("0:01", "Let's begin.", speakerLabel = "Speaker 1"))),
+        )
+        assertTrue(md.contains("| `0:01` | **Speaker 1:** Let's begin. |"))
+    }
+
+    @Test
+    fun `no speaker label means no prefix, same as before AI-01`() {
+        val md = NoteMarkdown.buildTranscript(
+            source(transcript = listOf(TranscriptLine("0:01", "Let's begin."))),
+        )
+        assertTrue(md.contains("| `0:01` | Let's begin. |"))
+    }
+
+    @Test
+    fun `plain text transcript prefixes the speaker label instead of a table cell`() {
+        val md = NoteMarkdown.buildTranscript(
+            source(transcript = listOf(TranscriptLine("0:01", "Let's begin.", speakerLabel = "Speaker 2"))),
+            ExportFormat.PLAIN_TEXT,
+        )
+        assertTrue(md.contains("0:01  Speaker 2: Let's begin."))
+    }
+
     // ── File naming ─────────────────────────────────────────────────────────
 
     @Test

@@ -12,10 +12,14 @@ data class NoteSegment(
     val source: Provenance,
 )
 
-/** One finalized line of the live transcript. `label` is a mm:ss capture offset (no diarization on-device yet). */
+/** One finalized line of the live transcript. `label` is a mm:ss capture offset.
+ *  [speakerLabel] (AI-01, v1.20.0) is "Speaker N" from on-device diarization when the user has
+ *  opted in — null on every note recorded before that, and on any note where diarization
+ *  wasn't enabled or found no segments. */
 data class TranscriptLine(
     val label: String,
     val text: String,
+    val speakerLabel: String? = null,
 )
 
 object SegmentsJson {
@@ -43,7 +47,13 @@ object SegmentsJson {
 object TranscriptJson {
     fun encode(lines: List<TranscriptLine>): String {
         val arr = JSONArray()
-        lines.forEach { arr.put(JSONObject().put("l", it.label).put("t", it.text)) }
+        lines.forEach {
+            arr.put(
+                JSONObject().put("l", it.label).put("t", it.text).apply {
+                    it.speakerLabel?.let { sp -> put("sp", sp) }
+                },
+            )
+        }
         return arr.toString()
     }
 
@@ -51,7 +61,11 @@ object TranscriptJson {
         val arr = JSONArray(json)
         (0 until arr.length()).map { i ->
             val o = arr.getJSONObject(i)
-            TranscriptLine(label = o.optString("l"), text = o.getString("t"))
+            TranscriptLine(
+                label = o.optString("l"),
+                text = o.getString("t"),
+                speakerLabel = o.optString("sp").takeIf { it.isNotBlank() },
+            )
         }
     }.getOrDefault(emptyList())
 }

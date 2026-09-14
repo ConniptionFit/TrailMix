@@ -65,6 +65,19 @@ class CaptureEngine @Inject constructor(
     private val mutedStreams = mutableListOf<Int>()
 
     /**
+     * AI-01: the audio-retention sink [CaptureSessionManager] wants attached to the mic
+     * stream, if any — held here (not just handed to [pipeline]) because [begin] constructs a
+     * *new* [AudioPipeline] on every pause/resume, and each one needs the same ongoing buffer
+     * reattached so a session's retained audio survives across those boundaries.
+     */
+    private var audioSink: AudioRetentionBuffer? = null
+
+    fun setAudioSink(sink: AudioRetentionBuffer?) {
+        audioSink = sink
+        pipeline?.setAudioSink(sink)
+    }
+
+    /**
      * Start a session and return the speech-event stream. Prefers the ML Kit
      * pipeline; if the model is merely not downloaded yet, kicks the download
      * in the background and falls back to the system recognizer for this
@@ -75,6 +88,7 @@ class CaptureEngine @Inject constructor(
             FeatureStatus.AVAILABLE -> {
                 val pipe = AudioPipeline()
                 pipeline = pipe
+                pipe.setAudioSink(audioSink)
                 // REL-11: opening the mic is the one step here that routinely fails for
                 // reasons outside the app — something else holds it. Previously that threw
                 // straight through begin() into an unguarded coroutine and killed the

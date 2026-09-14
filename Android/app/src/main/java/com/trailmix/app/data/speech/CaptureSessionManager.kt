@@ -7,6 +7,7 @@ import android.media.AudioManager
 import android.util.Log
 import com.trailmix.app.data.ai.MergePolicy
 import com.trailmix.app.data.ai.OnDeviceAiProcessor
+import com.trailmix.app.data.ai.VocabularyCorrection
 import com.trailmix.app.data.calendar.UpcomingMeetingSource
 import com.trailmix.app.data.db.NotesRepository
 import com.trailmix.app.data.model.SummaryTemplate
@@ -65,6 +66,7 @@ class CaptureSessionManager @Inject constructor(
     private val settingsRepository: SettingsRepository,
     private val meetingSource: UpcomingMeetingSource,
     private val journal: CaptureJournalStore,
+    private val speakerDiarizer: SpeakerDiarizer,
 ) {
     private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
@@ -142,12 +144,43 @@ class CaptureSessionManager @Inject constructor(
     private val _mergeStatus = MutableStateFlow<MergeStatus?>(null)
     val mergeStatus: StateFlow<MergeStatus?> = _mergeStatus.asStateFlow()
 
+    /**
+     * AI-11: a short "so far" summary refreshed periodically during an in-progress capture —
+     * independent of [mergeStatus], which is reserved for the real end-of-capture merge and
+     * drives [CaptureService]'s foreground notification. Null until the first successful pass
+     * of a session; a failed pass leaves the previous value showing rather than blanking it.
+     */
+    private val _rollingSummary = MutableStateFlow<String?>(null)
+    val rollingSummary: StateFlow<String?> = _rollingSummary.asStateFlow()
+
     private val transcriptLines = mutableListOf<TranscriptLine>()
+
+    /** CAP-24: `mm:ss` labels of moments flagged during this session, in tap order. */
+    private val flags = mutableListOf<String>()
     private var startedAtMs = 0L
     private var listenJob: Job? = null
     private var tickerJob: Job? = null
     private var bumpJob: Job? = null
     private var journalJob: Job? = null
+    private var rollingSummaryJob: Job? = null
+
+    /** AI-11: transcript line count as of the last successful rolling-summary pass — lets a
+     *  quiet stretch (or a paused session, which shares this same periodic job) skip the model
+     *  call entirely instead of re-condensing unchanged content every tick. */
+    private var lastRollingSummaryLineCount = 0
+
+    /**
+     * AI-01: non-null only when this session has diarization turned on in
+     * Settings — set up lazily, once, by [runListenSession] the first time it runs for a
+     * given session (see [diarizationConfiguredForSession]), and handed to [engine] so every
+     * [AudioPipeline] it creates across this session's pause/resume cycles retains into the
+     * *same* buffer. Read and cleared by [diarizeIfEnabled] once the session ends.
+     */
+    private var audioRetention: AudioRetentionBuffer? = null
+
+    /** Guards the one-time-per-session setup above — true from the first [runListenSession]
+     *  of a session onward; reset to false wherever [audioRetention] itself is reset. */
+    private var diarizationConfiguredForSession = false
 
     /** REL-09: last values written to the journal, so each flush only records what moved. */
     private var journaled = JournalSnapshot()
@@ -186,6 +219,11 @@ class CaptureSessionManager @Inject constructor(
         fragments.value = ""
         transcriptLines.clear()
         _liveLines.value = emptyList()
+        flags.clear()
+        _rollingSummary.value = null
+        lastRollingSummaryLineCount = 0
+        audioRetention = null
+        diarizationConfiguredForSession = false
         priorDurationMs = 0L
         resumeCreatedAt = 0L
         recoveredCreatedAtMs = 0L
@@ -202,6 +240,7 @@ class CaptureSessionManager @Inject constructor(
         journaled = JournalSnapshot()
         journal.begin(System.currentTimeMillis(), resumeNoteId)
         startJournalFlush()
+        startRollingSummary()
         if (resumeNoteId <= 0) {
             // Fresh note: seed the template from the user's Settings default (UX-02);
             // a resumed note keeps whatever template it was created with (see applyResume).
@@ -221,6 +260,20 @@ class CaptureSessionManager @Inject constructor(
     private suspend fun runListenSession(applyPriorResume: Boolean) {
         if (applyPriorResume && resumeNoteId > 0) applyResume()
         detectMeetingContext()
+        // AI-01: set up (or confirm the absence of) audio retention exactly once per session,
+        // before the first engine.begin() — not on every pause/resume, which would each get
+        // their own buffer and lose everything captured before the most recent resume. The
+        // guard flag is reset only at the three points that mean "this is a new session"
+        // (beginSession/applyResume/continueRecovered), never on an ordinary resume.
+        if (!diarizationConfiguredForSession) {
+            diarizationConfiguredForSession = true
+            audioRetention = if (settingsRepository.speakerDiarizationEnabled.first()) {
+                AudioRetentionBuffer()
+            } else {
+                null
+            }
+            engine.setAudioSink(audioRetention)
+        }
         val selected = _state.value.inputOptions
             .getOrNull(_state.value.selectedInputIndex)?.device
         val events = engine.begin(selected)
@@ -228,11 +281,15 @@ class CaptureSessionManager @Inject constructor(
             engineKind = engine.kind.value,
             speechAvailable = engine.kind.value != EngineKind.NONE,
         )
+        // AI-08: snapshot once per session, like the summary template default below it — a
+        // mid-capture edit in Settings applies from the next session, not retroactively.
+        val vocabularyTerms = settingsRepository.vocabularyTerms.first()
         events.collect { event ->
             if (event.finalizedUtterance.isNotBlank()) {
+                val correctedText = VocabularyCorrection.apply(event.finalizedUtterance, vocabularyTerms)
                 val finalized = TranscriptLine(
                     label = elapsedLabel(),
-                    text = event.finalizedUtterance,
+                    text = correctedText,
                 )
                 transcriptLines += finalized
                 // REL-09: journal it before it is anything but a value in RAM. Everything
@@ -240,7 +297,7 @@ class CaptureSessionManager @Inject constructor(
                 journal.line(finalized)
                 _liveLines.value = transcriptLines.toList()
                 _state.value = _state.value.copy(
-                    lastFinalLine = event.finalizedUtterance,
+                    lastFinalLine = correctedText,
                     livePartial = "",
                 )
             } else if (event.partialText.isNotBlank()) {
@@ -376,6 +433,16 @@ class CaptureSessionManager @Inject constructor(
         transcriptLines.clear()
         transcriptLines.addAll(note.transcript)
         _liveLines.value = transcriptLines.toList()
+        flags.clear()
+        flags.addAll(note.flaggedLabels)
+        // AI-11: baseline at the resumed length, not 0 — only newly-spoken content after the
+        // resume should trigger a (re-)summarization pass, not the whole pre-existing transcript.
+        _rollingSummary.value = null
+        lastRollingSummaryLineCount = transcriptLines.size
+        // AI-01: same reasoning — audio is never persisted, so a resume can only ever diarize
+        // whatever gets captured from this point forward, never the note's existing transcript.
+        audioRetention = null
+        diarizationConfiguredForSession = false
         fragments.value = note.typedFragments
         priorDurationMs = note.durationMs
         resumeCreatedAt = note.createdAtEpochMs
@@ -511,6 +578,7 @@ class CaptureSessionManager @Inject constructor(
             capturedInCall = capturedInCall,
             attendees = attendees,
             template = template,
+            flags = flags.toList(),
         )
         // REL-09: the capture is now durably a note (or was empty and deliberately not
         // saved), so the journal has done its job. Only now — a crash at any point
@@ -530,6 +598,25 @@ class CaptureSessionManager @Inject constructor(
      * same AI-06 title protection on re-merge, same automatic export — and a second copy of
      * this that drifted would mean recovered notes were quietly second-class.
      */
+    /**
+     * AI-01: attach "Speaker N" labels via [speakerDiarizer] if this session actually retained
+     * audio for it — which by itself already means the user had diarization on when the
+     * session's mic last started (see [runListenSession]). Fully on-device, no account/key of
+     * any kind since the sherpa-onnx migration (2026-09-13) — fails soft to the transcript
+     * unchanged on any problem: the buffer is empty, the model finds nothing, or the SDK throws.
+     * This is a pure enhancement and must never block a note from saving.
+     */
+    private suspend fun diarizeIfEnabled(transcript: List<TranscriptLine>): List<TranscriptLine> {
+        val buffer = audioRetention ?: return transcript
+        // One-shot: whether this succeeds or not, this buffer's job is done and it should not
+        // be readable from any later, unrelated call into mergeAndSave.
+        audioRetention = null
+        val pcm = buffer.toShortArray()
+        if (pcm.isEmpty()) return transcript
+        val segments = speakerDiarizer.diarize(pcm)
+        return SpeakerLabels.apply(transcript, segments)
+    }
+
     @Suppress("LongParameterList")
     private suspend fun mergeAndSave(
         noteId: Long,
@@ -541,14 +628,18 @@ class CaptureSessionManager @Inject constructor(
         capturedInCall: Boolean,
         attendees: List<String>,
         template: String,
+        flags: List<String> = emptyList(),
     ): Long {
         // CAP-11: an entirely empty session — nothing typed, nothing transcribed —
         // saves nothing at all. -1 tells the caller no note was created.
         if (MergePolicy.nothingToSave(typed, transcript)) return -1L
+        // AI-01: attach "Speaker N" labels before anything downstream reads the transcript —
+        // the structured-summary attribution and the saved note should both see them.
+        val diarizedTranscript = diarizeIfEnabled(transcript)
         val customTemplates = settingsRepository.customSummaryTemplates.first()
         val result = aiProcessor.merge(
             typedFragments = typed,
-            transcript = transcript,
+            transcript = diarizedTranscript,
             createdAtEpochMs = createdAtEpochMs,
             attendees = attendees,
             templateGuidance = TemplateOptions.guidanceFor(template, customTemplates),
@@ -564,7 +655,7 @@ class CaptureSessionManager @Inject constructor(
                 id = noteId,
                 title = result.title,
                 segments = result.segments,
-                transcript = transcript,
+                transcript = diarizedTranscript,
                 typedFragments = typed,
                 durationMs = durationMs,
                 createdAtEpochMs = createdAtEpochMs,
@@ -574,13 +665,14 @@ class CaptureSessionManager @Inject constructor(
                 attendees = attendees,
                 structuredSummary = result.structuredSummary,
                 template = template,
+                flags = flags,
             )
             return noteId
         }
         return notesRepository.saveMergedNote(
             title = result.title,
             segments = result.segments,
-            transcript = transcript,
+            transcript = diarizedTranscript,
             typedFragments = typed,
             durationMs = durationMs,
             createdAtEpochMs = createdAtEpochMs,
@@ -590,6 +682,7 @@ class CaptureSessionManager @Inject constructor(
             attendees = attendees,
             structuredSummary = result.structuredSummary,
             template = template,
+            flags = flags,
         )
     }
 
@@ -601,6 +694,12 @@ class CaptureSessionManager @Inject constructor(
         journal.discardCurrent()
         resumeNoteId = -1L
         recoveredCreatedAtMs = 0L
+        // AI-01: a discarded session never reaches mergeAndSave, which is the only other
+        // place this gets cleared — so a diarization-enabled capture that gets discarded
+        // must free (and stop treating as valid) its retained audio here, or a later
+        // completeRecovered() for an unrelated session could diarize against it by mistake.
+        audioRetention = null
+        diarizationConfiguredForSession = false
     }
 
     /** CAP-12: clears the one-shot call-ended dialog/notification without ending the
@@ -666,6 +765,10 @@ class CaptureSessionManager @Inject constructor(
         flushJournal()
         journalJob?.cancel()
         journalJob = null
+        // AI-11: never let a rolling-summary pass overlap the real end-of-capture merge that's
+        // about to start (handOffToMerge) or run alongside a fully stopped session.
+        rollingSummaryJob?.cancel()
+        rollingSummaryJob = null
         disarmBumpTimer()
         engine.detachDeviceAudio()
         if (handOffToMerge) CaptureService.merge(appContext) else CaptureService.stop(appContext)
@@ -694,6 +797,20 @@ class CaptureSessionManager @Inject constructor(
     fun elapsedLabel(): String {
         val sec = (currentDurationMs() / 1000).coerceAtLeast(0)
         return String.format(Locale.ROOT, "%d:%02d", sec / 60, sec % 60)
+    }
+
+    /**
+     * CAP-24: flag the current moment. Valid while recording or paused — same gating as
+     * Pause/Resume — since either state has a well-defined "current" instant; there is
+     * nothing to flag before a session starts or after it's merged. Returns the label so
+     * the caller can show an immediate confirmation without a round-trip through a flow.
+     */
+    fun flagMoment(): String? {
+        if (!_state.value.recording && !_state.value.paused) return null
+        val label = elapsedLabel()
+        flags += label
+        journal.flag(label)
+        return label
     }
 
     /** CAP-12: (re)starts the "still recording?" countdown. Called every time recording
@@ -745,6 +862,38 @@ class CaptureSessionManager @Inject constructor(
                 delay(JOURNAL_FLUSH_INTERVAL_MS)
                 flushJournal()
             }
+        }
+    }
+
+    /**
+     * AI-11: a separate, much slower periodic job from [startJournalFlush] — that one persists
+     * crash-recovery state every few seconds; this one runs an actual on-device model call, so
+     * it ticks in minutes-scale intervals instead. Kept as its own job (not folded into the
+     * once-a-second [tickerJob]) so a slow condensation pass can never block UI-state updates.
+     */
+    private fun startRollingSummary() {
+        rollingSummaryJob?.cancel()
+        rollingSummaryJob = scope.launch {
+            while (isActive) {
+                delay(ROLLING_SUMMARY_INTERVAL_MS)
+                refreshRollingSummary()
+            }
+        }
+    }
+
+    /** Cheap no-op when nothing new has been said since the last pass — covers the paused and
+     *  quiet-stretch cases without a separate pause/resume branch for this job. A failed model
+     *  call leaves [lastRollingSummaryLineCount] unmoved so the next tick retries it, and leaves
+     *  [_rollingSummary] showing its last good value rather than blanking on a transient error. */
+    private suspend fun refreshRollingSummary() {
+        val lines = transcriptLines.toList()
+        if (lines.isEmpty() || lines.size == lastRollingSummaryLineCount) return
+        val customTemplates = settingsRepository.customSummaryTemplates.first()
+        val guidance = TemplateOptions.guidanceFor(template, customTemplates)
+        val summary = aiProcessor.rollingSummary(lines, guidance)
+        if (summary != null) {
+            lastRollingSummaryLineCount = lines.size
+            _rollingSummary.value = summary
         }
     }
 
@@ -805,6 +954,16 @@ class CaptureSessionManager @Inject constructor(
         transcriptLines.clear()
         transcriptLines.addAll(recovered.transcript)
         _liveLines.value = transcriptLines.toList()
+        flags.clear()
+        flags.addAll(recovered.flags.map { it.label })
+        // AI-11: same reasoning as applyResume() — only content recognized after the recovery
+        // continues should trigger a fresh pass, not the whole journal-recovered transcript.
+        _rollingSummary.value = null
+        lastRollingSummaryLineCount = transcriptLines.size
+        // AI-01: same reasoning — only audio captured after the recovery continues can ever
+        // be retained, so diarization (if enabled) starts a fresh buffer from here too.
+        audioRetention = null
+        diarizationConfiguredForSession = false
         priorDurationMs = recovered.durationMs
         resumeCreatedAt = 0L
         recoveredCreatedAtMs = recovered.startedAtEpochMs
@@ -823,6 +982,7 @@ class CaptureSessionManager @Inject constructor(
         journaled = JournalSnapshot()
         journal.adopt(pending.id)
         startJournalFlush()
+        startRollingSummary()
         // false: the in-memory buffers ARE the recovered content — the CAP-12 trap applies
         // here for the same reason it applies to waking a paused session.
         startRecording(applyPriorResume = false)
@@ -841,6 +1001,12 @@ class CaptureSessionManager @Inject constructor(
         if (_recovering.value || _state.value.recording || _state.value.paused || _state.value.merging) return
         _pendingRecovery.value = null
         _recovering.value = true
+        // AI-01: this path saves a journal-recovered transcript directly — it never restarts
+        // the mic, so no audio exists to diarize (consistent with audio never surviving a
+        // crash). Clear unconditionally so mergeAndSave can't pick up a stale buffer left
+        // over from some earlier, unrelated session that never reached its own cleanup.
+        audioRetention = null
+        diarizationConfiguredForSession = false
         // REL-10: this merge is the same chunked on-device work End & Merge runs, so it needs
         // the same protection — previously it ran with no foreground component at all, and
         // backgrounding the app during a long rescue could have the process killed mid-way.
@@ -869,6 +1035,7 @@ class CaptureSessionManager @Inject constructor(
                     capturedInCall = recovered.capturedInCall,
                     attendees = recovered.attendees,
                     template = recovered.template,
+                    flags = recovered.flags.map { it.label },
                 )
             }.getOrElse { -1L }
             // Only discard the journal once the note exists. If the merge threw, the
@@ -939,6 +1106,13 @@ class CaptureSessionManager @Inject constructor(
          * tiny records rather than one per keystroke.
          */
         const val JOURNAL_FLUSH_INTERVAL_MS = 10_000L
+
+        /**
+         * AI-11: how often the in-progress capture's live "so far" summary re-condenses.
+         * Minutes-scale on purpose — this is a real on-device model call (unlike the journal
+         * flush above), so it trades immediacy for not spamming AICore every few seconds.
+         */
+        const val ROLLING_SUMMARY_INTERVAL_MS = 60_000L
 
         // CAP-12: how long a capture can run unpaused before the "still recording?"
         // nudge fires (and re-fires every interval after that). Not yet user-configurable
