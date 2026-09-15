@@ -12,6 +12,7 @@ import com.trailmix.app.data.settings.SettingsRepository
 import com.trailmix.app.data.speech.CaptureSessionManager
 import com.trailmix.app.data.speech.EngineKind
 import com.trailmix.app.data.speech.MergeStatus
+import com.trailmix.app.data.speech.PendingJournal
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -123,6 +124,10 @@ class CaptureViewModel @Inject constructor(
 
     /** AI-11: the in-progress capture's periodically-refreshed "so far" summary. */
     val rollingSummary: StateFlow<String?> = manager.rollingSummary
+
+    /** REL-19: non-null when [startRecording] found unrecovered work instead of starting a
+     *  fresh session — the screen bounces back to Home so its recovery prompt can take over. */
+    val pendingRecovery: StateFlow<PendingJournal?> = manager.pendingRecovery
     val deviceAudioSupported: Boolean get() = manager.deviceAudioSupported
 
     /** The active session's stored template value (enum name or `custom:<name>`, AI-03). */

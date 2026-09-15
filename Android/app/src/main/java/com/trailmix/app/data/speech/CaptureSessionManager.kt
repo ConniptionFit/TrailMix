@@ -215,40 +215,54 @@ class CaptureSessionManager @Inject constructor(
      */
     fun beginSession(resumeNoteId: Long, meetingTitle: String?) {
         if (_state.value.recording || _state.value.paused || _state.value.merging) return
-        this.resumeNoteId = resumeNoteId
-        fragments.value = ""
-        transcriptLines.clear()
-        _liveLines.value = emptyList()
-        flags.clear()
-        _rollingSummary.value = null
-        lastRollingSummaryLineCount = 0
-        audioRetention = null
-        diarizationConfiguredForSession = false
-        priorDurationMs = 0L
-        resumeCreatedAt = 0L
-        recoveredCreatedAtMs = 0L
-        capturedInCall = false
-        attendees = emptyList()
-        template = SummaryTemplate.NONE.name
-        callEndedPromptFired = false
-        _state.value = CaptureUiState(
-            meetingTitle = meetingTitle,
-            noteTitle = meetingTitle ?: CaptureUiState.UNTITLED,
-        )
-        // REL-09: open the crash journal before anything can be captured, so there is no
-        // window where an utterance exists only in memory.
-        journaled = JournalSnapshot()
-        journal.begin(System.currentTimeMillis(), resumeNoteId)
-        startJournalFlush()
-        startRollingSummary()
-        if (resumeNoteId <= 0) {
-            // Fresh note: seed the template from the user's Settings default (UX-02);
-            // a resumed note keeps whatever template it was created with (see applyResume).
-            scope.launch {
+        scope.launch {
+            // REL-19: a session can be abandoned mid-flight with the *process* still alive —
+            // found live during a soak test, where a ~45-minute capture's journal was orphaned
+            // and a brand-new session silently began in its place, with no crash, no prompt,
+            // and no sign anything had happened beyond the elapsed timer looking wrong. The
+            // most likely trigger is Android destroying this backgrounded Activity under
+            // memory pressure while CaptureService's foreground status keeps the process (and
+            // this singleton) alive — Navigation's saved back stack then restores straight
+            // onto the Capture route, and this function's own composable re-runs its
+            // mic-permission-then-record startup with no idea a session was ever running.
+            // refreshRecovery() is otherwise only re-checked at construction and after a
+            // previous recovery is resolved (see its own doc comment) — neither covers this
+            // path, so it is forced here too, before anything below can overwrite that journal.
+            refreshRecovery()
+            if (_pendingRecovery.value != null) return@launch
+            this@CaptureSessionManager.resumeNoteId = resumeNoteId
+            fragments.value = ""
+            transcriptLines.clear()
+            _liveLines.value = emptyList()
+            flags.clear()
+            _rollingSummary.value = null
+            lastRollingSummaryLineCount = 0
+            audioRetention = null
+            diarizationConfiguredForSession = false
+            priorDurationMs = 0L
+            resumeCreatedAt = 0L
+            recoveredCreatedAtMs = 0L
+            capturedInCall = false
+            attendees = emptyList()
+            template = SummaryTemplate.NONE.name
+            callEndedPromptFired = false
+            _state.value = CaptureUiState(
+                meetingTitle = meetingTitle,
+                noteTitle = meetingTitle ?: CaptureUiState.UNTITLED,
+            )
+            // REL-09: open the crash journal before anything can be captured, so there is no
+            // window where an utterance exists only in memory.
+            journaled = JournalSnapshot()
+            journal.begin(System.currentTimeMillis(), resumeNoteId)
+            startJournalFlush()
+            startRollingSummary()
+            if (resumeNoteId <= 0) {
+                // Fresh note: seed the template from the user's Settings default (UX-02); a
+                // resumed note keeps whatever template it was created with (see applyResume).
                 settingsRepository.defaultSummaryTemplate.first()?.let { template = it }
             }
+            startRecording(applyPriorResume = true)
         }
-        startRecording(applyPriorResume = true)
     }
 
     /**

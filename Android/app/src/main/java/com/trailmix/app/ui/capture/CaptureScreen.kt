@@ -86,8 +86,23 @@ fun CaptureScreen(
     val mergeStatus by viewModel.mergeStatus.collectAsStateWithLifecycle()
     val rollingSummary by viewModel.rollingSummary.collectAsStateWithLifecycle()
     val fragments by viewModel.fragments.collectAsStateWithLifecycle()
+    val pendingRecovery by viewModel.pendingRecovery.collectAsStateWithLifecycle()
     val c = TrailMix.colors
     val context = LocalContext.current
+
+    // REL-19: found live during a long soak test — a session can be abandoned mid-flight
+    // with the process itself still alive (most plausibly Android destroying this
+    // backgrounded Activity under memory pressure while the foreground service keeps the
+    // process up), and Navigation's saved back stack then restores straight onto this route.
+    // beginSession() now refuses to start over an unrecovered journal instead of silently
+    // replacing it — this bounces back to Home so its "recover this?" prompt is what the
+    // user actually sees, rather than a screen that never started listening with no
+    // explanation why.
+    LaunchedEffect(pendingRecovery) {
+        if (pendingRecovery != null && !state.recording && !state.paused && !state.merging) {
+            onMinimize()
+        }
+    }
 
     var micGranted by remember {
         mutableStateOf(
