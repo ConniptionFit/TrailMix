@@ -1,9 +1,9 @@
 package com.trailmix.app.data.db
 
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
  * Domain view of an enrolled speaker — [profileBytes] is an opaque `EagleProfile.getBytes()`

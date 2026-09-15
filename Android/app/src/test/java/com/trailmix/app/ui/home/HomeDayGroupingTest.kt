@@ -1,13 +1,13 @@
 package com.trailmix.app.ui.home
 
 import com.trailmix.app.data.db.NoteEntity
-import java.util.Calendar
-import java.util.Locale
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.util.Calendar
+import java.util.Locale
 
 /** CAL-06 (conference scale): a multi-session day gets a header, an ordinary day doesn't. */
 class HomeDayGroupingTest {

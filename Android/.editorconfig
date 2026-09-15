@@ -1,0 +1,50 @@
+root = true
+
+[*.{kt,kts}]
+# BLD-03: ktlint was added as this project's first static-analysis/style gate on top of an
+# already fully-written, internally-consistent ~15k-line codebase, not from a clean slate. A
+# first `ktlintCheck` run found ~2,150 violations dominated by a handful of purely opinionated
+# structural/wrapping rules (indent, multiline-expression-wrapping, function-signature,
+# argument-list-wrapping, chain-method-continuation, class-signature, and similar) that don't
+# indicate anything wrong — they just describe a formatting taste ktlint's "standard" ruleset
+# has and this codebase's own established, consistent style doesn't happen to share. Force-
+# reformatting every file to match would touch nearly every Compose call in the project for
+# zero behavioral benefit, so those rules are turned off below rather than "fixed". What stays
+# enabled is the subset that catches something real regardless of formatting taste: dead
+# imports, import ordering, and the like. This file exists to make that split explicit and
+# intentional, not to blanket-disable ktlint.
+ktlint_standard_indent = disabled
+ktlint_standard_multiline-expression-wrapping = disabled
+ktlint_standard_function-signature = disabled
+ktlint_standard_argument-list-wrapping = disabled
+ktlint_standard_parameter-list-wrapping = disabled
+ktlint_standard_chain-method-continuation = disabled
+ktlint_standard_class-signature = disabled
+ktlint_standard_statement-wrapping = disabled
+ktlint_standard_condition-wrapping = disabled
+ktlint_standard_if-else-wrapping = disabled
+ktlint_standard_if-else-bracing = disabled
+ktlint_standard_multiline-if-else = disabled
+ktlint_standard_binary-expression-wrapping = disabled
+ktlint_standard_string-template-indent = disabled
+ktlint_standard_annotation = disabled
+# Not disabled like its siblings above: standard:trailing-comma-on-call-site/declaration-site
+# hard-depend on this rule being loaded (ktlint refuses to start otherwise), and this codebase
+# already uses trailing commas pervasively and consistently — keeping wrapping active is what
+# keeps those two genuinely-wanted rules working, not an oversight.
+ktlint_standard_no-multi-spaces = disabled
+ktlint_standard_max-line-length = disabled
+ktlint_standard_no-empty-first-line-in-class-body = disabled
+ktlint_standard_blank-line-before-declaration = disabled
+ktlint_standard_no-consecutive-comments = disabled
+ktlint_standard_spacing-between-declarations-with-comments = disabled
+ktlint_standard_spacing-between-declarations-with-annotations = disabled
+# Every `@Composable` function in this codebase is deliberately PascalCase, per Compose's own
+# official naming convention (a composable reads like the UI element it emits, the same reason
+# a class name is capitalized) — not a naming-rule violation. Every one of this rule's ~36 hits
+# on a first run was a `@Composable` function; this is the documented ktlint switch for it.
+ktlint_function_naming_ignore_when_annotated_with = Composable
+# Misfires on a file whose only top-level declaration is a function returning some other
+# file's type (e.g. HomeDayGrouping.kt's groupByConferenceDay(): List<HomeListItem>) — it
+# matched the file against the *referenced* type's name, not anything actually declared here.
+ktlint_standard_filename = disabled

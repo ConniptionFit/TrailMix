@@ -12,11 +12,11 @@ import com.trailmix.app.data.model.StringListJson
 import com.trailmix.app.data.model.StructuredSummary
 import com.trailmix.app.data.model.StructuredSummaryJson
 import com.trailmix.app.data.model.TranscriptJson
-import com.trailmix.app.data.model.moveSection
 import com.trailmix.app.data.model.TranscriptLine
+import com.trailmix.app.data.model.moveSection
+import kotlinx.coroutines.flow.Flow
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlinx.coroutines.flow.Flow
 
 /** Result of deleting a note (CAP-05): the local DB delete always happens; [filesDeleted] is
  * false only if the note had a tracked export URI and removing it failed (stale URI, revoked

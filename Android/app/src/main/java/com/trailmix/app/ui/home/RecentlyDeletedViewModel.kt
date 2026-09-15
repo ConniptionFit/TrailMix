@@ -5,13 +5,13 @@ import androidx.lifecycle.viewModelScope
 import com.trailmix.app.data.db.NoteEntity
 import com.trailmix.app.data.db.NotesRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
-import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 /**
  * REL-06: the Recently deleted screen — soft-deleted notes still inside the 1-day

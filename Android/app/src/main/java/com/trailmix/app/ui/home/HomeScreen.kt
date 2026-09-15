@@ -65,13 +65,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.trailmix.app.data.calendar.UpcomingMeeting
 import com.trailmix.app.data.db.NoteEntity
 import com.trailmix.app.data.db.toMarkdown
-import com.trailmix.app.ui.export.ExportFormatPickerDialog
 import com.trailmix.app.ui.components.SectionLabel
+import com.trailmix.app.ui.export.ExportFormatPickerDialog
 import com.trailmix.app.ui.theme.TrailMix
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlinx.coroutines.launch
 
 @Composable
 fun HomeScreen(

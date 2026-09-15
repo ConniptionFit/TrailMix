@@ -2,5 +2,4 @@
 <resources>
     <!-- REL-04 (v1.6.0): warm brand amber behind the white waveform-trail foreground. -->
     <color name="ic_launcher_background">#BB5D00</color>
-    <color name="trailmix_accent">#C6D96A</color>
 </resources>

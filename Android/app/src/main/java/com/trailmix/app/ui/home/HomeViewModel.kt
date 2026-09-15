@@ -11,10 +11,9 @@ import com.trailmix.app.data.settings.SettingsRepository
 import com.trailmix.app.data.speech.CaptureSessionManager
 import com.trailmix.app.data.speech.PendingJournal
 import dagger.hilt.android.lifecycle.HiltViewModel
-import javax.inject.Inject
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -25,6 +24,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 /** What the Home in-progress-transcription chip needs to render (CAP-10). */
 data class ActiveCaptureUi(val elapsedLabel: String, val meetingTitle: String?, val paused: Boolean = false)

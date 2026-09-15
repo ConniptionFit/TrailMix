@@ -2,14 +2,13 @@ package com.trailmix.app.data.db
 
 import android.content.ContentValues
 import android.database.Cursor
-import android.database.SQLException
 import android.database.sqlite.SQLiteTransactionListener
 import android.os.CancellationSignal
-import android.util.Pair as AndroidPair
 import androidx.sqlite.db.SupportSQLiteDatabase
 import androidx.sqlite.db.SupportSQLiteQuery
 import androidx.sqlite.db.SupportSQLiteStatement
 import java.sql.Connection
+import android.util.Pair as AndroidPair
 
 /**
  * A minimal [SupportSQLiteDatabase] backed by a real JDBC SQLite [Connection], so

@@ -9,10 +9,10 @@ import com.k2fsa.sherpa.onnx.OfflineSpeakerSegmentationModelConfig
 import com.k2fsa.sherpa.onnx.OfflineSpeakerSegmentationPyannoteModelConfig
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractorConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
  * AI-01 (sherpa-onnx path, replacing Picovoice Falcon 2026-09-13): thin wrapper around

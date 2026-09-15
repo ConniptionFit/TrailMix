@@ -4,14 +4,14 @@ import com.trailmix.app.data.db.NoteEntity
 import com.trailmix.app.data.db.NoteSearch
 import com.trailmix.app.data.model.TranscriptJson
 import com.trailmix.app.data.model.TranscriptLine
-import java.util.Calendar
-import java.util.Locale
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.util.Calendar
+import java.util.Locale
 
 /**
  * UX-18: Home's derived-data cache. These tests are almost entirely about *how much work*

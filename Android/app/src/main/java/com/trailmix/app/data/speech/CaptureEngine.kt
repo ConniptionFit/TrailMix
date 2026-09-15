@@ -11,8 +11,6 @@ import android.os.Looper
 import android.util.Log
 import com.google.mlkit.genai.common.FeatureStatus
 import dagger.hilt.android.qualifiers.ApplicationContext
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -24,6 +22,8 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /** Which transcription backend a capture session is using. */
 enum class EngineKind {

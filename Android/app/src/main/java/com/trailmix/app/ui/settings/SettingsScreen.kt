@@ -15,13 +15,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -54,6 +54,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -455,7 +456,8 @@ fun SettingsScreen(
                         exportLocationName == null ->
                             "Optionally save merged notes as Markdown files — an Obsidian " +
                                 "vault, a synced folder, anywhere"
-                        else -> "Notes save to the TrailMix folder here · tap to change " +
+                        else ->
+                            "Notes save to the TrailMix folder here · tap to change " +
                             "(existing files move automatically)"
                     },
                     color = c.dim,
@@ -1183,7 +1185,10 @@ private fun TrackSwitch(on: Boolean, onToggle: () -> Unit) {
     ) {
         Box(
             modifier = Modifier
-                .offset(x = thumbOffset)
+                // BLD-03: the lambda overload defers reading the animated `thumbOffset`
+                // state to layout/placement instead of composition, so each animation
+                // frame re-places this Box instead of recomposing it.
+                .offset { IntOffset(thumbOffset.roundToPx(), 0) }
                 .align(Alignment.CenterStart)
                 .size(20.dp)
                 .clip(CircleShape)

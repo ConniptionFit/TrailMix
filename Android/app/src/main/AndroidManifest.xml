@@ -52,9 +52,15 @@
          it just means no visible notification (the FGS keeps the mic alive either way). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- BLD-03: Lint wants an android:dataExtractionRules resource for API 31+, but that
+         attribute only fine-tunes WHAT gets backed up when backup is allowed at all —
+         allowBackup="false" below already disables every backup/transfer path
+         unconditionally, cloud and device-to-device alike, on every API level. There is
+         nothing left for a rules file to configure. -->
     <application
         android:name=".TrailMixApp"
         android:allowBackup="false"
+        tools:ignore="DataExtractionRules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"

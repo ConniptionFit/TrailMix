@@ -19,7 +19,6 @@ import com.trailmix.app.data.speech.CaptureSessionManager
 import com.trailmix.app.data.speech.MergeStatus
 import com.trailmix.app.ui.capture.CaptureUiState
 import dagger.hilt.android.AndroidEntryPoint
-import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -27,6 +26,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import javax.inject.Inject
 
 /**
  * Keeps a capture session alive while the user switches to another app (the

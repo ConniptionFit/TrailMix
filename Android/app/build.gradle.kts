@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
+    alias(libs.plugins.ktlint)
 }
 
 ksp {
@@ -86,7 +87,7 @@ android {
             }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
+                "proguard-rules.pro",
             )
         }
     }
@@ -119,6 +120,23 @@ android {
             // previously threw, so it cannot mask a passing assertion.
             isReturnDefaultValues = true
         }
+    }
+
+    lint {
+        // BLD-03: `./gradlew lint` had never been run as part of this project's own handoff
+        // checklist, so nothing enforced it — this baseline is that gate's day-zero snapshot,
+        // not a blanket suppression. Everything in it is a *deferred*, already-tracked category,
+        // not an unnoticed one: ~40 GradleDependency/AndroidGradlePluginVersion warnings are
+        // BLD-04's own dependency-currency backlog item verbatim; OldTargetApi is the same
+        // currency question for compileSdk/targetSdk; SelectedPhotoAccess (Android 14+ partial
+        // photo access) is a real UX enhancement, not a defect, and bigger than a lint fix;
+        // ObsoleteSdkInt's suggestion to drop mipmap-anydpi-v26's version qualifier was tried
+        // and reverted — it broke AAPT2 resource linking outright ("resource mipmap/ic_launcher
+        // not found"), so the qualifier stays despite what the generic heuristic claims. Every
+        // *other* finding from the day this baseline was created was fixed outright, not
+        // deferred (see BLD-03 in Future Improvements.md for the fixed list). A lint run that
+        // reports anything beyond this baseline is a genuinely new finding.
+        baseline = file("lint-baseline.xml")
     }
 }
 

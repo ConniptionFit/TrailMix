@@ -3,11 +3,11 @@ package com.trailmix.app.data.ai
 import com.trailmix.app.data.export.NoteMarkdown
 import com.trailmix.app.data.model.SummaryStyle
 import com.trailmix.app.data.model.TranscriptLine
-import kotlin.system.measureTimeMillis
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.system.measureTimeMillis
 
 /**
  * REL-01: the summarization and export pipeline at **conference-keynote scale**.

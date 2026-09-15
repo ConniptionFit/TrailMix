@@ -10,7 +10,6 @@ import com.trailmix.app.data.db.ChatMessageEntity
 import com.trailmix.app.data.db.NotesRepository
 import com.trailmix.app.data.settings.SettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
-import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -19,6 +18,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 @HiltViewModel
 class ChatViewModel @Inject constructor(

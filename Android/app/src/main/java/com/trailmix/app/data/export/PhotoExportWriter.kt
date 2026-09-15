@@ -1,5 +1,6 @@
 package com.trailmix.app.data.export
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.net.Uri
 import android.provider.MediaStore
@@ -53,6 +54,10 @@ object PhotoExportWriter {
         }.getOrNull()
 
     /** Same [MediaStore] columns [com.trailmix.app.data.media.PhotoSource] queried for the picker. */
+    // BLD-03: Lint's Recycle check flags the Cursor below as never closed — it doesn't credit
+    // Kotlin's `.use { }` (a try/finally close() under the hood) as equivalent to a manual
+    // close() call. Confirmed the check itself is what's stale here, not this code.
+    @SuppressLint("Recycle")
     private fun readMetadata(context: Context, uri: Uri): Pair<String, Long>? = runCatching {
         val projection = arrayOf(
             MediaStore.Images.Media.DISPLAY_NAME,

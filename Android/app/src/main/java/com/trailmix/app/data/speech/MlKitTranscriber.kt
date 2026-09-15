@@ -10,11 +10,11 @@ import com.google.mlkit.genai.speechrecognition.SpeechRecognizerResponse
 import com.google.mlkit.genai.speechrecognition.speechRecognizerOptions
 import com.google.mlkit.genai.speechrecognition.speechRecognizerRequest
 import com.trailmix.app.data.settings.SettingsRepository
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
  * On-device transcription via ML Kit GenAI speech recognition (AICore — the

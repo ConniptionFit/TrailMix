@@ -19,9 +19,6 @@ import com.trailmix.app.ui.capture.CaptureUiState
 import com.trailmix.app.ui.capture.DeviceAudioPrompt
 import com.trailmix.app.ui.capture.InputOption
 import dagger.hilt.android.qualifiers.ApplicationContext
-import java.util.Locale
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -43,6 +40,9 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.Locale
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
  * Owns a capture session end to end (CAP-10). Previously this state and its collection

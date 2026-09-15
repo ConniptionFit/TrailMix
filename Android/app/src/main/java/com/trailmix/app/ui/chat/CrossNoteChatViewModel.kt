@@ -9,13 +9,13 @@ import com.trailmix.app.data.db.ConversationKey
 import com.trailmix.app.data.db.ConversationMessageEntity
 import com.trailmix.app.data.db.NotesRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
-import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import javax.inject.Inject
 
 /**
  * Cross-note chat (AI-10). Mirrors [ChatViewModel]'s shape — a single nav-arg-derived identity,

@@ -3,10 +3,10 @@ package com.trailmix.app.ui.home
 import com.trailmix.app.data.db.NoteEntity
 import com.trailmix.app.data.model.TranscriptJson
 import com.trailmix.app.data.model.TranscriptLine
-import kotlin.system.measureTimeMillis
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.system.measureTimeMillis
 
 /**
  * Phase 2 (conference-scale reliability pass): [LongSessionLoadTest][com.trailmix.app.data.ai.LongSessionLoadTest]

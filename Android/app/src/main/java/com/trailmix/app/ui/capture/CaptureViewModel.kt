@@ -13,12 +13,12 @@ import com.trailmix.app.data.speech.CaptureSessionManager
 import com.trailmix.app.data.speech.EngineKind
 import com.trailmix.app.data.speech.MergeStatus
 import dagger.hilt.android.lifecycle.HiltViewModel
-import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import javax.inject.Inject
 
 /** A selectable input in the capture menu; null device = automatic routing. */
 data class InputOption(val label: String, val device: AudioDeviceInfo?)

@@ -9,11 +9,11 @@ import com.trailmix.app.data.db.toMarkdown
 import com.trailmix.app.data.db.toTranscriptMarkdown
 import com.trailmix.app.data.settings.SettingsRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /**
  * Writes a note's Markdown into the configured Export location (INT-02, v1.7.0 — formerly

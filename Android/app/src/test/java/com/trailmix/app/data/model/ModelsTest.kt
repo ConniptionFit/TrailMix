@@ -99,7 +99,7 @@ class ModelsTest {
     }
 
     @Test
-    fun `retired Sales Pitch template loads as NONE and Learning replaces it`(): Unit {
+    fun `retired Sales Pitch template loads as NONE and Learning replaces it`() {
         // UX-05 (v1.7.0): SALES_PITCH was removed — old notes that stored it must still
         // load without crashing, falling back to NONE.
         assertEquals(SummaryTemplate.NONE, SummaryTemplate.fromStored("SALES_PITCH"))

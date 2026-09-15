@@ -1,11 +1,11 @@
 package com.trailmix.app.data.ai
 
-import java.text.SimpleDateFormat
-import java.util.Locale
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.text.SimpleDateFormat
+import java.util.Locale
 
 /**
  * AI-06: a re-merge must never downgrade a real note title back to the placeholder.

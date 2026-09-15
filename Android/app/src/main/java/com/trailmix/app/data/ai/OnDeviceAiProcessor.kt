@@ -13,13 +13,11 @@ import com.trailmix.app.data.model.SummarySection
 import com.trailmix.app.data.model.SummaryStyle
 import com.trailmix.app.data.model.SummaryTemplate
 import com.trailmix.app.data.model.TranscriptLine
-import java.text.SimpleDateFormat
-import java.util.Date
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import javax.inject.Inject
+import javax.inject.Singleton
 
 sealed class AiAvailability {
     data object Available : AiAvailability()

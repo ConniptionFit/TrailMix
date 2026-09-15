@@ -1,6 +1,7 @@
 package com.trailmix.app.ui.export
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.net.Uri
 import android.os.Build
 import android.util.Size
@@ -178,6 +179,13 @@ fun PhotoPickerSheet(
 }
 
 @Composable
+// BLD-03: Lint's ProduceStateDoesNotAssignValue check (a real bug class — a producer that
+// never assigns leaves the State frozen forever) fires here regardless of how the assignment
+// is shaped; confirmed by trying both `value = withContext(...) { }` directly and a bare
+// `val loaded = withContext(...) { }; value = loaded` afterward — both always did assign, and
+// both still tripped it. The checker doesn't appear to track an assignment on the far side of
+// any suspending call inside the producer, not just this particular expression shape.
+@SuppressLint("ProduceStateDoesNotAssignValue")
 private fun PhotoThumbnail(uri: Uri, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val bitmap by produceState<ImageBitmap?>(initialValue = null, uri) {

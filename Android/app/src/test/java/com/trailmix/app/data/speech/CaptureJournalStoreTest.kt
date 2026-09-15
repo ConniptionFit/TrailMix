@@ -1,7 +1,6 @@
 package com.trailmix.app.data.speech
 
 import com.trailmix.app.data.model.TranscriptLine
-import java.io.File
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -13,6 +12,7 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.io.File
 
 /**
  * REL-13: the *file* side of the crash journal.

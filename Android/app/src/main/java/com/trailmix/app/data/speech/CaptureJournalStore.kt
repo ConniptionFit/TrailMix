@@ -3,17 +3,17 @@ package com.trailmix.app.data.speech
 import android.content.Context
 import android.util.Log
 import dagger.hilt.android.qualifiers.ApplicationContext
-import java.io.File
-import java.io.FileOutputStream
-import java.io.RandomAccessFile
-import javax.inject.Inject
-import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
+import java.io.RandomAccessFile
+import javax.inject.Inject
+import javax.inject.Singleton
 
 /** A crash-surviving journal on disk, already replayed. [id] is its filename. */
 data class PendingJournal(val id: String, val session: CaptureJournal.RecoveredSession)
