@@ -7,10 +7,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Grounded directly against real files pulled from the recovery device (2026-09-12 incident —
- * see `NoteMarkdownImporter`'s doc comment) rather than synthetic fixtures, because the whole
- * point of this importer is correctness against exactly what actually exists on disk, format
- * drift included.
+ * Modeled on the format variations a real export folder accumulates over time (frontmatter
+ * evolving release to release, an inline transcript becoming a companion file, stray headings
+ * left behind by earlier versions — see `NoteMarkdownImporter`'s doc comment for how those
+ * were surveyed) rather than tidy synthetic fixtures, because the whole point of this importer
+ * is correctness against exactly what actually exists on disk, format drift included. Content
+ * below is fictionalized; only the structural quirks are real.
  */
 class NoteMarkdownImporterTest {
 
@@ -97,13 +99,13 @@ class NoteMarkdownImporterTest {
     @Test
     fun `current format body keeps real content and drops derived chrome`() {
         val imported = NoteMarkdownImporter.parseNote(currentNote, currentTranscript)!!
-        assertTrue(imported.bodyOverride.contains("Claude was used to create a copy"))
+        assertTrue(imported.bodyOverride.contains("The coffee order was placed"))
         assertTrue(imported.bodyOverride.contains("Order Details"))
         // TL;DR callout, meta line, and the transcript footer are all derived — not source data.
         assertTrue("no leftover blockquote marker", !imported.bodyOverride.contains("[!summary]"))
         assertTrue("no leftover meta line", !imported.bodyOverride.contains("· 10:49 AM ·"))
         assertTrue("no leftover footer", !imported.bodyOverride.contains("Full transcript"))
-        assertTrue("no leftover H1", !imported.bodyOverride.contains("# Claude transcription"))
+        assertTrue("no leftover H1", !imported.bodyOverride.contains("# Coffee order"))
     }
 
     // ── Early format: transcript inlined under "## Transcript", no title: field ──
@@ -145,7 +147,7 @@ class NoteMarkdownImporterTest {
     @Test
     fun `early format body keeps the flat text and drops the old Date bullet and inline transcript`() {
         val imported = NoteMarkdownImporter.parseNote(earlyNote, null)!!
-        assertTrue(imported.bodyOverride.contains("Use dried chiles instead of powder this time."))
+        assertTrue(imported.bodyOverride.contains("Use dried chiles instead of powder"))
         assertTrue("no leftover Date bullet", !imported.bodyOverride.contains("**Date:**"))
         assertTrue("no leftover inline transcript", !imported.bodyOverride.contains("First idea for the recipe"))
     }
