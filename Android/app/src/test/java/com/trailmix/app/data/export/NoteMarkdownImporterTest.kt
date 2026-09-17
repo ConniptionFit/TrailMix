@@ -7,10 +7,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Grounded directly against real files pulled from the recovery device (2026-09-12 incident —
- * see `NoteMarkdownImporter`'s doc comment) rather than synthetic fixtures, because the whole
- * point of this importer is correctness against exactly what actually exists on disk, format
- * drift included.
+ * Modeled on the format variations a real export folder accumulates over time (frontmatter
+ * evolving release to release, an inline transcript becoming a companion file, stray headings
+ * left behind by earlier versions — see `NoteMarkdownImporter`'s doc comment for how those
+ * were surveyed) rather than tidy synthetic fixtures, because the whole point of this importer
+ * is correctness against exactly what actually exists on disk, format drift included. Content
+ * below is fictionalized; only the structural quirks are real.
  */
 class NoteMarkdownImporterTest {
 
@@ -18,65 +20,65 @@ class NoteMarkdownImporterTest {
 
     private val currentNote = """
         ---
-        title: Claude transcription and local processing
+        title: Coffee order for the team offsite
         date: 2026-09-01
         time: 10:49
         created: 2026-09-01T10:49:29
         duration: <1m
         duration_ms: 35548
         template: NONE
-        topics: [claude, create, device, model, specify, template]
+        topics: [coffee, order, offsite, size, vendor, delivery]
         action_items: 0
         transcript_lines: 5
-        transcript: "[[2026-09-01-claude-transcription-and-local-processing.transcript]]"
+        transcript: "[[2026-09-01-coffee-order-for-the-team-offsite.transcript]]"
         source: trailmix
         tags: [trailmix/note]
         ---
 
-        # Claude transcription and local processing
+        # Coffee order for the team offsite
 
         > [!summary] TL;DR
-        > - Claude was used to create a copy of the transcript.
-        > - The transcription is done on-device using an AI model.
+        > - The coffee order was placed with the usual vendor.
+        > - Delivery is confirmed for the morning of the offsite.
 
         *Tue 1 Sep 2026 · 10:49 AM · <1m*
 
         ## Highlights
 
-        - **`[0:05]`** Claude was used to create a copy of the transcript.
-        - **`[0:24]`** The transcription is done on-device using an AI model.
+        - **`[0:05]`** The coffee order was placed with the usual vendor.
+        - **`[0:24]`** Delivery is confirmed for the morning of the offsite.
 
         ## Key points
 
-        ### Transcription Method
+        ### Order Details
 
-        - **`[0:05]`** Claude was used to create a copy of the transcript.
-        - **`[0:24]`** The transcription is done on-device using an AI model.
+        - **`[0:05]`** The coffee order was placed with the usual vendor.
+        - **`[0:24]`** Delivery is confirmed for the morning of the offsite.
 
         ---
 
-        📄 **Full transcript:** [[2026-09-01-claude-transcription-and-local-processing.transcript]]
+        📄 **Full transcript:** [[2026-09-01-coffee-order-for-the-team-offsite.transcript]]
     """.trimIndent()
 
     private val currentTranscript = """
         ---
-        title: Claude transcription and local processing — transcript
+        title: Coffee order for the team offsite — transcript
         date: 2026-09-01
         duration: <1m
-        note: "[[2026-09-01-claude-transcription-and-local-processing]]"
+        note: "[[2026-09-01-coffee-order-for-the-team-offsite]]"
         type: transcript
         source: trailmix
         tags: [trailmix/transcript]
         ---
 
-        # Claude transcription and local processing — transcript
+        # Coffee order for the team offsite — transcript
 
-        *Verbatim, on-device. Summary: [[2026-09-01-claude-transcription-and-local-processing]]*
+        *Verbatim, on-device. Summary: [[2026-09-01-coffee-order-for-the-team-offsite]]*
 
         | Time | Text |
         |---|---|
-        | `0:05` | Literally just told Claude to make a copy of it for myself. |
-        | `0:24` | Because I didn't want to pay 15 bucks a month\| really. |
+        | `0:05` | Went with the usual vendor for the coffee order. |
+        | `0:24` | The total came to 15 dollars a month\| roughly. |
     """.trimIndent()
 
     @Test
@@ -84,26 +86,26 @@ class NoteMarkdownImporterTest {
         val imported = NoteMarkdownImporter.parseNote(currentNote, currentTranscript)
         assertNotNull(imported)
         imported!!
-        assertEquals("Claude transcription and local processing", imported.title)
+        assertEquals("Coffee order for the team offsite", imported.title)
         assertEquals(35548L, imported.durationMs)
         assertNull(imported.template)
         assertEquals(2, imported.transcript.size)
         assertEquals("0:05", imported.transcript[0].label)
-        assertEquals("Literally just told Claude to make a copy of it for myself.", imported.transcript[0].text)
+        assertEquals("Went with the usual vendor for the coffee order.", imported.transcript[0].text)
         // Escaped pipe round-trips back to a literal pipe.
-        assertTrue(imported.transcript[1].text.contains("15 bucks a month| really"))
+        assertTrue(imported.transcript[1].text.contains("15 dollars a month| roughly"))
     }
 
     @Test
     fun `current format body keeps real content and drops derived chrome`() {
         val imported = NoteMarkdownImporter.parseNote(currentNote, currentTranscript)!!
-        assertTrue(imported.bodyOverride.contains("Claude was used to create a copy"))
-        assertTrue(imported.bodyOverride.contains("Transcription Method"))
+        assertTrue(imported.bodyOverride.contains("The coffee order was placed"))
+        assertTrue(imported.bodyOverride.contains("Order Details"))
         // TL;DR callout, meta line, and the transcript footer are all derived — not source data.
         assertTrue("no leftover blockquote marker", !imported.bodyOverride.contains("[!summary]"))
         assertTrue("no leftover meta line", !imported.bodyOverride.contains("· 10:49 AM ·"))
         assertTrue("no leftover footer", !imported.bodyOverride.contains("Full transcript"))
-        assertTrue("no leftover H1", !imported.bodyOverride.contains("# Claude transcription"))
+        assertTrue("no leftover H1", !imported.bodyOverride.contains("# Coffee order"))
     }
 
     // ── Early format: transcript inlined under "## Transcript", no title: field ──
@@ -115,22 +117,22 @@ class NoteMarkdownImporterTest {
         duration_ms: 233952
         ---
 
-        # Song by Milo
+        # Weekend chili recipe idea
 
         - **Date:** Jul 17, 2026 · 10:54 PM
 
-        The artist is Milo.
+        Use dried chiles instead of powder this time.
 
         ## Transcript
-        - **3:30** First line of the song.
-        - **3:40** Second line of the song.
+        - **3:30** First idea for the recipe.
+        - **3:40** Second idea for the recipe.
     """.trimIndent()
 
     @Test
     fun `early format recovers title from the H1 heading, not frontmatter`() {
         val imported = NoteMarkdownImporter.parseNote(earlyNote, null)
         assertNotNull(imported)
-        assertEquals("Song by Milo", imported!!.title)
+        assertEquals("Weekend chili recipe idea", imported!!.title)
         assertEquals(233952L, imported.durationMs)
     }
 
@@ -139,15 +141,15 @@ class NoteMarkdownImporterTest {
         val imported = NoteMarkdownImporter.parseNote(earlyNote, null)!!
         assertEquals(2, imported.transcript.size)
         assertEquals("3:30", imported.transcript[0].label)
-        assertEquals("First line of the song.", imported.transcript[0].text)
+        assertEquals("First idea for the recipe.", imported.transcript[0].text)
     }
 
     @Test
     fun `early format body keeps the flat text and drops the old Date bullet and inline transcript`() {
         val imported = NoteMarkdownImporter.parseNote(earlyNote, null)!!
-        assertTrue(imported.bodyOverride.contains("The artist is Milo."))
+        assertTrue(imported.bodyOverride.contains("Use dried chiles instead of powder"))
         assertTrue("no leftover Date bullet", !imported.bodyOverride.contains("**Date:**"))
-        assertTrue("no leftover inline transcript", !imported.bodyOverride.contains("First line of the song"))
+        assertTrue("no leftover inline transcript", !imported.bodyOverride.contains("First idea for the recipe"))
     }
 
     // ── Intermediate format: old Highlights/custom-H2, no title, no transcript at all ──
@@ -159,17 +161,17 @@ class NoteMarkdownImporterTest {
         duration_ms: 34045
         ---
 
-        # 4a Pricing and Perception
+        # 4a Venue Options and Budget
 
         - **Date:** Jul 17, 2026 · 10:32 PM
 
         ## Highlights
-        - Disagreement on pricing tier (budget vs. mid-range)
-        - General discussion about positioning.
+        - Disagreement on venue tier (budget vs. mid-range)
+        - General discussion about catering.
 
-        ## Nothing 4a Pricing & Positioning
+        ## Nothing 4a Venue & Catering
         - Participants expressed differing opinions.
-        - The perceived value proposition was discussed.
+        - The catering budget was discussed.
     """.trimIndent()
 
     @Test
@@ -177,10 +179,10 @@ class NoteMarkdownImporterTest {
         val imported = NoteMarkdownImporter.parseNote(intermediateNote, null)
         assertNotNull(imported)
         imported!!
-        assertEquals("4a Pricing and Perception", imported.title)
+        assertEquals("4a Venue Options and Budget", imported.title)
         assertTrue(imported.transcript.isEmpty())
-        assertTrue(imported.bodyOverride.contains("Disagreement on pricing tier"))
-        assertTrue(imported.bodyOverride.contains("Nothing 4a Pricing & Positioning"))
+        assertTrue(imported.bodyOverride.contains("Disagreement on venue tier"))
+        assertTrue(imported.bodyOverride.contains("Nothing 4a Venue & Catering"))
     }
 
     // ── Old-style meeting/attendees metadata bullets (pre-frontmatter-fields) ──
