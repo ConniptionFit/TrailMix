@@ -212,7 +212,7 @@ class NoteMarkdownImporterTest {
         assertEquals(listOf("Jordan Lee", "Casey Park", "sam@example.com"), imported.attendees)
         assertTrue("no leftover Meeting bullet", !imported.bodyOverride.contains("**Meeting:**"))
         assertTrue("no leftover Attendees bullet", !imported.bodyOverride.contains("**Attendees:**"))
-        assertTrue(imported.bodyOverride.contains("Deloitte needs assurance"))
+        assertTrue(imported.bodyOverride.contains("The vendor needs assurance"))
     }
 
     // ── Non-TrailMix content must not be silently "imported" as garbage ──────
