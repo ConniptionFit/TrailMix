@@ -192,14 +192,14 @@ class NoteMarkdownImporterTest {
         duration_ms: 619594
         ---
 
-        # Sage Impact permission changes require notification.
+        # Quarterly vendor policy update requires notification.
 
         - **Date:** Jul 21, 2026 · 9:16 AM
-        - **Meeting:** Lifespark Transition Call
-        - **Attendees:** Ryan King, Barbara Miers, jpowers@lifespark.com
+        - **Meeting:** Vendor Transition Call
+        - **Attendees:** Jordan Lee, Casey Park, sam@example.com
 
-        Deloitte needs assurance of oversight for actions.
-        Smart event notifications are a potential solution.
+        The vendor needs assurance of oversight for actions.
+        Automated event notifications are a potential solution.
 
         ## Transcript
         - **0:12** Some transcript line.
@@ -208,11 +208,11 @@ class NoteMarkdownImporterTest {
     @Test
     fun `old-style Meeting and Attendees bullets are recovered and stripped from the body`() {
         val imported = NoteMarkdownImporter.parseNote(meetingNote, null)!!
-        assertEquals("Lifespark Transition Call", imported.meetingTitle)
-        assertEquals(listOf("Ryan King", "Barbara Miers", "jpowers@lifespark.com"), imported.attendees)
+        assertEquals("Vendor Transition Call", imported.meetingTitle)
+        assertEquals(listOf("Jordan Lee", "Casey Park", "sam@example.com"), imported.attendees)
         assertTrue("no leftover Meeting bullet", !imported.bodyOverride.contains("**Meeting:**"))
         assertTrue("no leftover Attendees bullet", !imported.bodyOverride.contains("**Attendees:**"))
-        assertTrue(imported.bodyOverride.contains("Deloitte needs assurance"))
+        assertTrue(imported.bodyOverride.contains("The vendor needs assurance"))
     }
 
     // ── Non-TrailMix content must not be silently "imported" as garbage ──────
