@@ -1,12 +1,16 @@
 package com.trailmix.app
 
+import android.graphics.Color.TRANSPARENT
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -27,11 +31,28 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
         val darkOverrideFlow = settingsRepository.darkModeOverride
             .stateIn(lifecycleScope, SharingStarted.Eagerly, null)
         setContent {
             val darkOverride by darkOverrideFlow.collectAsStateWithLifecycle()
+            val darkOn = darkOverride ?: isSystemInDarkTheme()
+            // E1 (2026-09-19): enableEdgeToEdge()'s default SystemBarStyle.auto reads the
+            // *system's* dark/light config at the moment it's called — it has no idea about
+            // this app's own in-app dark-mode override, so whenever the override disagreed
+            // with the system setting, the status/nav bar icon contrast was wrong (dark icons
+            // on a dark bar, or the reverse) for the whole session, and nothing ever
+            // re-invoked it when the override changed. Re-called here with an explicit style
+            // keyed on the *resolved* theme, transparent either way — TrailMix draws its own
+            // background behind the bars, so the platform scrim would just be extra, wrong-
+            // toned paint.
+            LaunchedEffect(darkOn) {
+                val style = if (darkOn) {
+                    SystemBarStyle.dark(TRANSPARENT)
+                } else {
+                    SystemBarStyle.light(TRANSPARENT, TRANSPARENT)
+                }
+                enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
+            }
             TrailMixTheme(darkModeOverride = darkOverride) {
                 Box(
                     modifier = Modifier

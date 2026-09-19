@@ -56,16 +56,24 @@
          attribute only fine-tunes WHAT gets backed up when backup is allowed at all —
          allowBackup="false" below already disables every backup/transfer path
          unconditionally, cloud and device-to-device alike, on every API level. There is
-         nothing left for a rules file to configure. -->
+         nothing left for a rules file to configure.
+
+         E5/UX-30 (2026-09-19): android:enableOnBackInvokedCallback is API 33+ only (minSdk
+         is 31) — Lint's UnusedAttribute warning on it is exactly what its own docs say it is:
+         "not an error", ignored on the two API levels below it. Predictive back is opt-in
+         below API 36 and the default from 36 on, which targetSdk now is — this just turns it
+         on everywhere the platform supports it instead of leaving it off on 33-35 for no
+         reason. -->
     <application
         android:name=".TrailMixApp"
         android:allowBackup="false"
-        tools:ignore="DataExtractionRules"
+        tools:ignore="DataExtractionRules,UnusedAttribute"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.TrailMix">
+        android:theme="@style/Theme.TrailMix"
+        android:enableOnBackInvokedCallback="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"
