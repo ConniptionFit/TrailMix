@@ -14,7 +14,10 @@ import com.trailmix.app.data.model.StructuredSummaryJson
 import com.trailmix.app.data.model.TranscriptJson
 import com.trailmix.app.data.model.TranscriptLine
 import com.trailmix.app.data.model.moveSection
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -267,11 +270,17 @@ class NotesRepository @Inject constructor(
         val note = noteDao.getById(id) ?: return DeleteResult(filesDeleted = true)
         noteDao.softDelete(id, System.currentTimeMillis())
 
+        // REL-22: deleteExported is a synchronous SAF/DocumentsContract IPC call — every
+        // caller here reaches this from viewModelScope (Main.immediate), and a multi-select
+        // delete calls this once per note, so this used to be up to two blocking cross-process
+        // calls per note on the UI thread.
         var filesOk = true
-        note.obsidianFileUri?.let { if (!exportSink.deleteExported(it)) filesOk = false }
-        // OBS-02: the companion transcript file is part of the note, so it goes too —
-        // leaving it behind would strand an orphan .transcript.md in the export folder.
-        note.transcriptFileUri?.let { if (!exportSink.deleteExported(it)) filesOk = false }
+        withContext(Dispatchers.IO) {
+            note.obsidianFileUri?.let { if (!exportSink.deleteExported(it)) filesOk = false }
+            // OBS-02: the companion transcript file is part of the note, so it goes too —
+            // leaving it behind would strand an orphan .transcript.md in the export folder.
+            note.transcriptFileUri?.let { if (!exportSink.deleteExported(it)) filesOk = false }
+        }
         return DeleteResult(filesDeleted = filesOk)
     }
 
@@ -301,12 +310,23 @@ class NotesRepository @Inject constructor(
      * was there. A day in Recently deleted is ample time for the grant to be working again.
      */
     suspend fun deleteForever(id: Long) {
-        noteDao.getById(id)?.let { note ->
+        noteDao.getById(id)?.let { deleteForeverNote(it) }
+    }
+
+    /**
+     * PERF-03: the actual work of [deleteForever], taking an already-loaded [NoteEntity] —
+     * [purgeExpiredDeleted] already has one full row per note from [NoteDao.getDeletedBefore],
+     * so routing it through the id-only [deleteForever] re-read every row a second time for no
+     * reason (an N+1 the purge pass paid on every Home/Recently-deleted screen entry).
+     */
+    private suspend fun deleteForeverNote(note: NoteEntity) {
+        // REL-22: see delete()'s own comment — deleteExported is synchronous SAF IPC.
+        withContext(Dispatchers.IO) {
             note.obsidianFileUri?.let { exportSink.deleteExported(it) }
             note.transcriptFileUri?.let { exportSink.deleteExported(it) }
         }
-        chatDao.deleteForNote(id)
-        noteDao.deleteById(id)
+        chatDao.deleteForNote(note.id)
+        noteDao.deleteById(note.id)
     }
 
     /**
@@ -316,7 +336,7 @@ class NotesRepository @Inject constructor(
      */
     suspend fun purgeExpiredDeleted() {
         val cutoff = System.currentTimeMillis() - RecentlyDeleted.RECOVERY_WINDOW_MS
-        noteDao.getDeletedBefore(cutoff).forEach { deleteForever(it.id) }
+        noteDao.getDeletedBefore(cutoff).forEach { deleteForeverNote(it) }
     }
 
     /**
@@ -394,16 +414,22 @@ class NotesRepository @Inject constructor(
     suspend fun detectAndClearDeletedExports(): Int {
         if (!exportSink.isConfigured()) return 0
         var cleared = 0
-        noteDao.getAll().forEach { note ->
-            val noteGone = note.obsidianFileUri?.let { !exportSink.exists(it) } ?: false
-            val transcriptGone = note.transcriptFileUri?.let { !exportSink.exists(it) } ?: false
-            if (noteGone || transcriptGone) {
-                noteDao.setExportUris(
-                    id = note.id,
-                    noteUri = if (noteGone) null else note.obsidianFileUri,
-                    transcriptUri = if (transcriptGone) null else note.transcriptFileUri,
-                )
-                cleared++
+        // REL-22: exists() is synchronous SAF IPC, called up to twice per note across the
+        // whole library — this is called from SettingsViewModel's init, i.e. every Settings
+        // visit on viewModelScope (Main.immediate), so it used to block the UI thread for the
+        // whole scan rather than just the one that first found it.
+        withContext(Dispatchers.IO) {
+            noteDao.getAll().forEach { note ->
+                val noteGone = note.obsidianFileUri?.let { !exportSink.exists(it) } ?: false
+                val transcriptGone = note.transcriptFileUri?.let { !exportSink.exists(it) } ?: false
+                if (noteGone || transcriptGone) {
+                    noteDao.setExportUris(
+                        id = note.id,
+                        noteUri = if (noteGone) null else note.obsidianFileUri,
+                        transcriptUri = if (transcriptGone) null else note.transcriptFileUri,
+                    )
+                    cleared++
+                }
             }
         }
         return cleared
@@ -431,7 +457,7 @@ class NotesRepository @Inject constructor(
         // now-stale list and exported each of them a second time. N unexported notes cost
         // ~2N writes and N full SAF directory scans, behind a button the user is watching.
         // Repairing the backlog *is* the backlog repair; it must not recurse into itself.
-        repairingExports = true
+        repairingExports.set(true)
         try {
             // OBS-05: a stale tracked URI must be cleared before this scan, or a note whose
             // file quietly vanished stays invisible to the very query meant to find it.
@@ -447,7 +473,7 @@ class NotesRepository @Inject constructor(
                 if (moved) exported++ else failures++
             }
         } finally {
-            repairingExports = false
+            repairingExports.set(false)
         }
         return ExportRepairResult(exported = exported, failures = failures)
     }
@@ -529,15 +555,21 @@ class NotesRepository @Inject constructor(
      * is broken would just burn I/O failing repeatedly. Guarded against re-entry because
      * [exportIfConfigured] is what calls it.
      */
-    private var repairingExports = false
+    // C17 (2026-09-19): was a plain non-volatile Boolean, read-then-set across suspend
+    // boundaries in both this function and exportMissing() — a classic TOCTOU, and the
+    // suspend boundary means the resuming coroutine can genuinely land on a different thread,
+    // so a stale read wasn't just theoretical. Two exports finishing around the same moment
+    // (e.g. two notes from the same merge batch) could both read `false` here before either
+    // set it `true`, and both proceed — exactly the double-repair race this guard exists to
+    // prevent. AtomicBoolean.compareAndSet makes the check-and-claim one indivisible step.
+    private val repairingExports = AtomicBoolean(false)
 
     private suspend fun retryMissingExports() {
-        if (repairingExports) return
-        repairingExports = true
+        if (!repairingExports.compareAndSet(false, true)) return
         try {
             noteDao.getUnexported().forEach { exportIfConfigured(it) }
         } finally {
-            repairingExports = false
+            repairingExports.set(false)
         }
     }
 
