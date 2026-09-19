@@ -56,7 +56,7 @@ allow your file manager to install unknown apps).
 
 **Prerequisites:**
 - JDK 17
-- Android SDK (platform 35, build-tools) — via Android Studio or the standalone
+- Android SDK (platform 36, build-tools) — via Android Studio or the standalone
   command-line tools
 - A device on Android 12+ (API 31) for guaranteed on-device speech recognition, or an
   emulator image; `adb` for installing to a physical device
@@ -98,6 +98,13 @@ adb install -r Android/app/build/outputs/apk/debug/app-debug.apk
 cd Android
 ./gradlew :app:testDebugUnitTest
 ```
+
+**Cutting a release build:** the release APK is arm64-v8a only (no real device this app
+targets is anything else — see [`Android/scripts/release.sh`](Android/scripts/release.sh)),
+signed with a release key kept outside this repo (see Security posture below and
+`app/build.gradle.kts`). `Android/scripts/release.sh` runs the full check gate, builds
+`assembleRelease`, and verifies the signer fingerprint, permissions, and ABI before staging
+the asset — it never publishes anything itself.
 
 ## Security posture
 
@@ -221,8 +228,10 @@ typed notes, time-windowed `Key points`, and `- [ ]` action items. That means it
 from Obsidian Dataview, scannable on a phone, and unambiguous to a model reading it cold.
    - **Upcoming meetings** — tap the calendar label on Home to see the next 7 days; tap a
      meeting to capture it (a meeting more than 5 minutes out asks first).
-4. **Transcript** — full-screen, timestamp-labeled lines (no speaker diarization on-device
-   yet). A Share icon sends the raw transcript through the Android share sheet.
+4. **Transcript** — full-screen, timestamp-labeled lines, with a speaker label on each line
+   when the optional **Speaker labels** setting is on (off by default). Diarization runs
+   entirely on-device — audio is never sent anywhere to identify who's speaking. A Share
+   icon sends the raw transcript through the Android share sheet.
 5. **Chat & Recipes** — chat about the note; recipe chips (Follow-up email, Create ticket,
    Summarize, Action items, plus any **custom recipes** you've saved in Settings) are
    saved prompts. Chat knows the meeting attendees, so it can answer things like "what
@@ -230,9 +239,11 @@ from Obsidian Dataview, scannable on a phone, and unambiguous to a model reading
    latest output of each recipe is included in the note's Markdown export as a
    *Recipe Outputs* section.
 6. **Settings** — dark mode (follows system until overridden), privacy disclosure, a
-   **Speech recognition language** picker, an optional **Export location** (pick any
-   folder via the system picker; changing it moves your already-exported files over
-   automatically, and an **Open folder** button jumps to it), **Built-in and Custom
+   **Speech recognition language** picker, an optional off-by-default **Speaker labels**
+   toggle (on-device diarization, no audio ever leaves the device), an optional
+   **Export location** (pick any folder via the system picker; changing it moves your
+   already-exported files over automatically, and an **Open folder** button jumps to it),
+   **Built-in and Custom
    Recipes** (tap any recipe to see the exact prompt it runs; create/edit/delete your own),
    **Built-in and Custom summary templates** (tap any template to see the exact guidance
    it adds to the AI's structuring prompt, and add your own — e.g. a "Sales call" template
@@ -277,5 +288,5 @@ than a `Linux/` folder here. Whether to fold it back in is still an open decisio
   a hypothetical cloud service, not of a local app) with the app's actual guarantees.
 - An Export location section (plus, as of v1.7.0, a Custom Recipes section) was added
   to Settings; the privacy section itself stays disclosure-only per the handoff.
-- Transcript lines are labeled with capture timestamps instead of speaker names —
-  on-device diarization isn't available yet.
+- Transcript lines are labeled with capture timestamps by default; speaker names appear
+  only when the optional, off-by-default **Speaker labels** setting is turned on.
