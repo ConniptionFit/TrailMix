@@ -73,10 +73,18 @@ fi
 
 echo "-- verify: signer fingerprint"
 SIGNER_LINE="$("$APKSIGNER" verify --print-certs "$APK" | grep 'SHA-256 digest' | head -1)"
-if [[ "$SIGNER_LINE" != *"$EXPECTED_SIGNER_SHA256"* ]]; then
+# Normalize both sides before comparing: newer apksigner build-tools versions changed the
+# non-verbose --print-certs line format ("V2 Signer: certificate SHA-256 digest: <64 lowercase
+# hex, no colons>" instead of the older "Signer #1 certificate SHA-256 digest: ..."), and
+# EXPECTED_SIGNER_SHA256 above is written colon-separated (the form this project's docs use) —
+# a plain substring match breaks on that difference even when the signer is actually correct.
+# Extracting just the 64-hex-char digest from each and lowercasing is robust to both.
+GOT_DIGEST="$(echo "$SIGNER_LINE" | grep -oE '[0-9a-fA-F]{64}' | tr '[:upper:]' '[:lower:]')"
+EXPECTED_DIGEST="$(echo "$EXPECTED_SIGNER_SHA256" | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+if [ "$GOT_DIGEST" != "$EXPECTED_DIGEST" ]; then
   echo "FAIL: signer does not match the expected release key." >&2
-  echo "  Expected: $EXPECTED_SIGNER_SHA256" >&2
-  echo "  Got:      $SIGNER_LINE" >&2
+  echo "  Expected: $EXPECTED_DIGEST" >&2
+  echo "  Got:      $GOT_DIGEST ($SIGNER_LINE)" >&2
   echo "  This APK is not publishable — it cannot upgrade real installs." >&2
   echo "  Check ~/.gradle/gradle.properties for TRAILMIX_STORE_FILE/PASSWORD/KEY_ALIAS/KEY_PASSWORD." >&2
   exit 1
