@@ -18,7 +18,14 @@ package com.trailmix.app.data.speech
  */
 data class SherpaOnnxDiarizerConfig(
     val segmentationAssetPath: String = "sherpa/pyannote-segmentation-3-0.int8.onnx",
-    val embeddingAssetPath: String = "sherpa/wespeaker_en_voxceleb_resnet34_LM.onnx",
+    // AI-16 (2026-09-19): dynamically int8-quantized (weights only) from the original fp32
+    // model via onnxruntime.quantization.quantize_dynamic — 26.5 MB -> 6.7 MB (~75% smaller).
+    // Verified via SherpaOnnxDiarizationSmokeTest against the real two-speaker fixture on a
+    // real device/emulator (this project's own AI-01 Trap: never trust this class of native
+    // model-swap without one) before the fp32 asset was removed: same speaker count, >=90%
+    // per-second label agreement between the two. The fp32 original is recoverable from git
+    // history if this ever needs revisiting.
+    val embeddingAssetPath: String = "sherpa/wespeaker_en_voxceleb_resnet34_LM.int8.onnx",
     val numThreads: Int = 2,
     val clusterThreshold: Float = 0.5f,
     val minDurationOnSeconds: Float = 0.3f,

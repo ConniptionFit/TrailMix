@@ -50,7 +50,10 @@ class SherpaOnnxDiarizationSmokeTest {
                 provider = "cpu",
             ),
             embedding = SpeakerEmbeddingExtractorConfig(
-                model = "sherpa/wespeaker_en_voxceleb_resnet34_LM.onnx",
+                // AI-16 (2026-09-19): the fp32 asset this originally pointed at is gone —
+                // production switched to the int8-quantized model after a one-time comparison
+                // validated it (see SherpaOnnxDiarizerConfig's doc for the result).
+                model = "sherpa/wespeaker_en_voxceleb_resnet34_LM.int8.onnx",
                 numThreads = 2,
                 debug = true,
                 provider = "cpu",
@@ -138,6 +141,14 @@ class SherpaOnnxDiarizationSmokeTest {
             distinctSpeakers.size in 2..4,
         )
     }
+
+    // AI-16 (2026-09-19): the int8-vs-fp32 comparison that gated promoting the quantized
+    // embedding model ran here, one time, against the real fp32 asset before it was removed
+    // (git history has both the test and the file if this ever needs re-running): same
+    // speaker count, >=90% per-second label agreement (permutation-invariant — a diarizer's
+    // own cluster-id numbering isn't meaningful across runs) on the real two-speaker fixture,
+    // on a real device/emulator. See SherpaOnnxDiarizerConfig's doc for the result and the
+    // size numbers.
 
     private fun readWavAsShorts(input: java.io.InputStream): ShortArray = input.use { stream ->
         val bytes = stream.readBytes()
