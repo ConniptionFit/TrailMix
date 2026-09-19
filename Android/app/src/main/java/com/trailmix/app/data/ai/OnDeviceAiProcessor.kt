@@ -13,6 +13,7 @@ import com.trailmix.app.data.model.SummarySection
 import com.trailmix.app.data.model.SummaryStyle
 import com.trailmix.app.data.model.SummaryTemplate
 import com.trailmix.app.data.model.TranscriptLine
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -60,6 +61,9 @@ class OnDeviceAiProcessor @Inject constructor() {
                 )
             }
         } catch (e: Exception) {
+            // CAP-28: `catch (e: Exception)` also matches `CancellationException` (it extends
+            // `IllegalStateException`) — see rethrowIfCancellation's doc.
+            rethrowIfCancellation(e)
             AiAvailability.Unavailable(e.message ?: "Unable to check on-device AI status.")
         }
     }
@@ -73,7 +77,7 @@ class OnDeviceAiProcessor @Inject constructor() {
                             throw downloadStatus.e
                         }
                     }
-                }
+                }.onFailure(::rethrowIfCancellation)
                 checkAvailability()
             }
             else -> status
@@ -157,7 +161,8 @@ class OnDeviceAiProcessor @Inject constructor() {
             // The fallback reads the FULL transcript, not the sampled text the model saw.
             val structured = runCatching {
                 generateStructuredSummary(typedFragments, transcript, attendees, templateGuidance, onProgress)
-            }.getOrNull() ?: DeterministicSummary.from(typedFragments, transcript, style)
+            }.onFailure(::rethrowIfCancellation).getOrNull()
+                ?: DeterministicSummary.from(typedFragments, transcript, style)
 
             MergeResult(
                 title = title,
@@ -167,7 +172,8 @@ class OnDeviceAiProcessor @Inject constructor() {
                 usedOnDeviceAi = true,
                 structuredSummary = structured,
             )
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            rethrowIfCancellation(e)
             fallbackMerge(typedFragments, transcript, createdAtEpochMs, style)
         }
     }
@@ -211,7 +217,8 @@ class OnDeviceAiProcessor @Inject constructor() {
                 append("assistant:")
             }
             generate(prompt).ifBlank { OFFLINE_ASSISTANT_REPLY }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            rethrowIfCancellation(e)
             OFFLINE_ASSISTANT_REPLY
         }
     }
@@ -257,7 +264,8 @@ class OnDeviceAiProcessor @Inject constructor() {
                 append("assistant:")
             }
             generate(prompt).ifBlank { OFFLINE_ASSISTANT_REPLY }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            rethrowIfCancellation(e)
             OFFLINE_ASSISTANT_REPLY
         }
     }
@@ -279,7 +287,9 @@ class OnDeviceAiProcessor @Inject constructor() {
         if (availability !is AiAvailability.Available) return@withContext null
         val sample = TranscriptCoverage.evenSampleLines(transcript, CHUNK_CHARS)
         if (sample.isEmpty()) return@withContext null
-        runCatching { condenseChunk(sample, templateGuidance) }.getOrNull()?.trim()?.takeIf { it.isNotBlank() }
+        runCatching { condenseChunk(sample, templateGuidance) }
+            .onFailure(::rethrowIfCancellation)
+            .getOrNull()?.trim()?.takeIf { it.isNotBlank() }
     }
 
     // ── Structured summary (UX-02) ───────────────────────────────────────────
@@ -310,7 +320,9 @@ class OnDeviceAiProcessor @Inject constructor() {
             chunks.size == 1 -> labelled(chunks.single())
             else -> {
                 val condensed = chunks.mapIndexedNotNull { index, chunk ->
-                    runCatching { condenseChunk(chunk, templateGuidance) }.getOrNull()
+                    runCatching { condenseChunk(chunk, templateGuidance) }
+                        .onFailure(::rethrowIfCancellation)
+                        .getOrNull()
                         ?.takeIf { it.isNotBlank() }
                         // Reported for failed chunks too: a skipped chunk is still work
                         // finished, and a progress line that stalls on the one call that
@@ -454,6 +466,19 @@ class OnDeviceAiProcessor @Inject constructor() {
             ?.text
             ?.trim()
             .orEmpty()
+
+    /**
+     * CAP-28: every fail-soft boundary in this file — `catch (e: Exception)` and
+     * `runCatching {}` alike — matches `CancellationException` too, since it extends
+     * `IllegalStateException`. Left unguarded, cancelling the coroutine that owns one of these
+     * calls (the capture it belongs to gets discarded, the screen is left) would be silently
+     * turned into an ordinary AI failure — a deterministic fallback result returned, and
+     * potentially saved as if the call had actually completed — instead of the cancellation
+     * propagating the way every other suspend function in this codebase expects it to.
+     */
+    private fun rethrowIfCancellation(e: Throwable) {
+        if (e is CancellationException) throw e
+    }
 
     // ── Deterministic fallback path (no AI required) ────────────────────────
 
