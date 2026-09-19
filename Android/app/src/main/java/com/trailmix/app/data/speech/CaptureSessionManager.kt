@@ -36,11 +36,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -92,7 +94,17 @@ class CaptureSessionManager @Inject constructor(
      */
     private val crashGuard = CoroutineExceptionHandler { _, throwable ->
         Log.e(TAG, "capture coroutine failed", throwable)
-        _state.value = _state.value.copy(recording = false, livePartial = "")
+        // REL-20: clear every piece of session state a crash could otherwise leave stuck, not
+        // just `recording`. An uncaught throw anywhere on this scope — including during a
+        // merge — previously left `merging` true forever, since every entry point
+        // (startCapture, resume, endAndMerge, completeRecovered) early-returns on it: the app
+        // would be permanently unable to record again until force-stopped, the exact failure
+        // REL-10 already fixed for the merge's own error path. This backstop just hadn't been
+        // taught the same lesson, and left `_mergeStatus`/the foreground service stuck too.
+        _state.update { it.copy(recording = false, merging = false, livePartial = "") }
+        _mergeStatus.value = null
+        _recovering.value = false
+        runCatching { CaptureService.stop(appContext) }
     }
 
     private val scope = CoroutineScope(SupervisorJob() + crashGuard)
@@ -153,10 +165,23 @@ class CaptureSessionManager @Inject constructor(
     private val _rollingSummary = MutableStateFlow<String?>(null)
     val rollingSummary: StateFlow<String?> = _rollingSummary.asStateFlow()
 
-    private val transcriptLines = mutableListOf<TranscriptLine>()
+    /** CAP-25: the transcript lines and CAP-24's `mm:ss` flag labels, behind a single lock —
+     *  see [TranscriptLog]'s own doc for why a bare `mutableListOf` wasn't safe here. */
+    private val transcriptLog = TranscriptLog()
 
-    /** CAP-24: `mm:ss` labels of moments flagged during this session, in tap order. */
-    private val flags = mutableListOf<String>()
+    /**
+     * CAP-27/CAP-25 (2026-09-19): every field below through [template] is written from a mix of
+     * `scope.launch {}` coroutines (the shared, genuinely multithreaded `Dispatchers.Default`
+     * pool — see [TranscriptLog]'s doc) and plain non-suspend functions called directly from
+     * the main thread ([pause], [flagMoment], [setTemplate], [continueRecovered]'s caller).
+     * `@Volatile` guarantees a write on one thread is visible to a read on another — it does
+     * not make a compound read-modify-write (`priorDurationMs +=`) atomic, but every write site
+     * for these fields runs under the mutual exclusion the session-state guards already provide
+     * (only one of begin/pause/resume/recover/merge can be "in flight" for a given session at
+     * once — see [beginSession]'s own CAP-27 guard for the one place that wasn't previously
+     * true), so visibility is the real gap being closed, not atomicity.
+     */
+    @Volatile
     private var startedAtMs = 0L
     private var listenJob: Job? = null
     private var tickerJob: Job? = null
@@ -167,6 +192,7 @@ class CaptureSessionManager @Inject constructor(
     /** AI-11: transcript line count as of the last successful rolling-summary pass — lets a
      *  quiet stretch (or a paused session, which shares this same periodic job) skip the model
      *  call entirely instead of re-condensing unchanged content every tick. */
+    @Volatile
     private var lastRollingSummaryLineCount = 0
 
     /**
@@ -176,13 +202,16 @@ class CaptureSessionManager @Inject constructor(
      * [AudioPipeline] it creates across this session's pause/resume cycles retains into the
      * *same* buffer. Read and cleared by [diarizeIfEnabled] once the session ends.
      */
+    @Volatile
     private var audioRetention: AudioRetentionBuffer? = null
 
     /** Guards the one-time-per-session setup above — true from the first [runListenSession]
      *  of a session onward; reset to false wherever [audioRetention] itself is reset. */
+    @Volatile
     private var diarizationConfiguredForSession = false
 
     /** REL-09: last values written to the journal, so each flush only records what moved. */
+    @Volatile
     private var journaled = JournalSnapshot()
 
     /**
@@ -190,20 +219,42 @@ class CaptureSessionManager @Inject constructor(
      * capture actually started, read back from its journal. Normal sessions leave this at 0
      * and keep the existing behaviour of stamping the note when the merge runs.
      */
+    @Volatile
     private var recoveredCreatedAtMs = 0L
+    @Volatile
     private var capturedInCall = false
+    @Volatile
     private var silentSeconds = 0
+    @Volatile
     private var priorDurationMs = 0L
+    @Volatile
     private var resumeCreatedAt = 0L
+    @Volatile
     private var resumeNoteId = -1L
+    @Volatile
     private var attendees: List<String> = emptyList()
+    @Volatile
     private var watchingForCallEnd = false
+    @Volatile
     private var callEndedPromptFired = false
 
     // AI-03: the STORED template value — a SummaryTemplate enum name or "custom:<name>".
     // Resolved to its prompt-guidance sentence only at merge time (TemplateOptions.guidanceFor),
     // so editing a custom template mid-capture picks up the latest wording.
+    @Volatile
     private var template: String = SummaryTemplate.NONE.name
+
+    /**
+     * CAP-27 (2026-09-19): guards [beginSession] against the exact REL-19 scenario — the
+     * synchronous "is a session already active" check in [beginSession] happens before the
+     * suspend [refreshRecovery] call that follows it, so two close-enough calls (a route
+     * recomposing and re-running its auto-start `LaunchedEffect`, say) could both pass that
+     * check before either had actually flipped `recording`, and both then independently reset
+     * the journal/transcript/session-config state — with `CaptureEngine.begin()` unconditionally
+     * overwriting its own `pipeline` field, so the loser's `AudioPipeline` and mic `AudioRecord`
+     * would leak rather than error. Only the caller that wins the `compareAndSet` proceeds.
+     */
+    private val beginSessionInFlight = AtomicBoolean(false)
 
     /** Which existing note (if any) the *currently active* session is attached to. */
     val activeResumeNoteId: Long
@@ -215,53 +266,63 @@ class CaptureSessionManager @Inject constructor(
      */
     fun beginSession(resumeNoteId: Long, meetingTitle: String?) {
         if (_state.value.recording || _state.value.paused || _state.value.merging) return
+        // CAP-27: see beginSessionInFlight's own doc — only the winner of this proceeds.
+        if (!beginSessionInFlight.compareAndSet(false, true)) return
         scope.launch {
-            // REL-19: a session can be abandoned mid-flight with the *process* still alive —
-            // found live during a soak test, where a ~45-minute capture's journal was orphaned
-            // and a brand-new session silently began in its place, with no crash, no prompt,
-            // and no sign anything had happened beyond the elapsed timer looking wrong. The
-            // most likely trigger is Android destroying this backgrounded Activity under
-            // memory pressure while CaptureService's foreground status keeps the process (and
-            // this singleton) alive — Navigation's saved back stack then restores straight
-            // onto the Capture route, and this function's own composable re-runs its
-            // mic-permission-then-record startup with no idea a session was ever running.
-            // refreshRecovery() is otherwise only re-checked at construction and after a
-            // previous recovery is resolved (see its own doc comment) — neither covers this
-            // path, so it is forced here too, before anything below can overwrite that journal.
-            refreshRecovery()
-            if (_pendingRecovery.value != null) return@launch
-            this@CaptureSessionManager.resumeNoteId = resumeNoteId
-            fragments.value = ""
-            transcriptLines.clear()
-            _liveLines.value = emptyList()
-            flags.clear()
-            _rollingSummary.value = null
-            lastRollingSummaryLineCount = 0
-            audioRetention = null
-            diarizationConfiguredForSession = false
-            priorDurationMs = 0L
-            resumeCreatedAt = 0L
-            recoveredCreatedAtMs = 0L
-            capturedInCall = false
-            attendees = emptyList()
-            template = SummaryTemplate.NONE.name
-            callEndedPromptFired = false
-            _state.value = CaptureUiState(
-                meetingTitle = meetingTitle,
-                noteTitle = meetingTitle ?: CaptureUiState.UNTITLED,
-            )
-            // REL-09: open the crash journal before anything can be captured, so there is no
-            // window where an utterance exists only in memory.
-            journaled = JournalSnapshot()
-            journal.begin(System.currentTimeMillis(), resumeNoteId)
-            startJournalFlush()
-            startRollingSummary()
-            if (resumeNoteId <= 0) {
-                // Fresh note: seed the template from the user's Settings default (UX-02); a
-                // resumed note keeps whatever template it was created with (see applyResume).
-                settingsRepository.defaultSummaryTemplate.first()?.let { template = it }
+            try {
+                // REL-19: a session can be abandoned mid-flight with the *process* still alive —
+                // found live during a soak test, where a ~45-minute capture's journal was
+                // orphaned and a brand-new session silently began in its place, with no crash,
+                // no prompt, and no sign anything had happened beyond the elapsed timer looking
+                // wrong. The most likely trigger is Android destroying this backgrounded
+                // Activity under memory pressure while CaptureService's foreground status keeps
+                // the process (and this singleton) alive — Navigation's saved back stack then
+                // restores straight onto the Capture route, and this function's own composable
+                // re-runs its mic-permission-then-record startup with no idea a session was ever
+                // running. refreshRecovery() is otherwise only re-checked at construction and
+                // after a previous recovery is resolved (see its own doc comment) — neither
+                // covers this path, so it is forced here too, before anything below can
+                // overwrite that journal.
+                refreshRecovery()
+                if (_pendingRecovery.value != null) return@launch
+                this@CaptureSessionManager.resumeNoteId = resumeNoteId
+                fragments.value = ""
+                transcriptLog.clear()
+                _liveLines.value = emptyList()
+                _rollingSummary.value = null
+                lastRollingSummaryLineCount = 0
+                audioRetention = null
+                diarizationConfiguredForSession = false
+                priorDurationMs = 0L
+                resumeCreatedAt = 0L
+                recoveredCreatedAtMs = 0L
+                capturedInCall = false
+                attendees = emptyList()
+                template = SummaryTemplate.NONE.name
+                callEndedPromptFired = false
+                _state.value = CaptureUiState(
+                    meetingTitle = meetingTitle,
+                    noteTitle = meetingTitle ?: CaptureUiState.UNTITLED,
+                )
+                // REL-09: open the crash journal before anything can be captured, so there is no
+                // window where an utterance exists only in memory.
+                journaled = JournalSnapshot()
+                journal.begin(System.currentTimeMillis(), resumeNoteId)
+                startJournalFlush()
+                startRollingSummary()
+                if (resumeNoteId <= 0) {
+                    // Fresh note: seed the template from the user's Settings default (UX-02); a
+                    // resumed note keeps whatever template it was created with (see applyResume).
+                    settingsRepository.defaultSummaryTemplate.first()?.let { template = it }
+                }
+                startRecording(applyPriorResume = true)
+            } finally {
+                // CAP-27: cleared here — including the early `_pendingRecovery` return above —
+                // so a call refused for a real reason (a pending recovery) doesn't lock
+                // beginSession() out forever; only a second call racing the same window is
+                // meant to be blocked, not every call after a refusal.
+                beginSessionInFlight.set(false)
             }
-            startRecording(applyPriorResume = true)
         }
     }
 
@@ -311,10 +372,12 @@ class CaptureSessionManager @Inject constructor(
         val selected = _state.value.inputOptions
             .getOrNull(_state.value.selectedInputIndex)?.device
         val events = engine.begin(selected)
-        _state.value = _state.value.copy(
-            engineKind = engine.kind.value,
-            speechAvailable = engine.kind.value != EngineKind.NONE,
-        )
+        _state.update {
+            it.copy(
+                engineKind = engine.kind.value,
+                speechAvailable = engine.kind.value != EngineKind.NONE,
+            )
+        }
         // AI-08: snapshot once per session, like the summary template default below it — a
         // mid-capture edit in Settings applies from the next session, not retroactively.
         val vocabularyTerms = settingsRepository.vocabularyTerms.first()
@@ -326,7 +389,7 @@ class CaptureSessionManager @Inject constructor(
             // `speechAvailable = false` — that flag means "no engine at all" (NONE), and this
             // session still has one, it has just stopped producing anything.
             if (event.recognizerDead) {
-                _state.value = _state.value.copy(captureError = RECOGNIZER_UNAVAILABLE)
+                _state.update { it.copy(captureError = RECOGNIZER_UNAVAILABLE) }
             }
             if (event.finalizedUtterance.isNotBlank()) {
                 val correctedText = VocabularyCorrection.apply(event.finalizedUtterance, vocabularyTerms)
@@ -334,17 +397,25 @@ class CaptureSessionManager @Inject constructor(
                     label = elapsedLabel(),
                     text = correctedText,
                 )
-                transcriptLines += finalized
                 // REL-09: journal it before it is anything but a value in RAM. Everything
                 // else here is display state that can be rebuilt; this line cannot.
                 journal.line(finalized)
-                _liveLines.value = transcriptLines.toList()
-                _state.value = _state.value.copy(
-                    lastFinalLine = correctedText,
-                    livePartial = "",
-                )
+                _liveLines.value = transcriptLog.appendLine(finalized)
+                _state.update {
+                    it.copy(lastFinalLine = correctedText, livePartial = "")
+                }
             } else if (event.partialText.isNotBlank()) {
-                _state.value = _state.value.copy(livePartial = event.partialText)
+                _state.update { it.copy(livePartial = event.partialText) }
+            }
+        }
+        // R20/CAP-29: the collect loop above completes normally (no exception) when the mic
+        // pump hit a fatal AudioRecord error and closed the pipe for EOF — from here alone that
+        // is indistinguishable from an ordinary, successful end-of-input. Ask the engine what
+        // actually happened and, if it was a real failure, tell the user rather than letting
+        // the session go quiet with "Listening…" as the last thing they saw.
+        if (engine.hadFatalPipelineError()) {
+            _state.update {
+                it.copy(speechAvailable = false, captureError = MIC_UNAVAILABLE, livePartial = "")
             }
         }
     }
@@ -365,7 +436,7 @@ class CaptureSessionManager @Inject constructor(
         // session re-runs this, and a mic that was busy last time is very often free now.
         // Leaving a stale "couldn't start the microphone" on a session that is transcribing
         // fine would be its own lie.
-        _state.value = _state.value.copy(recording = true, paused = false, captureError = null)
+        _state.update { it.copy(recording = true, paused = false, captureError = null) }
         CaptureService.start(appContext)
         listenJob = scope.launch {
             try {
@@ -379,11 +450,9 @@ class CaptureSessionManager @Inject constructor(
                 // into and save. Say so plainly and keep the session alive rather than
                 // crashing or sitting on "Listening…" forever while nothing arrives.
                 Log.w(TAG, "capture listen session failed", e)
-                _state.value = _state.value.copy(
-                    speechAvailable = false,
-                    captureError = MIC_UNAVAILABLE,
-                    livePartial = "",
-                )
+                _state.update {
+                    it.copy(speechAvailable = false, captureError = MIC_UNAVAILABLE, livePartial = "")
+                }
             } catch (e: Exception) {
                 // CAP-19: everything past engine.begin() succeeding runs through the ASR
                 // recognizer (ML Kit/AICore), not the mic — a failure here (AICore gone away,
@@ -391,11 +460,9 @@ class CaptureSessionManager @Inject constructor(
                 // case above, and telling the user "the microphone is busy" when the mic is
                 // fine is the same class of lie CAP-17 found in the LEGACY lane's own message.
                 Log.w(TAG, "capture listen session failed", e)
-                _state.value = _state.value.copy(
-                    speechAvailable = false,
-                    captureError = RECOGNIZER_UNAVAILABLE,
-                    livePartial = "",
-                )
+                _state.update {
+                    it.copy(speechAvailable = false, captureError = RECOGNIZER_UNAVAILABLE, livePartial = "")
+                }
             }
         }
         tickerJob = scope.launch {
@@ -411,17 +478,28 @@ class CaptureSessionManager @Inject constructor(
                     if (callMode != AudioManager.MODE_IN_CALL && callMode != AudioManager.MODE_IN_COMMUNICATION) {
                         watchingForCallEnd = false
                         callEndedPromptFired = true
-                        _state.value = _state.value.copy(callEndedPrompt = true)
+                        _state.update { it.copy(callEndedPrompt = true) }
                         _callEndedEvents.emit(Unit)
                     }
                 }
-                _state.value = _state.value.copy(
-                    elapsedLabel = elapsedLabel(),
-                    elapsedMs = currentDurationMs(),
-                    elapsedBaseMs = elapsedBaseMs(),
-                    deviceAudioActive = engine.deviceAudioActive.value,
-                    deviceAudioSilent = silentSeconds >= SILENT_HINT_AFTER_S,
-                )
+                // CAP-26: `update {}` rather than a value-then-copy read-modify-write — this
+                // job ticks once a second on the shared Default pool alongside several other
+                // coroutines on the same scope that can also publish state (the listen-session
+                // collector, pause()/resume() called directly from the main thread). A plain
+                // `_state.value = _state.value.copy(...)` here could read a pre-pause snapshot,
+                // lose the race to pause()'s own write, and then publish `recording = true`
+                // over top of it a moment later — `update {}`'s lambda always sees the latest
+                // value, so a losing tick can never resurrect a state another writer just
+                // superseded.
+                _state.update {
+                    it.copy(
+                        elapsedLabel = elapsedLabel(),
+                        elapsedMs = currentDurationMs(),
+                        elapsedBaseMs = elapsedBaseMs(),
+                        deviceAudioActive = engine.deviceAudioActive.value,
+                        deviceAudioSilent = silentSeconds >= SILENT_HINT_AFTER_S,
+                    )
+                }
                 delay(1_000)
             }
         }
@@ -445,18 +523,20 @@ class CaptureSessionManager @Inject constructor(
         disarmBumpTimer()
         launchAudioTeardown()
         silentSeconds = 0
-        _state.value = _state.value.copy(
-            recording = false,
-            paused = true,
-            livePartial = "",
-            elapsedLabel = frozenLabel,
-            // priorDurationMs was just advanced above and `recording` is still true here,
-            // so currentDurationMs() would double-count the final delta.
-            elapsedMs = priorDurationMs,
-            elapsedBaseMs = System.currentTimeMillis() - priorDurationMs,
-            deviceAudioActive = false,
-            deviceAudioSilent = false,
-        )
+        _state.update {
+            it.copy(
+                recording = false,
+                paused = true,
+                livePartial = "",
+                elapsedLabel = frozenLabel,
+                // priorDurationMs was just advanced above and `recording` is still true here,
+                // so currentDurationMs() would double-count the final delta.
+                elapsedMs = priorDurationMs,
+                elapsedBaseMs = System.currentTimeMillis() - priorDurationMs,
+                deviceAudioActive = false,
+                deviceAudioSilent = false,
+            )
+        }
         // REL-09: the timeline just froze — pin the final duration now rather than leaving
         // the journal to report whatever the last periodic flush happened to catch.
         flushJournal()
@@ -475,24 +555,23 @@ class CaptureSessionManager @Inject constructor(
         if (_state.value.deviceAudioActive) return
         scope.launch {
             val explained = settingsRepository.projectionExplainerShown.first()
-            _state.value = _state.value.copy(
-                deviceAudioPrompt =
-                    if (explained) DeviceAudioPrompt.ASK else DeviceAudioPrompt.EXPLAIN_THEN_ASK,
-            )
+            _state.update {
+                it.copy(
+                    deviceAudioPrompt =
+                        if (explained) DeviceAudioPrompt.ASK else DeviceAudioPrompt.EXPLAIN_THEN_ASK,
+                )
+            }
         }
     }
 
     private suspend fun applyResume() {
         val note = notesRepository.getNote(resumeNoteId) ?: return
-        transcriptLines.clear()
-        transcriptLines.addAll(note.transcript)
-        _liveLines.value = transcriptLines.toList()
-        flags.clear()
-        flags.addAll(note.flaggedLabels)
+        _liveLines.value = transcriptLog.replaceLines(note.transcript)
+        transcriptLog.replaceFlags(note.flaggedLabels)
         // AI-11: baseline at the resumed length, not 0 — only newly-spoken content after the
         // resume should trigger a (re-)summarization pass, not the whole pre-existing transcript.
         _rollingSummary.value = null
-        lastRollingSummaryLineCount = transcriptLines.size
+        lastRollingSummaryLineCount = transcriptLog.lineCount()
         // AI-01: same reasoning — audio is never persisted, so a resume can only ever diarize
         // whatever gets captured from this point forward, never the note's existing transcript.
         audioRetention = null
@@ -503,16 +582,18 @@ class CaptureSessionManager @Inject constructor(
         capturedInCall = note.capturedInCall
         attendees = note.attendees
         template = note.template ?: SummaryTemplate.NONE.name
-        _state.value = _state.value.copy(
-            meetingTitle = note.meetingTitle ?: _state.value.meetingTitle,
-            // CAP-13: resuming into a real note — the notification should name it.
-            noteTitle = note.title,
-            lastFinalLine = transcriptLines.lastOrNull()?.text ?: "",
-        )
+        _state.update {
+            it.copy(
+                meetingTitle = note.meetingTitle ?: it.meetingTitle,
+                // CAP-13: resuming into a real note — the notification should name it.
+                noteTitle = note.title,
+                lastFinalLine = transcriptLog.lastLineText() ?: "",
+            )
+        }
     }
 
     fun consumeDeviceAudioPrompt() {
-        _state.value = _state.value.copy(deviceAudioPrompt = DeviceAudioPrompt.NONE)
+        _state.update { it.copy(deviceAudioPrompt = DeviceAudioPrompt.NONE) }
     }
 
     fun markExplainerShown() {
@@ -527,12 +608,14 @@ class CaptureSessionManager @Inject constructor(
             val current = meetingSource.currentEvent()
             if (current != null && _state.value.recording) {
                 if (_state.value.meetingTitle == null) {
-                    _state.value = _state.value.copy(
-                        meetingTitle = current.title,
-                        // Only name the note after the meeting if nothing better is known.
-                        noteTitle = _state.value.noteTitle.takeIf { it != CaptureUiState.UNTITLED }
-                            ?: current.title,
-                    )
+                    _state.update {
+                        it.copy(
+                            meetingTitle = current.title,
+                            // Only name the note after the meeting if nothing better is known.
+                            noteTitle = it.noteTitle.takeIf { title -> title != CaptureUiState.UNTITLED }
+                                ?: current.title,
+                        )
+                    }
                 }
                 if (attendees.isEmpty()) {
                     attendees = meetingSource.attendeesFor(current.eventId)
@@ -543,7 +626,7 @@ class CaptureSessionManager @Inject constructor(
 
     fun selectInput(index: Int) {
         val option = _state.value.inputOptions.getOrNull(index) ?: return
-        _state.value = _state.value.copy(selectedInputIndex = index)
+        _state.update { it.copy(selectedInputIndex = index) }
         engine.setPreferredDevice(option.device)
     }
 
@@ -551,7 +634,7 @@ class CaptureSessionManager @Inject constructor(
         CaptureService.attachProjection(appContext, resultCode, data)
         scope.launch {
             delay(500)
-            _state.value = _state.value.copy(deviceAudioActive = engine.deviceAudioActive.value)
+            _state.update { it.copy(deviceAudioActive = engine.deviceAudioActive.value) }
         }
     }
 
@@ -562,7 +645,7 @@ class CaptureSessionManager @Inject constructor(
         // not the mic.
         pendingAudioTeardown = scope.launch { engine.detachDeviceAudio() }
         silentSeconds = 0
-        _state.value = _state.value.copy(deviceAudioActive = false, deviceAudioSilent = false)
+        _state.update { it.copy(deviceAudioActive = false, deviceAudioSilent = false) }
     }
 
     /** [stored] is a [TemplateOption.stored] value — enum name or `custom:<name>` (AI-03). */
@@ -580,7 +663,16 @@ class CaptureSessionManager @Inject constructor(
         // Must read before flipping `recording` below — currentDurationMs() branches on
         // it (paused vs. still-running) to avoid double-counting the paused gap.
         val durationMs = currentDurationMs()
-        _state.value = _state.value.copy(merging = true, recording = false)
+        // REL-20: fold the just-elapsed delta into priorDurationMs before flipping `recording`
+        // off, the same pattern pause() uses a few lines above. Without this, stopCapture()'s
+        // own final flushJournal() — reached a moment later via runMerge() — calls
+        // currentDurationMs() with `recording` already false and gets back the *pre-merge*
+        // priorDurationMs, silently regressing the journal's own duration field relative to the
+        // `durationMs` value already captured above and headed for the saved note.
+        if (_state.value.recording) {
+            priorDurationMs += System.currentTimeMillis() - startedAtMs
+        }
+        _state.update { it.copy(merging = true, recording = false) }
         _mergeStatus.value = MergeStatus(_state.value.noteTitle)
         scope.launch {
             // REL-10: everything from here to the note existing runs inside runCatching, and
@@ -591,11 +683,19 @@ class CaptureSessionManager @Inject constructor(
             // the app unable to record again until it was force-stopped. onDone was never
             // called either, so the Capture screen sat on "Merging on-device…" with no way
             // out. completeRecovered already guarded itself this way; this path did not.
-            val id = runCatching { runMerge(durationMs) }.getOrElse { -1L }
+            //
+            // CAP-28: `runCatching` catches `Throwable`, including `CancellationException` —
+            // if this coroutine is itself cancelled mid-merge (the singleton's `scope` is
+            // process-scoped so that shouldn't happen in practice, but a future caller must not
+            // be able to accidentally make a cancelled merge report success), it must propagate,
+            // not be swallowed and reported as an ordinary -1L failure.
+            val id = runCatching { runMerge(durationMs) }
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrElse { -1L }
             resumeNoteId = -1L
             recoveredCreatedAtMs = 0L
             _mergeStatus.value = null
-            _state.value = _state.value.copy(merging = false)
+            _state.update { it.copy(merging = false) }
             // Only now — the foreground service carried the merge (see stopCapture). Guarded
             // because `startService` throws if the service has already gone away while the app
             // sits in the background: standing the service down must never be the thing that
@@ -629,14 +729,14 @@ class CaptureSessionManager @Inject constructor(
         val id = mergeAndSave(
             noteId = resumeNoteId,
             typed = fragments.value,
-            transcript = transcriptLines.toList(),
+            transcript = transcriptLog.lineSnapshot(),
             durationMs = durationMs,
             createdAtEpochMs = createdAt,
             meetingTitle = _state.value.meetingTitle,
             capturedInCall = capturedInCall,
             attendees = attendees,
             template = template,
-            flags = flags.toList(),
+            flags = transcriptLog.flagSnapshot(),
         )
         // REL-09: the capture is now durably a note (or was empty and deliberately not
         // saved), so the journal has done its job. Only now — a crash at any point
@@ -767,7 +867,7 @@ class CaptureSessionManager @Inject constructor(
     /** CAP-12: clears the one-shot call-ended dialog/notification without ending the
      * session — "finish later" just keeps recording. */
     fun consumeCallEndedPrompt() {
-        _state.value = _state.value.copy(callEndedPrompt = false)
+        _state.update { it.copy(callEndedPrompt = false) }
     }
 
     private fun refreshInputOptions() {
@@ -775,8 +875,10 @@ class CaptureSessionManager @Inject constructor(
             add(InputOption("Auto (follow system)", null))
             engine.availableInputDevices().forEach { add(InputOption(friendlyName(it), it)) }
         }
-        val keepIndex = _state.value.selectedInputIndex.takeIf { it < options.size } ?: 0
-        _state.value = _state.value.copy(inputOptions = options, selectedInputIndex = keepIndex)
+        _state.update {
+            val keepIndex = it.selectedInputIndex.takeIf { i -> i < options.size } ?: 0
+            it.copy(inputOptions = options, selectedInputIndex = keepIndex)
+        }
     }
 
     private fun friendlyName(device: AudioDeviceInfo): String = when (device.type) {
@@ -834,15 +936,22 @@ class CaptureSessionManager @Inject constructor(
         rollingSummaryJob = null
         disarmBumpTimer()
         launchAudioTeardown()
-        if (handOffToMerge) CaptureService.merge(appContext) else CaptureService.stop(appContext)
+        // REL-20: guarded like the other two CaptureService.stop() call sites (endAndMerge,
+        // completeRecovered) — this one wasn't, and `startService`/`stopService` can throw if
+        // the service has already gone away while the app sits in the background.
+        runCatching {
+            if (handOffToMerge) CaptureService.merge(appContext) else CaptureService.stop(appContext)
+        }
         silentSeconds = 0
-        _state.value = _state.value.copy(
-            recording = false,
-            paused = false,
-            livePartial = "",
-            deviceAudioActive = false,
-            deviceAudioSilent = false,
-        )
+        _state.update {
+            it.copy(
+                recording = false,
+                paused = false,
+                livePartial = "",
+                deviceAudioActive = false,
+                deviceAudioSilent = false,
+            )
+        }
     }
 
     /** Elapsed time in ms as of right now: frozen at `priorDurationMs` while paused
@@ -871,7 +980,7 @@ class CaptureSessionManager @Inject constructor(
     fun flagMoment(): String? {
         if (!_state.value.recording && !_state.value.paused) return null
         val label = elapsedLabel()
-        flags += label
+        transcriptLog.appendFlag(label)
         journal.flag(label)
         return label
     }
@@ -949,7 +1058,7 @@ class CaptureSessionManager @Inject constructor(
      *  call leaves [lastRollingSummaryLineCount] unmoved so the next tick retries it, and leaves
      *  [_rollingSummary] showing its last good value rather than blanking on a transient error. */
     private suspend fun refreshRollingSummary() {
-        val lines = transcriptLines.toList()
+        val lines = transcriptLog.lineSnapshot()
         if (lines.isEmpty() || lines.size == lastRollingSummaryLineCount) return
         val customTemplates = settingsRepository.customSummaryTemplates.first()
         val guidance = TemplateOptions.guidanceFor(template, customTemplates)
@@ -1014,15 +1123,12 @@ class CaptureSessionManager @Inject constructor(
 
         resumeNoteId = recovered.resumeNoteId
         fragments.value = recovered.typedFragments
-        transcriptLines.clear()
-        transcriptLines.addAll(recovered.transcript)
-        _liveLines.value = transcriptLines.toList()
-        flags.clear()
-        flags.addAll(recovered.flags.map { it.label })
+        _liveLines.value = transcriptLog.replaceLines(recovered.transcript)
+        transcriptLog.replaceFlags(recovered.flags.map { it.label })
         // AI-11: same reasoning as applyResume() — only content recognized after the recovery
         // continues should trigger a fresh pass, not the whole journal-recovered transcript.
         _rollingSummary.value = null
-        lastRollingSummaryLineCount = transcriptLines.size
+        lastRollingSummaryLineCount = transcriptLog.lineCount()
         // AI-01: same reasoning — only audio captured after the recovery continues can ever
         // be retained, so diarization (if enabled) starts a fresh buffer from here too.
         audioRetention = null
@@ -1039,7 +1145,7 @@ class CaptureSessionManager @Inject constructor(
             noteTitle = recovered.noteTitle.ifBlank {
                 recovered.meetingTitle ?: CaptureUiState.UNTITLED
             },
-            lastFinalLine = transcriptLines.lastOrNull()?.text ?: "",
+            lastFinalLine = transcriptLog.lastLineText() ?: "",
         )
 
         journaled = JournalSnapshot()
@@ -1120,7 +1226,7 @@ class CaptureSessionManager @Inject constructor(
      * finished, in which case a late callback must not resurrect the notification.
      */
     private fun publishMergeProgress(done: Int, total: Int) {
-        _mergeStatus.value = _mergeStatus.value?.copy(chunksDone = done, chunksTotal = total)
+        _mergeStatus.update { it?.copy(chunksDone = done, chunksTotal = total) }
     }
 
     /** Throw the recovered capture away for good (REL-09) — the UI confirms first. */
