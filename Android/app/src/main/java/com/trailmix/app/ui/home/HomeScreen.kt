@@ -65,6 +65,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.trailmix.app.data.calendar.UpcomingMeeting
 import com.trailmix.app.data.db.NoteEntity
 import com.trailmix.app.data.db.toMarkdown
+import com.trailmix.app.ui.components.ActiveCaptureChip
 import com.trailmix.app.ui.components.SectionLabel
 import com.trailmix.app.ui.export.ExportFormatPickerDialog
 import com.trailmix.app.ui.theme.TrailMix
@@ -97,7 +98,11 @@ fun HomeScreen(
     val deletedCount by viewModel.deletedCount.collectAsStateWithLifecycle()
     val upcoming by viewModel.upcoming.collectAsStateWithLifecycle()
     val calendarGranted by viewModel.calendarGranted.collectAsStateWithLifecycle()
-    val activeCapture by viewModel.activeCapture.collectAsStateWithLifecycle()
+    // PERF-04 (2026-09-19): activeCapture ticks once a second while a capture is running (it
+    // carries the live elapsedLabel) — collecting it here meant this whole screen's body,
+    // including the notes LazyColumn's content lambda, recomposed every second regardless of
+    // whether anything else changed. Hoisted down into ActiveCaptureChip below, which collects
+    // it itself, so only that small composable recomposes on each tick.
     // REL-09: a capture the app never got to finish, still on disk.
     val pendingRecovery by viewModel.pendingRecovery.collectAsStateWithLifecycle()
     val recovering by viewModel.recovering.collectAsStateWithLifecycle()
@@ -214,37 +219,8 @@ fun HomeScreen(
 
             // In-progress transcription chip (CAP-10) — recording continues in the
             // background even after leaving Capture; tap to jump straight back in.
-            activeCapture?.let { active ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 4.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(c.amber)
-                        .clickable(onClick = onOpenActiveCapture)
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = (if (active.paused) "Paused" else "Recording") +
-                            (active.meetingTitle?.let { " · $it" } ?: ""),
-                        color = Color.White,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                    Text(
-                        text = active.elapsedLabel,
-                        color = Color.White,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.padding(start = 10.dp),
-                    )
-                }
-            }
+            // PERF-04: collects its own state so its 1 Hz tick can't recompose HomeScreen.
+            ActiveCaptureChip(activeCapture = viewModel.activeCapture, onOpen = onOpenActiveCapture)
 
             val searching = query.isNotBlank()
 

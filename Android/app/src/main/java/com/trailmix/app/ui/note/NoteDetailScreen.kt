@@ -41,7 +41,6 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -51,6 +50,7 @@ import com.trailmix.app.data.db.toMarkdown
 import com.trailmix.app.data.export.ExportFormat
 import com.trailmix.app.data.model.Provenance
 import com.trailmix.app.data.model.SummaryBullet
+import com.trailmix.app.ui.components.ActiveCaptureChip
 import com.trailmix.app.ui.components.BackChevron
 import com.trailmix.app.ui.export.ExportFormatPickerDialog
 import com.trailmix.app.ui.export.PhotoPickerSheet
@@ -71,7 +71,7 @@ fun NoteDetailScreen(
     viewModel: NoteDetailViewModel = hiltViewModel(),
 ) {
     val note by viewModel.note.collectAsStateWithLifecycle()
-    val activeCapture by viewModel.activeCapture.collectAsStateWithLifecycle()
+    // PERF-04: activeCapture is no longer collected here — see ActiveCaptureChip's doc for why.
     val defaultExportFormat by viewModel.exportFormat.collectAsStateWithLifecycle()
     val photoPermissionGranted by viewModel.photoPermissionGranted.collectAsStateWithLifecycle()
     val matchedPhotos by viewModel.matchedPhotos.collectAsStateWithLifecycle()
@@ -219,38 +219,10 @@ fun NoteDetailScreen(
         // In-progress transcription chip (CAP-10, extended Part 3.2): a capture is live
         // somewhere else in the app — surfaced here too so navigating into an unrelated
         // note's detail screen never strands the user away from the running session.
+        // PERF-04 (2026-09-19): collects its own state (see the composable's doc) so its
+        // 1 Hz tick recomposes only this chip, not the whole note-detail screen.
         if (!editing) {
-            activeCapture?.let { active ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 4.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(c.amber)
-                        .clickable(onClick = onOpenActiveCapture)
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = (if (active.paused) "Paused" else "Recording") +
-                            (active.meetingTitle?.let { " · $it" } ?: ""),
-                        color = Color.White,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                    Text(
-                        text = active.elapsedLabel,
-                        color = Color.White,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.padding(start = 10.dp),
-                    )
-                }
-            }
+            ActiveCaptureChip(activeCapture = viewModel.activeCapture, onOpen = onOpenActiveCapture)
         }
 
         Column(
