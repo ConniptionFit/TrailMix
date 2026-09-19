@@ -67,6 +67,7 @@ import com.trailmix.app.data.model.CustomSummaryTemplate
 import com.trailmix.app.data.model.SummaryTemplate
 import com.trailmix.app.data.model.TemplateOptions
 import com.trailmix.app.data.speech.AsrLocales
+import com.trailmix.app.ui.components.BackChevron
 import com.trailmix.app.ui.components.SectionLabel
 import com.trailmix.app.ui.export.label
 import com.trailmix.app.ui.theme.TrailMix
@@ -248,13 +249,23 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp),
         ) {
-        Text(
-            text = "Settings",
-            color = c.text,
-            fontSize = 22.sp,
-            fontWeight = FontWeight.SemiBold,
+        // UX-32 (2026-09-19): `onBack` was a declared parameter never wired to anything —
+        // Settings had no way to leave except the system back gesture, the only screen in the
+        // app with that gap (every other screen either has a back chevron or, on Home, isn't
+        // reached by pushing a route at all).
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(top = 16.dp, bottom = 18.dp),
-        )
+        ) {
+            BackChevron(onBack)
+            Text(
+                text = "Settings",
+                color = c.text,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(start = 14.dp),
+            )
+        }
 
         // Dark mode row, hairline-bounded
         Hairline()

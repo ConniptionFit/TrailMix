@@ -13,6 +13,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -62,6 +64,13 @@ fun BackTitleBar(title: String, onBack: () -> Unit, modifier: Modifier = Modifie
     }
 }
 
+/**
+ * A11Y-01 (2026-09-19): was a bare 20dp `Icon` with `indication = null` — the primary back
+ * affordance on Note detail, Transcript, Chat, Cross-note chat, Meetings and now Settings sat
+ * well under the 48dp minimum touch target and gave no press feedback at all. The icon glyph
+ * stays visually 20dp (unchanged look); [Modifier.minimumInteractiveComponentSize] pads the
+ * actual hit target out to 48dp without adding visible padding, and the ripple is restored.
+ */
 @Composable
 fun BackChevron(onBack: () -> Unit) {
     Icon(
@@ -69,10 +78,11 @@ fun BackChevron(onBack: () -> Unit) {
         contentDescription = "Back",
         tint = TrailMix.colors.dim,
         modifier = Modifier
+            .minimumInteractiveComponentSize()
             .size(20.dp)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
-                indication = null,
+                indication = ripple(bounded = false),
                 onClick = onBack,
             ),
     )
