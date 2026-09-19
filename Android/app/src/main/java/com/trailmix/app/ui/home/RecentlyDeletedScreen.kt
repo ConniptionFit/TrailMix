@@ -58,6 +58,51 @@ fun RecentlyDeletedScreen(
 
     // The note whose Restore / Delete now dialog is open.
     var actingOn by remember { mutableStateOf<NoteEntity?>(null) }
+    // UX-34 (2026-09-19): the note pending a *second* confirmation for "Delete now" — the one
+    // truly irreversible action in this screen previously fired on a single tap, while the
+    // reversible soft-delete on Home gets a confirmation of its own. Inverted from what a
+    // destructive-action gradient should be; this closes the gap without touching the first
+    // dialog's Restore path at all.
+    var confirmingForeverDelete by remember { mutableStateOf<NoteEntity?>(null) }
+    confirmingForeverDelete?.let { note ->
+        AlertDialog(
+            onDismissRequest = { confirmingForeverDelete = null },
+            containerColor = c.card,
+            title = { Text("Delete for good?", color = c.text, fontSize = 17.sp) },
+            text = {
+                Text(
+                    text = "\"${note.title}\" will be deleted permanently. This can't be undone.",
+                    color = c.dim,
+                    fontSize = 13.5.sp,
+                    lineHeight = 19.sp,
+                )
+            },
+            confirmButton = {
+                Text(
+                    text = "Delete",
+                    color = c.recordingRed,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .clickable {
+                            confirmingForeverDelete = null
+                            viewModel.deleteForever(note.id)
+                        }
+                        .padding(8.dp),
+                )
+            },
+            dismissButton = {
+                Text(
+                    text = "Cancel",
+                    color = c.dim,
+                    fontSize = 14.sp,
+                    modifier = Modifier
+                        .clickable { confirmingForeverDelete = null }
+                        .padding(8.dp),
+                )
+            },
+        )
+    }
     actingOn?.let { note ->
         AlertDialog(
             onDismissRequest = { actingOn = null },
@@ -102,7 +147,7 @@ fun RecentlyDeletedScreen(
                         modifier = Modifier
                             .clickable {
                                 actingOn = null
-                                viewModel.deleteForever(note.id)
+                                confirmingForeverDelete = note
                             }
                             .padding(8.dp),
                     )
