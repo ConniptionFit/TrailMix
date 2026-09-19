@@ -65,6 +65,19 @@ class CaptureEngine @Inject constructor(
     private val mutedStreams = mutableListOf<Int>()
 
     /**
+     * R20/CAP-29: [AudioPipeline.hadFatalError] as of the last pipeline this engine tore down —
+     * captured in [teardownPipeline] *before* [pipeline] is nulled, since `onCompletion` (which
+     * calls teardownPipeline) has already run by the time [begin]'s returned flow finishes
+     * collecting, so checking `pipeline?.hadFatalError()` after the fact would always see null.
+     * Reset at the top of every [begin] call so a stale value from a previous session can never
+     * leak into the next one's check.
+     */
+    @Volatile
+    private var lastPipelineHadFatalError = false
+
+    fun hadFatalPipelineError(): Boolean = lastPipelineHadFatalError
+
+    /**
      * AI-01: the audio-retention sink [CaptureSessionManager] wants attached to the mic
      * stream, if any — held here (not just handed to [pipeline]) because [begin] constructs a
      * *new* [AudioPipeline] on every pause/resume, and each one needs the same ongoing buffer
@@ -84,6 +97,7 @@ class CaptureEngine @Inject constructor(
      * session (fail-soft — same rule as every AI feature in the app).
      */
     suspend fun begin(preferredDevice: AudioDeviceInfo?): Flow<SpeechEvent> {
+        lastPipelineHadFatalError = false
         when (transcriber.status()) {
             FeatureStatus.AVAILABLE -> {
                 val pipe = AudioPipeline()
@@ -194,6 +208,8 @@ class CaptureEngine @Inject constructor(
 
     private fun teardownPipeline() {
         detachDeviceAudio()
+        // R20/CAP-29: read before nulling pipeline below — see lastPipelineHadFatalError's doc.
+        lastPipelineHadFatalError = pipeline?.hadFatalError() ?: false
         // REL-12: release(), not stop(). This runs when the recognizer flow has completed or
         // been cancelled, so nothing will drain the PCM pipe again — the read end has to be
         // closed here or a pump thread blocked writing into it is never freed.

@@ -13,6 +13,7 @@ import android.media.projection.MediaProjection
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import java.io.OutputStream
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 
@@ -95,6 +96,15 @@ class AudioPipeline {
     fun readAndResetPlaybackPeak(): Int = playbackPeak.getAndUpdate { v -> if (v >= 0) 0 else v }
 
     /**
+     * R20/CAP-29: set once the mic pump exits because [android.media.AudioRecord.read] returned
+     * a genuine error code (permission revoked mid-capture, the native object going dead) —
+     * never for the ordinary "no data yet" case. See the pump loop for the full reasoning.
+     */
+    private val fatalError = AtomicBoolean(false)
+
+    fun hadFatalError(): Boolean = fatalError.get()
+
+    /**
      * Starts the mic pump and returns the read end of the PCM pipe.
      * The caller must hold RECORD_AUDIO.
      */
@@ -156,7 +166,26 @@ class AudioPipeline {
             try {
                 while (running) {
                     val n = record.read(mic, 0, mic.size)
-                    if (n <= 0) {
+                    if (n < 0) {
+                        // R20/CAP-29: a negative return from AudioRecord.read() is always one
+                        // of its ERROR_* constants (ERROR_INVALID_OPERATION/ERROR_BAD_VALUE/
+                        // ERROR_DEAD_OBJECT/ERROR) — never "no data yet, try again." The
+                        // previous code folded this into the same `n <= 0` branch as the
+                        // genuine "no data yet" case (n == 0) and just kept sleeping and
+                        // retrying forever, so a permanently failing recorder (mic permission
+                        // revoked mid-capture, the native object going dead) spun silently:
+                        // the journal recorded nothing, and the UI sat on "Listening…" with no
+                        // error and no way for the user to know recording had effectively
+                        // stopped. This is terminal instead — the loop exits, `out` is closed
+                        // in the `finally` below exactly as the graceful stop() path does (EOF,
+                        // so the recognizer flow completes normally), and [hadFatalError] lets
+                        // CaptureEngine/CaptureSessionManager tell the user honestly rather
+                        // than the session just going quiet.
+                        Log.w(TAG, "mic read failed with error code $n, stopping pump")
+                        fatalError.set(true)
+                        break
+                    }
+                    if (n == 0) {
                         if (!running) break
                         Thread.sleep(20)
                         continue
