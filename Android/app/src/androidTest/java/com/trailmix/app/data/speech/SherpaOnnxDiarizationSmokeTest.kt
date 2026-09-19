@@ -10,6 +10,7 @@ import com.k2fsa.sherpa.onnx.OfflineSpeakerDiarizationConfig
 import com.k2fsa.sherpa.onnx.OfflineSpeakerSegmentationModelConfig
 import com.k2fsa.sherpa.onnx.OfflineSpeakerSegmentationPyannoteModelConfig
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractorConfig
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -91,6 +92,60 @@ class SherpaOnnxDiarizationSmokeTest {
             )
         } finally {
             diarization.release()
+        }
+    }
+
+    /**
+     * CAP-30 (2026-09-19): the production, now-windowed [SherpaOnnxDiarizer] end to end, on a
+     * real device/emulator — the highest-risk new code path (a second model load via
+     * [com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractor], real [com.k2fsa.sherpa.onnx
+     * .OnlineStream] calls, a real [com.k2fsa.sherpa.onnx.SpeakerEmbeddingManager]) is exactly
+     * the class of native/JNI behavior this project's own AI-01 Trap warns can't be trusted
+     * from a JVM test or the emulator's absence — but a real device/emulator run here is the
+     * next best thing before the tethered Pixel.
+     *
+     * [SherpaOnnxDiarizerConfig.windowSeconds] is forced down to 4s so the ~16s fixture clip
+     * actually splits into several windows (~4), genuinely exercising cross-window speaker
+     * linking — the production default (5 minutes) would put the whole clip in one window and
+     * never touch that code path at all.
+     */
+    @Test
+    fun productionWindowedDiarizer_multipleSmallWindows_stillFindsMultipleLinkedSpeakers() = runBlocking {
+        val testContext = InstrumentationRegistry.getInstrumentation().context
+        val pcm = readWavAsShorts(testContext.assets.open("two-speakers-en.wav"))
+        assertTrue("test fixture should decode to a non-trivial amount of audio", pcm.size > 16_000)
+
+        val diarizer = SherpaOnnxDiarizer(context, SherpaOnnxDiarizerConfig(windowSeconds = 4))
+        val segments = diarizer.diarize(pcm)
+
+        assertTrue("expected at least one segment from the windowed production path", segments.isNotEmpty())
+        segments.forEach { segment ->
+            assertTrue("segment start should be non-negative", segment.startSeconds >= 0f)
+            assertTrue("segment end should come after its start", segment.endSeconds > segment.startSeconds)
+        }
+        // Windowed segments must still land within the real, whole-clip timeline — a bug in
+        // the per-window offset math would show up here as a segment claiming to start well
+        // past the actual clip length.
+        val clipSeconds = pcm.size.toFloat() / 16_000
+        assertTrue(
+            "every segment should end within the real clip length ($clipSeconds s) plus slack",
+            segments.all { it.endSeconds <= clipSeconds + 1f },
+        )
+        val distinctSpeakers = segments.map { it.speakerTag }.toSet()
+        assertTrue(
+            "windowed + linked output should still separate the two real speakers, not just " +
+                "each window's own arbitrary local ids (found tags: $distinctSpeakers)",
+            distinctSpeakers.size in 2..4,
+        )
+    }
+
+    private fun readWavAsShorts(input: java.io.InputStream): ShortArray = input.use { stream ->
+        val bytes = stream.readBytes()
+        val headerSize = 44
+        val sampleCount = (bytes.size - headerSize) / 2
+        ShortArray(sampleCount) { i ->
+            val offset = headerSize + i * 2
+            ((bytes[offset + 1].toInt() shl 8) or (bytes[offset].toInt() and 0xFF)).toShort()
         }
     }
 

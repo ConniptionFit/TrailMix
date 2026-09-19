@@ -23,4 +23,15 @@ data class SherpaOnnxDiarizerConfig(
     val clusterThreshold: Float = 0.5f,
     val minDurationOnSeconds: Float = 0.3f,
     val minDurationOffSeconds: Float = 0.5f,
+    /**
+     * CAP-30 (2026-09-19): [SherpaOnnxDiarizer] now diarizes in windows of this length rather
+     * than one whole-session batch call — see its own doc for why. 5 minutes by default:
+     * small enough that one window's float conversion is a rounding error next to a retained
+     * session's own memory footprint, large enough that a 90-minute session is only ~18
+     * separate diarization calls. Configurable (not just an internal constant) so
+     * [SherpaOnnxDiarizationSmokeTest] can force many small windows against the short real
+     * fixture clip and actually exercise cross-window speaker linking on a real device, not
+     * just the single-window pass-through case a 16-second clip would otherwise always hit.
+     */
+    val windowSeconds: Int = 5 * 60,
 )
