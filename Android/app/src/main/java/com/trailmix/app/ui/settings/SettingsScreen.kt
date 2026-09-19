@@ -375,7 +375,7 @@ fun SettingsScreen(
             modifier = Modifier.padding(bottom = 10.dp),
         )
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(AsrLocales.options.size) { i ->
+            items(AsrLocales.options.size, key = { i -> AsrLocales.options[i].tag }) { i ->
                 val option = AsrLocales.options[i]
                 val selected = option.tag == (asrLocaleTag ?: AsrLocales.default.tag)
                 Text(
@@ -754,7 +754,7 @@ fun SettingsScreen(
         )
         val templateOptions = TemplateOptions.all(customTemplates)
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(templateOptions.size) { i ->
+            items(templateOptions.size, key = { i -> templateOptions[i].stored }) { i ->
                 val option = templateOptions[i]
                 val selected = option.stored == defaultTemplate
                 Text(
@@ -786,7 +786,7 @@ fun SettingsScreen(
             modifier = Modifier.padding(bottom = 10.dp),
         )
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(ExportFormat.entries.size) { i ->
+            items(ExportFormat.entries.size, key = { i -> ExportFormat.entries[i].name }) { i ->
                 val option = ExportFormat.entries[i]
                 val selected = option == exportFormat
                 Text(

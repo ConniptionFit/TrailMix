@@ -169,7 +169,7 @@ fun TranscriptScreen(
                 ),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                itemsIndexed(lines) { index, line ->
+                itemsIndexed(lines, key = { index, line -> "${line.label}-$index" }) { index, line ->
                     Row(verticalAlignment = Alignment.Top) {
                         // CAP-24: a flag marks the line that was being said when the user
                         // tapped — separate signal from the amber search-highlight below, so

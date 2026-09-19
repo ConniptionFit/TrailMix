@@ -519,7 +519,7 @@ fun CaptureScreen(
                                 )
                             }
                         }
-                        items(liveLines.size) { i ->
+                        items(liveLines.size, key = { i -> "${liveLines[i].label}-$i" }) { i ->
                             val line = liveLines[i]
                             Row(modifier = Modifier.padding(bottom = 8.dp)) {
                                 Text(
@@ -646,7 +646,7 @@ fun CaptureScreen(
             modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            items(templateOptions.size) { i ->
+            items(templateOptions.size, key = { i -> templateOptions[i].stored }) { i ->
                 val option = templateOptions[i]
                 val selected = option.stored == selectedTemplate
                 Text(

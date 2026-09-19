@@ -92,7 +92,7 @@ fun MeetingsScreen(
             )
         }
         LazyColumn {
-            items(meetings) { meeting ->
+            items(meetings, key = { "${it.eventId}-${it.beginEpochMs}" }) { meeting ->
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
