@@ -3,6 +3,7 @@ package com.trailmix.app.data.export
 import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
+import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
 import com.trailmix.app.data.db.NoteEntity
 import com.trailmix.app.data.db.toMarkdown
@@ -64,11 +65,11 @@ class NoteExporter @Inject constructor(
      * only to decide *which* files a delete, restore or migration should take with it.
      */
     override fun deleteExported(uriStr: String): Boolean = runCatching {
-        DocumentsContract.deleteDocument(context.contentResolver, Uri.parse(uriStr))
+        DocumentsContract.deleteDocument(context.contentResolver, uriStr.toUri())
     }.getOrDefault(false)
 
     override fun exists(uriStr: String): Boolean = runCatching {
-        DocumentFile.fromSingleUri(context, Uri.parse(uriStr))?.exists() == true
+        DocumentFile.fromSingleUri(context, uriStr.toUri())?.exists() == true
     }.getOrDefault(false)
 
     /**
@@ -85,7 +86,7 @@ class NoteExporter @Inject constructor(
     ): ExportedFiles? = withContext(Dispatchers.IO) {
         val locationUri = settingsRepository.exportLocationUri.first() ?: return@withContext null
         val folderName = settingsRepository.notesFolder.first()
-        val folder = resolveNotesFolder(Uri.parse(locationUri), folderName) ?: return@withContext null
+        val folder = resolveNotesFolder(locationUri.toUri(), folderName) ?: return@withContext null
         // Auto-export is fire-and-forget with no UI in the loop, so it always uses the
         // persisted default rather than asking — the share sheet is where a one-off
         // override belongs (export-format dropdown feature).
@@ -137,7 +138,7 @@ class NoteExporter @Inject constructor(
     override suspend fun listExportedNotes(): List<ExportedNoteFile> = withContext(Dispatchers.IO) {
         val locationUri = settingsRepository.exportLocationUri.first() ?: return@withContext emptyList()
         val folderName = settingsRepository.notesFolder.first()
-        val folder = resolveNotesFolder(Uri.parse(locationUri), folderName) ?: return@withContext emptyList()
+        val folder = resolveNotesFolder(locationUri.toUri(), folderName) ?: return@withContext emptyList()
 
         val children = folder.listFiles()
         val transcriptsByName = children.associateBy { it.name }

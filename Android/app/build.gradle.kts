@@ -14,14 +14,23 @@ ksp {
     arg("room.schemaLocation", "$projectDir/schemas")
 }
 
+kotlin {
+    // BLD-06: replaces the deprecated android.kotlinOptions{} block, which AGP 9 drops
+    // entirely — doing this now (staged toolchain bump) means the AGP 9 step later doesn't
+    // also have to carry this migration.
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
+
 android {
     namespace = "com.trailmix.app"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.trailmix.app"
         minSdk = 31
-        targetSdk = 35
+        targetSdk = 36
         versionCode = 24
         versionName = "1.20.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -95,10 +104,6 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    kotlinOptions {
-        jvmTarget = "17"
     }
 
     buildFeatures {

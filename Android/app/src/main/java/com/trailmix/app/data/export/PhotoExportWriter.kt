@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.net.Uri
 import android.provider.MediaStore
+import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
 
 /**
@@ -39,7 +40,7 @@ object PhotoExportWriter {
 
     private fun copyOne(context: Context, photosFolder: DocumentFile, uriString: String): ExportedPhoto? =
         runCatching {
-            val sourceUri = Uri.parse(uriString)
+            val sourceUri = uriString.toUri()
             val (displayName, takenAtEpochMs) = readMetadata(context, sourceUri) ?: return@runCatching null
             val fileName = uniqueName(photosFolder, displayName)
             val target = photosFolder.createFile(guessMimeType(fileName), fileName) ?: return@runCatching null

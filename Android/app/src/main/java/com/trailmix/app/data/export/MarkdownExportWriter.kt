@@ -2,6 +2,7 @@ package com.trailmix.app.data.export
 
 import android.content.Context
 import android.net.Uri
+import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
 
 /**
@@ -49,7 +50,7 @@ object MarkdownExportWriter {
      */
     fun existingDisplayName(context: Context, existingFileUri: String?): String? =
         existingFileUri
-            ?.let { runCatching { DocumentFile.fromSingleUri(context, Uri.parse(it)) }.getOrNull() }
+            ?.let { runCatching { DocumentFile.fromSingleUri(context, it.toUri()) }.getOrNull() }
             ?.takeIf { it.exists() }
             ?.name
 
@@ -64,7 +65,7 @@ object MarkdownExportWriter {
         recoverStaleTempFile(folder, fileName)
 
         val existing = existingFileUri
-            ?.let { runCatching { DocumentFile.fromSingleUri(context, Uri.parse(it)) }.getOrNull() }
+            ?.let { runCatching { DocumentFile.fromSingleUri(context, it.toUri()) }.getOrNull() }
             ?.takeIf { it.exists() }
         // Export-format dropdown: a plain-text export uses the .txt extension, and some SAF
         // providers use the create-time MIME type to influence the actual extension they

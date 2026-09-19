@@ -1,7 +1,6 @@
 package com.trailmix.app.ui.settings
 
 import android.content.Intent
-import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -57,6 +56,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.net.toUri
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.trailmix.app.data.ai.DEFAULT_RECIPES
@@ -535,7 +535,7 @@ fun SettingsScreen(
                     .clickable(enabled = hasLocation) {
                         exportLocationUri?.let { uriStr ->
                             runCatching {
-                                val treeUri = Uri.parse(uriStr)
+                                val treeUri = uriStr.toUri()
                                 val docUri = DocumentsContract.buildDocumentUriUsingTree(
                                     treeUri,
                                     DocumentsContract.getTreeDocumentId(treeUri),
