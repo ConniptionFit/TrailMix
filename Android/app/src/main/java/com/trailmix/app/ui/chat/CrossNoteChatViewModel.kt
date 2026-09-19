@@ -9,12 +9,14 @@ import com.trailmix.app.data.db.ConversationKey
 import com.trailmix.app.data.db.ConversationMessageEntity
 import com.trailmix.app.data.db.NotesRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 /**
@@ -59,7 +61,12 @@ class CrossNoteChatViewModel @Inject constructor(
                 notesRepository.addConversationMessage(conversationKey, "user", trimmed)
                 val notes = notesRepository.getNotesByIds(noteIds)
                 if (notes.isEmpty()) return@launch
-                val context = CrossNoteRetrieval.buildContext(trimmed, notes, CROSS_NOTE_CONTEXT_CHARS)
+                // C13 (2026-09-19): buildContext tokenizes every transcript line of every
+                // selected note — real work across a multi-note selection, previously run
+                // inline on viewModelScope (Main.immediate).
+                val context = withContext(Dispatchers.Default) {
+                    CrossNoteRetrieval.buildContext(trimmed, notes, CROSS_NOTE_CONTEXT_CHARS)
+                }
                 val history = messages.value.map { it.role to it.text }
                 val reply = aiProcessor.chatAcrossNotes(
                     context = context,

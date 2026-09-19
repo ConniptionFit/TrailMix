@@ -7,9 +7,11 @@ import com.trailmix.app.data.ai.DEFAULT_RECIPES
 import com.trailmix.app.data.ai.OnDeviceAiProcessor
 import com.trailmix.app.data.ai.Recipe
 import com.trailmix.app.data.db.ChatMessageEntity
+import com.trailmix.app.data.db.NoteEntity
 import com.trailmix.app.data.db.NotesRepository
 import com.trailmix.app.data.settings.SettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -18,6 +20,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 @HiltViewModel
@@ -41,6 +44,19 @@ class ChatViewModel @Inject constructor(
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
 
+    /**
+     * AI-14 (2026-09-19): [com.trailmix.app.data.db.NoteEntity.segments]/`.transcript` are
+     * getters that re-decode their JSON columns on every access — cheap for a short note, real
+     * work for a keynote-scale transcript. Both `send()` and `runRecipe()` previously built
+     * `noteBody`/`transcript` inline on `viewModelScope` (`Main.immediate`), so every message
+     * sent decoded the whole transcript on the UI thread before the AI call (which does its
+     * own `withContext(Dispatchers.Default)` internally) ever started. Moved here, off-main.
+     */
+    private suspend fun promptContextFor(note: NoteEntity): Pair<String, String> =
+        withContext(Dispatchers.Default) {
+            note.segments.joinToString(" ") { it.text } to note.transcript.joinToString("\n") { it.text }
+        }
+
     fun send(text: String) {
         val trimmed = text.trim()
         if (trimmed.isEmpty() || _busy.value) return
@@ -50,9 +66,10 @@ class ChatViewModel @Inject constructor(
                 notesRepository.addChatMessage(noteId, "user", trimmed)
                 val note = notesRepository.observeNote(noteId).first() ?: return@launch
                 val history = messages.value.map { it.role to it.text }
+                val (noteBody, transcript) = promptContextFor(note)
                 val reply = aiProcessor.chat(
-                    noteBody = note.segments.joinToString(" ") { it.text },
-                    transcript = note.transcript.joinToString("\n") { it.text },
+                    noteBody = noteBody,
+                    transcript = transcript,
                     history = history,
                     userMessage = trimmed,
                     attendees = note.attendees,
@@ -71,9 +88,10 @@ class ChatViewModel @Inject constructor(
             try {
                 notesRepository.addChatMessage(noteId, "user", recipe.displayMessage())
                 val note = notesRepository.observeNote(noteId).first() ?: return@launch
+                val (noteBody, transcript) = promptContextFor(note)
                 val reply = aiProcessor.chat(
-                    noteBody = note.segments.joinToString(" ") { it.text },
-                    transcript = note.transcript.joinToString("\n") { it.text },
+                    noteBody = noteBody,
+                    transcript = transcript,
                     history = emptyList(),
                     userMessage = recipe.prompt,
                     attendees = note.attendees,
