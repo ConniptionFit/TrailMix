@@ -104,6 +104,9 @@ class CaptureSessionManager @Inject constructor(
         _state.update { it.copy(recording = false, merging = false, livePartial = "") }
         _mergeStatus.value = null
         _recovering.value = false
+        // AI-13: an uncaught throw could easily be an AI-call failure itself — don't leave a
+        // possibly-broken client resident either way.
+        aiProcessor.releaseModel()
         runCatching { CaptureService.stop(appContext) }
     }
 
@@ -696,6 +699,10 @@ class CaptureSessionManager @Inject constructor(
             recoveredCreatedAtMs = 0L
             _mergeStatus.value = null
             _state.update { it.copy(merging = false) }
+            // AI-13: this capture-and-merge cycle is done — release the AI client rather than
+            // holding it resident for the rest of the app session. The next merge/chat/rolling
+            // summary recreates it transparently.
+            aiProcessor.releaseModel()
             // Only now — the foreground service carried the merge (see stopCapture). Guarded
             // because `startService` throws if the service has already gone away while the app
             // sits in the background: standing the service down must never be the thing that
@@ -1212,6 +1219,8 @@ class CaptureSessionManager @Inject constructor(
             // on the strength of a failed rescue.
             if (id > 0) journal.discard(pending.id)
             _mergeStatus.value = null
+            // AI-13: see endAndMerge's identical call for why.
+            aiProcessor.releaseModel()
             runCatching { CaptureService.stop(appContext) }
             _recovering.value = false
             withContext(Dispatchers.Main) { onDone(id) }

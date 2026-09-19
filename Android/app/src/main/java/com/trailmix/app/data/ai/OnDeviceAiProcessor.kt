@@ -44,12 +44,39 @@ data class MergeResult(
 @Singleton
 class OnDeviceAiProcessor @Inject constructor() {
 
-    private val generativeModel: GenerativeModel? by lazy {
-        runCatching { Generation.getClient() }.getOrNull()
+    // AI-13 (2026-09-19): was `by lazy` — a real client, once created, then lived for the
+    // whole app process. A capture-and-merge cycle is the single most memory-hungry moment
+    // this app has (the transcript, any diarization audio, and this model's own resident
+    // footprint all overlap), so holding the model open indefinitely afterwards is pure cost
+    // with no benefit once that cycle is done. Now created on first use and explicitly
+    // releasable via [releaseModel] — the next call anywhere in this class (merge, chat,
+    // rolling summary) transparently recreates it, so nothing about *availability* changes,
+    // only how long an unused client lingers.
+    @Volatile
+    private var generativeModel: GenerativeModel? = null
+    private val modelLock = Any()
+
+    private fun modelOrNull(): GenerativeModel? =
+        generativeModel ?: synchronized(modelLock) {
+            generativeModel ?: runCatching { Generation.getClient() }.getOrNull().also { generativeModel = it }
+        }
+
+    /**
+     * AI-13: releases the held client, if any. Safe to call at any time — including with a
+     * call in flight elsewhere, since [modelOrNull] always re-reads the (possibly now null)
+     * field rather than caching a reference across suspension points; a call already in
+     * progress keeps using the [GenerativeModel] instance it already captured, and the next
+     * call after this one recreates a fresh client on demand.
+     */
+    fun releaseModel() {
+        synchronized(modelLock) {
+            generativeModel?.let { runCatching { it.close() } }
+            generativeModel = null
+        }
     }
 
     suspend fun checkAvailability(): AiAvailability = withContext(Dispatchers.Default) {
-        val model = generativeModel
+        val model = modelOrNull()
             ?: return@withContext AiAvailability.Unavailable("On-device AI client unavailable.")
         try {
             when (model.checkStatus()) {
@@ -72,7 +99,7 @@ class OnDeviceAiProcessor @Inject constructor() {
         when (val status = checkAvailability()) {
             is AiAvailability.Downloadable, is AiAvailability.Downloading -> {
                 runCatching {
-                    generativeModel?.download()?.collect { downloadStatus ->
+                    modelOrNull()?.download()?.collect { downloadStatus ->
                         if (downloadStatus is DownloadStatus.DownloadFailed) {
                             throw downloadStatus.e
                         }
@@ -459,7 +486,7 @@ class OnDeviceAiProcessor @Inject constructor() {
     }
 
     private suspend fun generate(prompt: String): String =
-        generativeModel
+        modelOrNull()
             ?.generateContent(prompt)
             ?.candidates
             ?.firstOrNull()
