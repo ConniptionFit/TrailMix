@@ -255,6 +255,17 @@
     </issue>
 
     <issue
+        id="ChromeOsAbiSupport"
+        message="Missing x86_64 ABI support for ChromeOS"
+        errorLine1="                abiFilters += listOf(&quot;arm64-v8a&quot;)"
+        errorLine2="                              ~~~~~~~~~~~~~~~~~~~">
+        <location
+            file="build.gradle.kts"
+            line="113"
+            column="31"/>
+    </issue>
+
+    <issue
         id="ObsoleteSdkInt"
         message="This folder configuration (`v26`) is unnecessary; `minSdkVersion` is 31. Merge all the resources in this folder into `mipmap-anydpi`.">
         <location

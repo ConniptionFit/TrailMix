@@ -36,12 +36,13 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // sherpa-onnx's AAR bundles all 4 ABIs (~50MB uncompressed: ONNX Runtime + its own
-        // native libs, ×4). Real targets for this app are the Pixel 9 Pro (arm64-v8a) and the
-        // local emulator (x86_64) — armeabi-v7a/x86 are 32-bit and irrelevant to both, so
-        // filtering them out here roughly halves what actually ships.
-        ndk {
-            abiFilters += listOf("arm64-v8a", "x86_64")
-        }
+        // native libs, ×4); armeabi-v7a/x86 are 32-bit and irrelevant to every real target this
+        // app ships to or is tested on — filtered out unconditionally below. arm64-v8a/x86_64
+        // are then split per build type (BLD-07): debug keeps both, since the local emulator
+        // (`trailmix_test`, x86_64) needs the x86_64 libs and a debug APK is never distributed;
+        // release keeps arm64-v8a only, since the Pixel 9 Pro and every other real device this
+        // app can run on is arm64 — shipping x86_64 in the distributed APK was pure waste
+        // (roughly halves the native payload again on top of the original 4-ABI filter).
     }
 
     // sherpa-onnx's native loader mmaps these assets directly out of the APK rather than
@@ -85,6 +86,13 @@ android {
     }
 
     buildTypes {
+        debug {
+            // BLD-07: debug keeps both real-hardware ABIs — arm64-v8a for the tethered Pixel,
+            // x86_64 for the local `trailmix_test` emulator AVD.
+            ndk {
+                abiFilters += listOf("arm64-v8a", "x86_64")
+            }
+        }
         release {
             // REL-02: R8 shrink/obfuscate + resource shrinking for release, previously off.
             isMinifyEnabled = true
@@ -98,6 +106,12 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            // BLD-07: the distributed APK only ever runs on real (arm64) hardware — shipping
+            // x86_64 doubled the native payload (sherpa-onnx's ONNX Runtime + its own libs) for
+            // zero benefit to any real install.
+            ndk {
+                abiFilters += listOf("arm64-v8a")
+            }
         }
     }
 
@@ -141,6 +155,12 @@ android {
         // *other* finding from the day this baseline was created was fixed outright, not
         // deferred (see BLD-03 in Future Improvements.md for the fixed list). A lint run that
         // reports anything beyond this baseline is a genuinely new finding.
+        //
+        // BLD-07 (2026-09-19) added one more deliberate deferral to the baseline:
+        // ChromeOsAbiSupport, from the release build type's arm64-only `abiFilters`. This app
+        // has no Play Store distribution (sideloaded via GitHub Releases/Obtainium only) and no
+        // ChromeOS target in its device story — the warning is about a platform this app is
+        // never installed on, not a real gap.
         baseline = file("lint-baseline.xml")
     }
 }
