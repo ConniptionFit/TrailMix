@@ -51,21 +51,36 @@ object SummaryText {
         return contentWords(sentence).distinct().size < MIN_CONTENT_WORDS
     }
 
-    /** Drop near-duplicates, keeping the first occurrence. Two sentences count as duplicates
-     *  when their content-word sets overlap by [DUPLICATE_OVERLAP] or more in both directions. */
+    /**
+     * Drop near-duplicates, keeping the first occurrence. Two sentences count as duplicates
+     * when their content-word sets overlap by [DUPLICATE_OVERLAP] or more in both directions.
+     *
+     * PERF-03 (2026-09-19): two sentences sharing zero content words can never meet the
+     * overlap threshold — `shared` would be 0 either way — so they were always guaranteed
+     * non-duplicates, but the original version still compared every new sentence against
+     * *every* kept one regardless, an O(n²) worst case that matters at keynote scale (~2,000
+     * sentences per the `LongSessionLoadTest` sizing). [byWord] narrows each comparison to
+     * only the kept sentences that share at least one content word with the candidate — the
+     * exact same set that could ever match, so results, order, and thresholds are unchanged.
+     */
     fun dedupe(sentences: List<String>): List<String> {
         val kept = mutableListOf<String>()
         val keptWords = mutableListOf<Set<String>>()
+        val byWord = HashMap<String, MutableList<Int>>()
         sentences.forEach { sentence ->
             val words = contentWords(sentence).toSet()
             if (words.isEmpty()) return@forEach
-            val duplicate = keptWords.any { prior ->
+            val candidates = words.flatMapTo(HashSet()) { byWord[it].orEmpty() }
+            val duplicate = candidates.any { idx ->
+                val prior = keptWords[idx]
                 val shared = words.count { it in prior }.toDouble()
                 shared / words.size >= DUPLICATE_OVERLAP && shared / prior.size >= DUPLICATE_OVERLAP
             }
             if (!duplicate) {
+                val newIndex = kept.size
                 kept += sentence
                 keptWords += words
+                words.forEach { byWord.getOrPut(it) { mutableListOf() } += newIndex }
             }
         }
         return kept

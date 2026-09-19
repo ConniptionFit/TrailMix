@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.net.Uri
 import android.provider.MediaStore
+import androidx.annotation.VisibleForTesting
 import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
 
@@ -38,13 +39,35 @@ object PhotoExportWriter {
         return photoUriStrings.mapNotNull { uriString -> copyOne(context, photosFolder, uriString) }
     }
 
+    /**
+     * INT-06 (2026-09-19): [copyInto] runs on every re-export (merge/edit/recipe-run,
+     * [com.trailmix.app.data.db.NotesRepository.exportIfConfigured]'s automatic trigger), not
+     * just the first one — but [uniqueName] (below, since removed) always found the previous
+     * export's file already occupying the *desired* name and uniquified around it, so every
+     * re-export of an unchanged photo set duplicated every photo again: `photo.jpg`, then
+     * `photo-1.jpg`, then `photo-2.jpg`, unbounded growth in the user's export folder for
+     * content that never actually changed.
+     *
+     * The fix is to make the filename an *identity*, not just a display label, so a re-export
+     * can recognize "this photo is already here" instead of always finding a free name.
+     * [Uri.getLastPathSegment] on a MediaStore image content URI is that photo's stable row id
+     * — the same photo re-selected across app launches resolves to the same id, so a name built
+     * from it collides on purpose with its own prior copy (and only its own: two different
+     * photos never share a MediaStore row id). When that exact name is already present, this
+     * skips the read+copy entirely rather than writing a byte-identical duplicate beside it.
+     */
     private fun copyOne(context: Context, photosFolder: DocumentFile, uriString: String): ExportedPhoto? =
         runCatching {
             val sourceUri = uriString.toUri()
+            val mediaStoreId = sourceUri.lastPathSegment
             val (displayName, takenAtEpochMs) = readMetadata(context, sourceUri) ?: return@runCatching null
-            val fileName = uniqueName(photosFolder, displayName)
-            val target = photosFolder.createFile(guessMimeType(fileName), fileName) ?: return@runCatching null
+            val fileName = identityName(displayName, mediaStoreId)
 
+            photosFolder.findFile(fileName)?.takeIf { it.isFile }?.let { existing ->
+                return@runCatching ExportedPhoto(filename = existing.name ?: fileName, takenAtEpochMs = takenAtEpochMs)
+            }
+
+            val target = photosFolder.createFile(guessMimeType(fileName), fileName) ?: return@runCatching null
             context.contentResolver.openInputStream(sourceUri)?.use { input ->
                 context.contentResolver.openOutputStream(target.uri, "w")?.use { output ->
                     input.copyTo(output)
@@ -53,6 +76,19 @@ object PhotoExportWriter {
 
             ExportedPhoto(filename = target.name ?: fileName, takenAtEpochMs = takenAtEpochMs)
         }.getOrNull()
+
+    /** Builds an identity-qualified filename — see [copyOne]'s doc. Falls back to
+     *  [uniqueName]'s old collision-avoidance behavior only when the source URI has no
+     *  MediaStore row id to key on (not expected in practice for an image content URI, but
+     *  never worth failing the whole export over). */
+    @VisibleForTesting
+    internal fun identityName(displayName: String, mediaStoreId: String?): String {
+        if (mediaStoreId == null) return displayName
+        val dot = displayName.lastIndexOf('.')
+        val base = if (dot > 0) displayName.substring(0, dot) else displayName
+        val ext = if (dot > 0) displayName.substring(dot) else ""
+        return "$base-$mediaStoreId$ext"
+    }
 
     /** Same [MediaStore] columns [com.trailmix.app.data.media.PhotoSource] queried for the picker. */
     // BLD-03: Lint's Recycle check flags the Cursor below as never closed — it doesn't credit
@@ -75,21 +111,6 @@ object PhotoExportWriter {
             name to taken
         }
     }.getOrNull()
-
-    /** Avoids clobbering an identically-named photo from a previous export of this note. */
-    private fun uniqueName(folder: DocumentFile, desired: String): String {
-        if (folder.findFile(desired) == null) return desired
-        val dot = desired.lastIndexOf('.')
-        val base = if (dot > 0) desired.substring(0, dot) else desired
-        val ext = if (dot > 0) desired.substring(dot) else ""
-        var i = 1
-        var candidate: String
-        do {
-            candidate = "$base-$i$ext"
-            i++
-        } while (folder.findFile(candidate) != null)
-        return candidate
-    }
 
     private fun guessMimeType(fileName: String): String = when {
         fileName.endsWith(".png", ignoreCase = true) -> "image/png"
