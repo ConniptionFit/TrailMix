@@ -160,9 +160,31 @@ object Migrations {
         }
     }
 
+    /**
+     * PERF-02 (2026-09-19): two more indices for the same class of gap REL-18 closed —
+     * `conversation_messages.noteIdsKey` is `observeForNoteIds`'s sole filter and had no index
+     * at all, and `notes(deletedAtEpochMs, createdAtEpochMs)` gives every live-note query
+     * (observeAll/getAll/getUnexported, all `WHERE deletedAtEpochMs IS NULL ORDER BY
+     * createdAtEpochMs DESC`) one index that serves both the filter and the sort, instead of
+     * filtering via REL-18's single-column index and then sorting the result set separately.
+     * Additive, index-only — no column or row touched.
+     */
+    val MIGRATION_14_15 = object : Migration(14, 15) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_conversation_messages_noteIdsKey " +
+                    "ON conversation_messages(noteIdsKey)",
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_notes_deletedAtEpochMs_createdAtEpochMs " +
+                    "ON notes(deletedAtEpochMs, createdAtEpochMs)",
+            )
+        }
+    }
+
     val ALL: Array<Migration> = arrayOf(
         MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7,
         MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12,
-        MIGRATION_12_13, MIGRATION_13_14,
+        MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15,
     )
 }

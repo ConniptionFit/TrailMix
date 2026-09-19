@@ -458,4 +458,62 @@ class MigrationTest {
             }
         }
     }
+
+    @Test
+    fun migrate14To15_addsConversationMessagesAndNotesCompositeIndices() {
+        connect().use { c ->
+            c.createStatement().use {
+                // notes' shape is unchanged since v10->v11 (same as the v13->v14 test's target
+                // schema); the v13->v14 indices are created here too, since a real device
+                // migrating through this chain already has them by the time this one runs.
+                it.execute(
+                    "CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "title TEXT NOT NULL, segmentsJson TEXT NOT NULL, transcriptJson TEXT NOT NULL, " +
+                        "typedFragments TEXT NOT NULL, durationMs INTEGER NOT NULL, " +
+                        "createdAtEpochMs INTEGER NOT NULL, showSources INTEGER NOT NULL, " +
+                        "mergedWithAi INTEGER NOT NULL, meetingTitle TEXT, " +
+                        "capturedInCall INTEGER NOT NULL DEFAULT 0, bodyOverride TEXT, " +
+                        "attendeesJson TEXT, summaryJson TEXT, template TEXT, " +
+                        "obsidianFileUri TEXT, driveFileUri TEXT, deletedAtEpochMs INTEGER, " +
+                        "transcriptFileUri TEXT, exportedPhotoUrisJson TEXT, flaggedLabelsJson TEXT)",
+                )
+                it.execute("CREATE INDEX index_notes_deletedAtEpochMs ON notes(deletedAtEpochMs)")
+                it.execute(
+                    "CREATE TABLE conversation_messages (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "noteIdsKey TEXT NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL, " +
+                        "createdAtEpochMs INTEGER NOT NULL)",
+                )
+                it.execute(
+                    "INSERT INTO notes (title, segmentsJson, transcriptJson, typedFragments, " +
+                        "durationMs, createdAtEpochMs, showSources, mergedWithAi, deletedAtEpochMs) " +
+                        "VALUES ('Kept', '[]', '[]', '', 1000, 5000, 1, 1, NULL)",
+                )
+                it.execute(
+                    "INSERT INTO conversation_messages (noteIdsKey, role, text, createdAtEpochMs) VALUES " +
+                        "('2,9', 'user', 'What did we decide?', 6000)",
+                )
+            }
+
+            migrate(c, Migrations.MIGRATION_14_15)
+
+            assertTrue(
+                indexNames(c, "conversation_messages").contains("index_conversation_messages_noteIdsKey"),
+            )
+            assertTrue(
+                indexNames(c, "notes").contains("index_notes_deletedAtEpochMs_createdAtEpochMs"),
+            )
+
+            // Additive and data-preserving: an index changes lookup speed, never row content.
+            c.createStatement().use { stmt ->
+                stmt.executeQuery("SELECT title FROM notes").use { rs ->
+                    assertTrue(rs.next())
+                    assertEquals("Kept", rs.getString("title"))
+                }
+                stmt.executeQuery("SELECT text FROM conversation_messages").use { rs ->
+                    assertTrue(rs.next())
+                    assertEquals("What did we decide?", rs.getString("text"))
+                }
+            }
+        }
+    }
 }

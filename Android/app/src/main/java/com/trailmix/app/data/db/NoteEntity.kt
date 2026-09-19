@@ -13,7 +13,20 @@ import com.trailmix.app.data.model.TranscriptLine
 
 // REL-18 (v1.20.0-dev): every Home query filters on this column (soft-delete visibility) —
 // unindexed, it was a full table scan on every one of them.
-@Entity(tableName = "notes", indices = [Index("deletedAtEpochMs")])
+// PERF-02 (2026-09-19): added a composite covering both the deletedAtEpochMs filter every
+// live-note query already had an index for AND the createdAtEpochMs DESC every one of them
+// also orders by (observeAll/getAll/getUnexported) — SQLite can use a composite index's
+// leading column(s) alone, so this doesn't replace the single-column index above (kept in
+// case something ever queries deletedAtEpochMs without also sorting by createdAtEpochMs), it
+// just gives the actual hot queries a single index that serves the whole WHERE+ORDER BY
+// instead of filtering via one index and then sorting the result set from scratch.
+@Entity(
+    tableName = "notes",
+    indices = [
+        Index("deletedAtEpochMs"),
+        Index(value = ["deletedAtEpochMs", "createdAtEpochMs"]),
+    ],
+)
 data class NoteEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val title: String,
@@ -131,7 +144,9 @@ data class ChatMessageEntity(
  * discussed (see [ConversationKey]). Selecting the same set of notes again resumes the same
  * conversation, mirroring how reopening one note's chat resumes its history.
  */
-@Entity(tableName = "conversation_messages")
+// PERF-02 (2026-09-19): observeForNoteIds's sole filter, previously unindexed — a full table
+// scan on every conversation load, the same class of gap REL-18 closed for notes/chat_messages.
+@Entity(tableName = "conversation_messages", indices = [Index("noteIdsKey")])
 data class ConversationMessageEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val noteIdsKey: String,
