@@ -70,6 +70,13 @@ class AudioPipeline {
         audioSink = sink
     }
 
+    /** CAP-31: per-lane energy timeline for Me/Them attribution; null = not tracking. */
+    @Volatile private var laneActivity: LaneActivity? = null
+
+    fun setLaneActivity(activity: LaneActivity?) {
+        laneActivity = activity
+    }
+
     /**
      * REL-12: the read end of the PCM pipe, retained rather than handed away and forgotten.
      *
@@ -191,6 +198,8 @@ class AudioPipeline {
                         continue
                     }
                     val fromPlayback = playbackRing.pop(playback, n)
+                    // CAP-31: per-lane energy, recorded before the lanes are mixed together.
+                    laneActivity?.record(mic, n, playback, fromPlayback, playbackThread != null)
                     if (fromPlayback > 0) Pcm.mixInto(mic, playback, fromPlayback)
                     audioSink?.append(mic, n)
                     out.write(Pcm.toLittleEndianBytes(mic, n))

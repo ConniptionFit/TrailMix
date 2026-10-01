@@ -16,10 +16,24 @@ data class NoteSegment(
  *  [speakerLabel] (AI-01, v1.20.0) is "Speaker N" from on-device diarization when the user has
  *  opted in — null on every note recorded before that, and on any note where diarization
  *  wasn't enabled or found no segments. */
+/** CAP-31: which capture lane dominated an utterance — the mic ("Me") or device audio ("Them"). */
+enum class SpeechSource(val displayName: String) {
+    ME("Me"),
+    THEM("Them"),
+    ;
+
+    companion object {
+        /** Tolerant parse for stored JSON: unknown or missing -> null. */
+        fun fromStored(value: String?): SpeechSource? = entries.firstOrNull { it.name == value }
+    }
+}
+
 data class TranscriptLine(
     val label: String,
     val text: String,
     val speakerLabel: String? = null,
+    /** CAP-31: lane attribution; null for mic-only captures or ambiguous audio. */
+    val speechSource: SpeechSource? = null,
 )
 
 object SegmentsJson {
@@ -51,6 +65,7 @@ object TranscriptJson {
             arr.put(
                 JSONObject().put("l", it.label).put("t", it.text).apply {
                     it.speakerLabel?.let { sp -> put("sp", sp) }
+                    it.speechSource?.let { src -> put("src", src.name) }
                 },
             )
         }
@@ -65,6 +80,7 @@ object TranscriptJson {
                 label = o.optString("l"),
                 text = o.getString("t"),
                 speakerLabel = o.optString("sp").takeIf { it.isNotBlank() },
+                speechSource = SpeechSource.fromStored(o.optString("src").takeIf { it.isNotBlank() }),
             )
         }
     }.getOrDefault(emptyList())

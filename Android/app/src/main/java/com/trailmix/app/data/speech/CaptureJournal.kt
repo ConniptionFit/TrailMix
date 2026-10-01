@@ -2,6 +2,7 @@ package com.trailmix.app.data.speech
 
 import com.trailmix.app.data.ai.MergePolicy
 import com.trailmix.app.data.ai.TranscriptCoverage
+import com.trailmix.app.data.model.SpeechSource
 import com.trailmix.app.data.model.StringListJson
 import com.trailmix.app.data.model.SummaryTemplate
 import com.trailmix.app.data.model.TranscriptLine
@@ -113,6 +114,7 @@ object CaptureJournal {
             .put(KEY_KIND, KIND_LINE)
             .put("l", line.label)
             .put("t", line.text)
+            .apply { line.speechSource?.let { put("src", it.name) } } // CAP-31, additive
             .toString()
 
     /**
@@ -204,7 +206,11 @@ object CaptureJournal {
 
                 KIND_LINE -> {
                     val text = o.optString("t")
-                    if (text.isNotBlank()) transcript += TranscriptLine(label = o.optString("l"), text = text)
+                    if (text.isNotBlank()) transcript += TranscriptLine(
+                        label = o.optString("l"),
+                        text = text,
+                        speechSource = SpeechSource.fromStored(o.optString("src").takeIf { it.isNotBlank() }),
+                    )
                 }
 
                 KIND_DELTA -> {

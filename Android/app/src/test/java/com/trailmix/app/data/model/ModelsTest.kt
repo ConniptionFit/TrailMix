@@ -147,4 +147,22 @@ class ModelsTest {
         assertEquals(SummaryTemplate.NONE.guidance, TemplateOptions.guidanceFor(null, emptyList()))
         assertEquals(SummaryTemplate.NONE.guidance, TemplateOptions.guidanceFor("SALES_PITCH", emptyList()))
     }
+
+    @Test
+    fun `transcript lines with a speech source round-trip through JSON`() {
+        val lines = listOf(
+            TranscriptLine("0:12", "Let's ship it.", speechSource = SpeechSource.THEM),
+            TranscriptLine("0:20", "Agreed.", speechSource = SpeechSource.ME),
+            TranscriptLine("0:30", "Unattributed."),
+        )
+        assertEquals(lines, TranscriptJson.decode(TranscriptJson.encode(lines)))
+    }
+
+    @Test
+    fun `a null speech source is omitted from the JSON and old JSON decodes null`() {
+        assertTrue(!TranscriptJson.encode(listOf(TranscriptLine("0:01", "x"))).contains("src"))
+        val old = """[{"l":"0:12","t":"Budget's approved.","sp":"Speaker 1"}]"""
+        assertEquals(null, TranscriptJson.decode(old).single().speechSource)
+        assertEquals(null, SpeechSource.fromStored("BOGUS"))
+    }
 }
