@@ -6,6 +6,7 @@ import com.trailmix.app.data.model.StructuredSummary
 import com.trailmix.app.data.model.SummaryBullet
 import com.trailmix.app.data.model.SummarySection
 import com.trailmix.app.data.model.SummaryStyle
+import com.trailmix.app.data.model.TemplateSpec
 import com.trailmix.app.data.model.TranscriptLine
 
 /**
@@ -49,6 +50,9 @@ object DeterministicSummary {
         typedFragments: String,
         transcript: List<TranscriptLine>,
         style: SummaryStyle = SummaryStyle.DISCUSSION,
+        // AI-19: a section-based template places bullets into its sections by keyword overlap
+        // ([TemplateSectioner.arrange]); null / no sections = the legacy shape, unchanged.
+        spec: TemplateSpec? = null,
     ): StructuredSummary? {
         val fragmentSentences = SummaryText.dedupe(SummaryText.splitSentences(typedFragments))
         val windows = TranscriptCoverage.windows(transcript)
@@ -97,15 +101,17 @@ object DeterministicSummary {
         }
         val anchorUsed = anchored.flatMapTo(mutableSetOf()) { sec -> sec.bullets.map { it.text.lowercase() } }
 
-        val sections = buildList {
+        val headSections = mutableListOf<SummarySection>()
+        val windowSections = mutableListOf<SummarySection>()
+        run {
             if (anchors.isNotEmpty()) {
-                addAll(anchored)
+                headSections.addAll(anchored)
             } else {
                 val yourNotes = fragmentSentences
                     .filterNot { it.lowercase() in actionTexts }
                     .take(MAX_SECTION_BULLETS)
                     .map { SummaryBullet(it, Provenance.FRAGMENT) }
-                if (yourNotes.isNotEmpty()) add(SummarySection("Your notes", yourNotes))
+                if (yourNotes.isNotEmpty()) headSections.add(SummarySection("Your notes", yourNotes))
             }
 
             val taken = actionTexts + anchorUsed
@@ -130,9 +136,22 @@ object DeterministicSummary {
                         )
                     }
                 if (bullets.isNotEmpty()) {
-                    add(SummarySection(headingFor(window, generic, windowsWithContent.size == 1, anchors.isNotEmpty()), bullets))
+                    windowSections.add(
+                        SummarySection(headingFor(window, generic, windowsWithContent.size == 1, anchors.isNotEmpty()), bullets),
+                    )
                 }
             }
+        }
+        val sections = if (spec != null && spec.hasSections && (headSections.isNotEmpty() || windowSections.isNotEmpty())) {
+            // Typed-note sections move whole; the unanchored "Your notes" fallback is placed
+            // bullet by bullet like the transcript windows.
+            if (anchors.isNotEmpty()) {
+                TemplateSectioner.arrange(headSections, windowSections, spec)
+            } else {
+                TemplateSectioner.arrange(emptyList(), headSections + windowSections, spec)
+            }
+        } else {
+            headSections + windowSections
         }
 
         if (sections.isEmpty() && actionItems.isEmpty()) return null
@@ -144,10 +163,12 @@ object DeterministicSummary {
         typedFragments: String,
         transcriptText: String,
         style: SummaryStyle = SummaryStyle.DISCUSSION,
+        spec: TemplateSpec? = null,
     ): StructuredSummary? = from(
         typedFragments = typedFragments,
         transcript = if (transcriptText.isBlank()) emptyList() else listOf(TranscriptLine("", transcriptText)),
         style = style,
+        spec = spec,
     )
 
     /**

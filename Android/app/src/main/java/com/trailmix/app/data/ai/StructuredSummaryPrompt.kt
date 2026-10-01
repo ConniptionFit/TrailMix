@@ -1,6 +1,7 @@
 package com.trailmix.app.data.ai
 
 import com.trailmix.app.data.ai.NoteAnchors.Anchor
+import com.trailmix.app.data.model.TemplateSpec
 
 /**
  * AI-17/AI-18: the structured-summary prompt and the pure post-processing that enforces what
@@ -20,12 +21,21 @@ object StructuredSummaryPrompt {
     private const val MAX_PROMPT_ANCHORS = 20
     private const val MAX_ANCHOR_CHARS = 140
 
+    /**
+     * [templateGuidance] is the template's meeting context. AI-19: when [spec] has sections they
+     * become the required headings, in order, each with its one-line instruction (typed notes
+     * are placed into the matching section); [TemplateSectioner.conform] re-checks the result.
+     * AI-21: [profileLine] (see [com.trailmix.app.data.model.UserProfile.promptLine]) is put
+     * first so the model writes from the note-taker's perspective.
+     */
     fun build(
         templateGuidance: String,
         attendees: List<String>,
         anchors: List<Anchor>,
         typedFragments: String,
         transcriptText: String,
+        spec: TemplateSpec? = null,
+        profileLine: String? = null,
     ): String {
         val attendeeLine = if (attendees.isNotEmpty()) "Attendees: ${attendees.joinToString(", ")}." else ""
         val anchorBlock = if (anchors.isEmpty()) {
@@ -36,9 +46,18 @@ object StructuredSummaryPrompt {
                     "${i + 1}. [${a.kind.name}] ${a.text.take(MAX_ANCHOR_CHARS)}"
                 }.joinToString("\n")
         }
-        val rules = if (anchors.isEmpty()) NO_ANCHOR_RULES else ANCHOR_RULES
+        val sectioned = spec != null && spec.hasSections
+        val rules = when {
+            sectioned && anchors.isEmpty() -> SECTION_NO_ANCHOR_RULES
+            sectioned -> SECTION_ANCHOR_RULES
+            anchors.isEmpty() -> NO_ANCHOR_RULES
+            else -> ANCHOR_RULES
+        }
+        val sectionBlock = if (sectioned) sectionBlock(spec!!) else ""
+        val profile = profileLine?.takeIf { it.isNotBlank() }.orEmpty()
 
         return """
+            $profile
             You are structuring a meeting note into JSON. $templateGuidance
             $attendeeLine
             Transcript lines are prefixed with [mm:ss]. Begin every bullet and action item with
@@ -47,6 +66,7 @@ object StructuredSummaryPrompt {
             {"highlights": ["[mm:ss] short key decision or highlight"],
              "sections": [{"heading": "Topic name", "bullets": [{"text": "[mm:ss] point", "details": ["optional sub-point"]}]}],
              "actionItems": [{"text": "[mm:ss] what needs doing", "owner": "name or null", "deadline": "date/phrase or null"}]}
+            $sectionBlock
             $rules
             Bullets: at most $MAX_BULLET_WORDS words each; supporting facts go in "details" (optional, one level).
             Keep numbers, dates and short quotes verbatim. Factual only, no invented details.
@@ -59,8 +79,50 @@ object StructuredSummaryPrompt {
             <<<TRANSCRIPT
             ${transcriptText.ifBlank { "(none)" }}
             TRANSCRIPT>>>
-        """.trimIndent()
+        """.compact()
     }
+
+    /**
+     * Interpolated multi-line blocks (rules, sections, typed notes) have no indent, so
+     * `trimIndent()` found a minimum indent of 0 and left ~12 wasted characters on every line of
+     * an 8k-char context. Trim each line instead and collapse the blank lines that empty
+     * optional parts (profile, attendees, sections) leave behind.
+     */
+    private fun String.compact(): String =
+        lines().joinToString("\n") { it.trimStart() }.replace(Regex("\n{3,}"), "\n\n").trim()
+
+    /** The required headings, numbered, plus what to do with a section that has nothing in it. */
+    private fun sectionBlock(spec: TemplateSpec): String = buildString {
+        appendLine("Use EXACTLY these section headings, in this order (heading: what belongs there):")
+        spec.sections.forEachIndexed { i, s ->
+            append("${i + 1}. ${s.heading}")
+            if (s.instruction.isNotBlank()) append(": ${s.instruction}")
+            appendLine()
+        }
+        append(
+            if (spec.omitEmptySections) {
+                "Leave out any section with nothing to report."
+            } else {
+                "For a section with nothing to report, write one bullet: \"$NOT_DISCUSSED\"."
+            },
+        )
+    }
+
+    private const val NOT_DISCUSSED = TemplateSectioner.NOT_DISCUSSED
+
+    private val SECTION_NO_ANCHOR_RULES = """
+        Rules: 1-3 highlights, cover the WHOLE session end to end. Put every point under the listed
+        section it fits best; add an extra section only for important content that fits none.
+        Action items only when real.
+    """.trimIndent()
+
+    private val SECTION_ANCHOR_RULES = """
+        Rules: build the note around the numbered typed notes: place each one under the listed
+        section it fits best, expanded with transcript evidence; a typed note that fits none becomes its
+        own section after the listed ones. JUDGMENT notes are the user's own view: attribute them to
+        "you" (e.g. "You were skeptical of the estimate"), never as fact. QUESTION notes: answer from the
+        transcript, otherwise list them under "Open Questions". 1-3 highlights. Action items only when real.
+    """.trimIndent()
 
     private val NO_ANCHOR_RULES = """
         Rules: 2-5 highlights, cover the WHOLE session end to end in 2-6 topic sections ordered as they

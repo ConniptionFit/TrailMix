@@ -168,7 +168,7 @@ class ModelsTest {
         val customs = listOf(CustomSummaryTemplate("Sales call", "Custom guidance."))
         val options = TemplateOptions.all(customs)
         assertEquals(SummaryTemplate.entries.size + 1, options.size)
-        assertEquals(SummaryTemplate.NONE.name, options.first().stored)
+        assertEquals(SummaryTemplate.AUTO.name, options.first().stored)
         val custom = options.last()
         assertEquals("custom:Sales call", custom.stored)
         assertEquals("Sales call", custom.label)

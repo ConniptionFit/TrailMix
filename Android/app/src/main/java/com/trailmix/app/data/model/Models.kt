@@ -134,7 +134,19 @@ enum class SummaryTemplate(
     val label: String,
     val guidance: String,
     val style: SummaryStyle = SummaryStyle.DISCUSSION,
+    /** AI-19: required headings, in order (without Next Steps — always appended by the renderer). */
+    val sections: List<SectionSpec> = emptyList(),
 ) {
+    /**
+     * AI-20: not a real template — [com.trailmix.app.data.ai.AutoTemplate] resolves it to one
+     * of the others at merge time (the note keeps storing "AUTO" so a regenerate re-resolves).
+     * Used unresolved, it behaves as [NONE].
+     */
+    AUTO(
+        "Auto",
+        "Group the discussion into a few clearly-named topic sections and keep any tasks " +
+            "or commitments in a separate Action Items list.",
+    ),
     NONE(
         "Flat (no template)",
         "Group the discussion into a few clearly-named topic sections and keep any tasks " +
@@ -142,17 +154,35 @@ enum class SummaryTemplate(
     ),
     ONE_ON_ONE(
         "1:1",
-        "This is a 1:1 — prefer sections like Wins, Challenges, Career/Growth, Feedback.",
+        "Weekly 1:1 between the note-taker and their report. Capture what the report raised " +
+            "first, then the note-taker's topics. Note feedback in both directions and any career-growth thread.",
+        sections = listOf(
+            SectionSpec("Their Topics", "what the other person raised, in their words"),
+            SectionSpec("My Topics", "what the note-taker raised"),
+            SectionSpec("Blockers", "anything stuck and who can unblock it"),
+            SectionSpec("Feedback", "feedback given in either direction"),
+            SectionSpec("Growth", "career, skills and development threads"),
+        ),
     ),
     WEEKLY_STANDUP(
         "Weekly Standup",
-        "This is a team standup — prefer sections like Done, In Progress, Blockers, Next Up.",
+        "Team stand-up. Very brief: one line per person.",
+        sections = listOf(
+            SectionSpec("Updates", "Name: done / doing"),
+            SectionSpec("Blockers", "what is blocked and who unblocks it"),
+        ),
     ),
     LEARNING(
         "Learning",
-        "This is a learning session (talk, seminar, Lunch & Learn, vendor demo, deep dive) — " +
-            "prefer sections like Speakers, Key Takeaways, Learning Points, Follow-up Resources.",
+        "This is a learning session (talk, seminar, Lunch & Learn, vendor demo, deep dive). " +
+            "Capture the substance: claims, numbers, definitions, named tools.",
         SummaryStyle.PRESENTATION,
+        sections = listOf(
+            SectionSpec("Speakers", "who presented and their role"),
+            SectionSpec("Key Takeaways", "the few points worth remembering"),
+            SectionSpec("Learning Points", "concepts, numbers and definitions in the order covered"),
+            SectionSpec("Follow-up Resources", "tools, papers, links or people to look up"),
+        ),
     ),
     PRESENTATION(
         "Conference talk",
@@ -167,9 +197,90 @@ enum class SummaryTemplate(
     ),
     USER_INTERVIEW(
         "User Interview",
-        "This is a user interview — prefer sections like Background, Pain Points, Feature Requests, Quotes.",
+        "This is a user interview; I am trying to understand what the user thinks about my " +
+            "product. Focus on what they said, not what I said. Include quotes and numbers.",
+        sections = listOf(
+            SectionSpec("Participant Background", "who they are and how they use the product"),
+            SectionSpec("Key Insights", "the most important things learned"),
+            SectionSpec("Pain Points", "problems and frustrations, in their words"),
+            SectionSpec("Notable Quotes", "verbatim quotes worth keeping"),
+            SectionSpec("Product Feedback", "reactions to features and the product"),
+            SectionSpec("Follow-ups", "questions to ask next or things to check"),
+        ),
+    ),
+    CUSTOMER_DISCOVERY(
+        "Customer Discovery",
+        "Discovery call with a prospect. Diagnose before prescribing. Prioritize their words, " +
+            "exact figures and quotes. Do not guess.",
+        sections = listOf(
+            SectionSpec("Company Context", "who they are, team size, what they do"),
+            SectionSpec("Current Workflow", "how they do it today and workarounds"),
+            SectionSpec("Pain Points", "problems and their impact"),
+            SectionSpec("Decision Process and Stakeholders", "who decides, budget and timing"),
+            SectionSpec("Objections", "concerns raised, resolved or open"),
+        ),
+    ),
+    PITCH(
+        "Pitch (investor)",
+        "I am an investor evaluating this company; these notes inform an investment decision. " +
+            "Capture exact figures and claims.",
+        sections = listOf(
+            SectionSpec("Company and Product", "what they build and for whom"),
+            SectionSpec("Team", "founders and key hires"),
+            SectionSpec("Market", "market size and competition"),
+            SectionSpec("Traction and Metrics", "revenue, growth, retention, users"),
+            SectionSpec("Business Model", "how they make money"),
+            SectionSpec("Round Terms", "raise amount, valuation, use of funds"),
+            SectionSpec("Concerns and Risks", "doubts and red flags"),
+            SectionSpec("Open Questions", "what still needs answering"),
+        ),
+    ),
+    PROJECT_KICKOFF(
+        "Project Kick-Off",
+        "Project kick-off meeting. Record what the team aligned on: scope, owners and dates.",
+        sections = listOf(
+            SectionSpec("Goals", "what success looks like"),
+            SectionSpec("Scope", "what is in and out"),
+            SectionSpec("Roles and Owners", "who is responsible for what"),
+            SectionSpec("Timeline and Milestones", "dates and phases"),
+            SectionSpec("Risks", "what could go wrong"),
+        ),
+    ),
+    TEAM_MEETING(
+        "Weekly Team Meeting",
+        "Weekly team status meeting. Record decisions together with their rationale.",
+        sections = listOf(
+            SectionSpec("Updates", "status from each person or area"),
+            SectionSpec("Decisions", "what was decided and why"),
+            SectionSpec("Discussion Points", "topics debated"),
+            SectionSpec("Open Questions", "unresolved items"),
+        ),
+    ),
+    INTERVIEW_DEBRIEF(
+        "Interview Debrief",
+        "Hiring debrief about a candidate. Evidence-based assessment: examples, not impressions.",
+        sections = listOf(
+            SectionSpec("Candidate Background", "role, history and context"),
+            SectionSpec("Experience Examples", "concrete examples they gave"),
+            SectionSpec("Strengths", "what stood out positively"),
+            SectionSpec("Concerns", "doubts or gaps"),
+            SectionSpec("Compensation and Notice", "expectations, range, notice period"),
+            SectionSpec("Recommendation", "hire / no hire and why"),
+        ),
+    ),
+    PIPELINE_REVIEW(
+        "Pipeline Review",
+        "Sales pipeline review. Emphasize deal progression and risk.",
+        sections = listOf(
+            SectionSpec("Deals by Stage", "Deal: stage, value, change since last week"),
+            SectionSpec("At-Risk Deals", "deal and the reason it is at risk"),
+            SectionSpec("Forecast Changes", "movements in the forecast"),
+        ),
     ),
     ;
+
+    /** AI-19: the context + sections bundle the prompt builder and deterministic path consume. */
+    val spec: TemplateSpec get() = TemplateSpec(guidance, sections)
 
     companion object {
         fun fromStored(value: String?): SummaryTemplate =
@@ -179,7 +290,14 @@ enum class SummaryTemplate(
 
 /** A user-defined summary template (AI-03): a display name plus the guidance sentence that
  * steers the structuring prompt, exactly like a built-in's [SummaryTemplate.guidance]. */
-data class CustomSummaryTemplate(val name: String, val guidance: String)
+data class CustomSummaryTemplate(
+    val name: String,
+    val guidance: String,
+    /** AI-19: optional required sections; empty = a context-only template, exactly as before. */
+    val sections: List<SectionSpec> = emptyList(),
+) {
+    val spec: TemplateSpec get() = TemplateSpec(guidance, sections)
+}
 
 /**
  * JSON codec for the user-defined template list (AI-03) — DataStore-backed, same fail-soft
@@ -189,7 +307,17 @@ data class CustomSummaryTemplate(val name: String, val guidance: String)
 object CustomTemplatesJson {
     fun encode(templates: List<CustomSummaryTemplate>): String {
         val arr = JSONArray()
-        templates.forEach { arr.put(JSONObject().put("n", it.name).put("g", it.guidance)) }
+        templates.forEach { t ->
+            val o = JSONObject().put("n", t.name).put("g", t.guidance)
+            // AI-19: additive "s" key, written only when there are sections, so a context-only
+            // template serializes exactly as it did before.
+            if (t.sections.isNotEmpty()) {
+                val sarr = JSONArray()
+                t.sections.forEach { sarr.put(JSONObject().put("h", it.heading).put("i", it.instruction)) }
+                o.put("s", sarr)
+            }
+            arr.put(o)
+        }
         return arr.toString()
     }
 
@@ -201,7 +329,15 @@ object CustomTemplatesJson {
                 val o = arr.optJSONObject(i) ?: return@mapNotNull null
                 val name = o.optString("n").trim()
                 val guidance = o.optString("g").trim()
-                if (name.isBlank() || guidance.isBlank()) null else CustomSummaryTemplate(name, guidance)
+                if (name.isBlank() || guidance.isBlank()) return@mapNotNull null
+                val sections = o.optJSONArray("s")?.let { sarr ->
+                    (0 until sarr.length()).mapNotNull { j ->
+                        val so = sarr.optJSONObject(j) ?: return@mapNotNull null
+                        val heading = so.optString("h").trim()
+                        if (heading.isBlank()) null else SectionSpec(heading, so.optString("i").trim())
+                    }
+                }.orEmpty()
+                CustomSummaryTemplate(name, guidance, sections)
             }
         }.getOrDefault(emptyList())
     }
@@ -257,6 +393,21 @@ object TemplateOptions {
     fun styleFor(stored: String?, customs: List<CustomSummaryTemplate>): SummaryStyle {
         if (stored != null && stored.startsWith(CUSTOM_PREFIX)) return SummaryStyle.DISCUSSION
         return SummaryTemplate.fromStored(stored).style
+    }
+
+    /**
+     * AI-19: resolve a stored value to its full [TemplateSpec] (context + sections). Same
+     * degrade contract as [guidanceFor]: a deleted custom template or an unknown/retired value
+     * yields [SummaryTemplate.NONE]'s context-only spec. A custom template with no sections is
+     * context-only, i.e. behaves exactly as it did before AI-19. [SummaryTemplate.AUTO] must be
+     * resolved by the caller first (AI-20); unresolved it is the same as NONE.
+     */
+    fun specFor(stored: String?, customs: List<CustomSummaryTemplate>): TemplateSpec {
+        if (stored != null && stored.startsWith(CUSTOM_PREFIX)) {
+            val name = stored.removePrefix(CUSTOM_PREFIX)
+            return customs.firstOrNull { it.name == name }?.spec ?: SummaryTemplate.NONE.spec
+        }
+        return SummaryTemplate.fromStored(stored).spec
     }
 }
 
