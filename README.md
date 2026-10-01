@@ -178,7 +178,7 @@ the asset — it never publishes anything itself.
    is running in the background — nothing about it depends on the Capture screen staying
    open. The 3-dot menu also has a **"What can be captured?"** help sheet summarizing all
    of the above limits honestly, in-app. Above *End & Merge*, a template row (**Auto** / General / 1:1 /
-   Weekly Standup / Team Meeting / Learning / **Conference talk** / User Interview /
+   Weekly Standup / Weekly Team Meeting / Learning / **Conference talk** / User Interview /
    Customer Discovery / Pitch / Project Kick-Off / Interview Debrief / Pipeline Review, plus
    any **custom templates** you've saved in Settings) steers how the summary is structured
    for this capture. Each template is a short meeting context plus a list of sections that

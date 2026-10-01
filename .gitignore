@@ -17,3 +17,4 @@ build/
 *.keystore
 keystore.properties
 signing.properties
+Android/test-artifacts/
