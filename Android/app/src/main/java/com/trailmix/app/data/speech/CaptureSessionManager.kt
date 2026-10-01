@@ -6,8 +6,9 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.util.Log
 import com.trailmix.app.data.ai.MergePolicy
-import com.trailmix.app.data.ai.RegeneratePolicy
+import com.trailmix.app.data.ai.NoteTitle
 import com.trailmix.app.data.ai.OnDeviceAiProcessor
+import com.trailmix.app.data.ai.RegeneratePolicy
 import com.trailmix.app.data.ai.VocabularyCorrection
 import com.trailmix.app.data.calendar.UpcomingMeetingSource
 import com.trailmix.app.data.db.NotesRepository
@@ -819,6 +820,9 @@ class CaptureSessionManager @Inject constructor(
         // speaker labels — never diarize again (and never consume a retained-audio buffer
         // that belongs to some other session).
         rediarize: Boolean = true,
+        // UX-35: a regeneration keeps the note's current real title (it may be hand-edited);
+        // null lets the merge's own title through, as End & Merge always has.
+        keepTitle: String? = null,
     ): Long {
         // CAP-11: an entirely empty session — nothing typed, nothing transcribed —
         // saves nothing at all. -1 tells the caller no note was created.
@@ -843,7 +847,7 @@ class CaptureSessionManager @Inject constructor(
         if (noteId > 0) {
             notesRepository.updateMergedNote(
                 id = noteId,
-                title = result.title,
+                title = keepTitle ?: result.title,
                 segments = result.segments,
                 transcript = diarizedTranscript,
                 typedFragments = typed,
@@ -921,6 +925,7 @@ class CaptureSessionManager @Inject constructor(
                     template = template ?: note.template ?: SummaryTemplate.NONE.name,
                     flags = note.flaggedLabels,
                     rediarize = false,
+                    keepTitle = note.title.takeUnless { NoteTitle.isDefault(it) },
                 ) > 0
             }
                 .onFailure { if (it is CancellationException) throw it }
