@@ -2,8 +2,9 @@
 # Live device-test helpers for TrailMix (v1.22.0 Granola-style notes pass).
 #
 # Usage (from the repo's Android/ directory, with JAVA_HOME and ANDROID_HOME set as in CLAUDE.md):
-#   scripts/device-test.sh preflight          # device, installed version, signer, permissions
-#   scripts/device-test.sh install            # build the release APK and update IN PLACE (never uninstalls)
+#   scripts/device-test.sh preflight          # device, both TrailMix packages, signers, permissions
+#   scripts/device-test.sh install-preview    # download the CI preview APK from GitHub and install it
+#   scripts/device-test.sh install            # build the REAL release APK and update IN PLACE (needs the release key)
 #   scripts/device-test.sh logs-start <name>  # start a filtered logcat capture into test-artifacts/
 #   scripts/device-test.sh logs-stop          # stop the capture
 #   scripts/device-test.sh crashes            # print the crash buffer (empty = good)
@@ -11,11 +12,19 @@
 #   scripts/device-test.sh ui <name>          # uiautomator dump into test-artifacts/
 #   scripts/device-test.sh state              # FGS type, mic recorders, pump threads
 #
-# Never add an uninstall path here: uninstalling wipes every note (allowBackup=false). See the
-# "Never adb uninstall" Trap row in CLAUDE.md.
+# Two packages exist on the test phone:
+#   com.trailmix.app          the REAL app with the user's notes. NEVER uninstall or clear it
+#                             (allowBackup=false: every note is lost). See CLAUDE.md's Trap row.
+#   com.trailmix.app.preview  "TrailMix Preview", the CI build from the GitHub pre-release. Its own
+#                             separate data; safe to uninstall when a newer preview needs replacing.
+# preflight/state/logs target the preview package by default; set TM_PKG=com.trailmix.app to
+# point them at the real app.
 set -euo pipefail
 
-PKG=com.trailmix.app
+REAL_PKG=com.trailmix.app
+PREVIEW_PKG=com.trailmix.app.preview
+PKG="${TM_PKG:-$PREVIEW_PKG}"
+REPO=ConniptionFit/TrailMix
 EXPECTED_SIGNER_SHA256=b6a53a1665231cde60fbde87918de47b5acf4b0dc0dbb70f59146deef3ae5bbd
 ART=test-artifacts
 ADB="${ANDROID_HOME:?set ANDROID_HOME}/platform-tools/adb"
@@ -27,18 +36,56 @@ digest_of() { grep -oiE '[0-9a-f]{2}(:?[0-9a-f]{2}){31}' | head -1 | tr -d ':' |
 case "${1:-}" in
   preflight)
     "$ADB" devices -l
-    echo "--- installed version"
-    "$ADB" shell dumpsys package "$PKG" | grep -E "versionName|versionCode|firstInstallTime|lastUpdateTime" || echo "NOT INSTALLED"
-    echo "--- installed signer (must be $EXPECTED_SIGNER_SHA256)"
-    APK_PATH=$("$ADB" shell pm path "$PKG" | head -1 | sed 's/package://' | tr -d '\r')
-    if [ -n "$APK_PATH" ]; then
-      "$ADB" pull "$APK_PATH" "$ART/installed.apk" >/dev/null
-      "$(latest_build_tool)/apksigner" verify --print-certs "$ART/installed.apk" | digest_of
-    fi
-    echo "--- runtime permissions"
+    for P in "$REAL_PKG" "$PREVIEW_PKG"; do
+      echo "--- $P"
+      "$ADB" shell dumpsys package "$P" | grep -E "versionName|versionCode|firstInstallTime|lastUpdateTime" || echo "NOT INSTALLED"
+      APK_PATH=$("$ADB" shell pm path "$P" 2>/dev/null | head -1 | sed 's/package://' | tr -d '\r')
+      if [ -n "$APK_PATH" ]; then
+        "$ADB" pull "$APK_PATH" "$ART/installed-$P.apk" >/dev/null
+        echo "signer: $("$(latest_build_tool)/apksigner" verify --print-certs "$ART/installed-$P.apk" | digest_of)"
+      fi
+    done
+    echo "(real app signer must be $EXPECTED_SIGNER_SHA256)"
+    echo "--- runtime permissions ($PKG)"
     "$ADB" shell dumpsys package "$PKG" | grep -E "RECORD_AUDIO|POST_NOTIFICATIONS|READ_CALENDAR|READ_MEDIA" || true
     echo "--- screen state (must be unlocked; never bypass the lock)"
     "$ADB" shell dumpsys window | grep -E "mDreamingLockscreen|isKeyguardShowing|mShowingLockscreen" || true
+    ;;
+  install-preview)
+    # Downloads the APK attached to the moving pre-release v<version>-preview (published by
+    # .github/workflows/preview.yml on every push to a claude/** branch). Needs `gh auth login`.
+    VERSION=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+    TAG="v${VERSION}-preview"
+    rm -f "$ART"/TrailMix-*-preview-*.apk
+    gh release download "$TAG" --repo "$REPO" --pattern 'TrailMix-*-preview-*.apk' --dir "$ART"
+    APK=$(ls "$ART"/TrailMix-*-preview-*.apk | head -1)
+    echo "downloaded: $APK"
+    gh release view "$TAG" --repo "$REPO" | sed -n '1,25p'
+    GOT_PKG=$("$(latest_build_tool)/aapt2" dump badging "$APK" | grep -oP "package: name='\K[^']+")
+    if [ "$GOT_PKG" != "$PREVIEW_PKG" ]; then
+      echo "REFUSING: APK package is $GOT_PKG, expected $PREVIEW_PKG."; exit 1
+    fi
+    "$(latest_build_tool)/aapt2" dump permissions "$APK" | tee "$ART/apk-permissions.txt"
+    if grep -qE "INTERNET|ACCESS_NETWORK_STATE" "$ART/apk-permissions.txt"; then
+      echo "REFUSING: a network permission leaked into the APK."; exit 1
+    fi
+    if ! "$ADB" install -r "$APK"; then
+      echo ""
+      echo "Install failed. If the error is INSTALL_FAILED_UPDATE_INCOMPATIBLE, an older preview"
+      echo "build with a different CI debug key is installed. Re-run with:"
+      echo "  scripts/device-test.sh replace-preview"
+      echo "which uninstalls ONLY $PREVIEW_PKG (never $REAL_PKG) and installs this APK."
+      exit 1
+    fi
+    "$ADB" shell dumpsys package "$PREVIEW_PKG" | grep -E "versionName|versionCode|lastUpdateTime"
+    ;;
+  replace-preview)
+    APK=$(ls "$ART"/TrailMix-*-preview-*.apk | head -1)
+    GOT_PKG=$("$(latest_build_tool)/aapt2" dump badging "$APK" | grep -oP "package: name='\K[^']+")
+    [ "$GOT_PKG" = "$PREVIEW_PKG" ] || { echo "REFUSING: $APK is $GOT_PKG"; exit 1; }
+    "$ADB" uninstall "$PREVIEW_PKG"
+    "$ADB" install "$APK"
+    "$ADB" shell dumpsys package "$PREVIEW_PKG" | grep -E "versionName|versionCode|lastUpdateTime"
     ;;
   install)
     ./gradlew :app:assembleRelease
@@ -55,7 +102,7 @@ case "${1:-}" in
       echo "REFUSING: a network permission leaked into the APK."; exit 1
     fi
     "$ADB" install -r "$APK"
-    "$ADB" shell dumpsys package "$PKG" | grep -E "versionName|versionCode|firstInstallTime|lastUpdateTime"
+    "$ADB" shell dumpsys package "$REAL_PKG" | grep -E "versionName|versionCode|firstInstallTime|lastUpdateTime"
     ;;
   logs-start)
     NAME="${2:?name}"
@@ -93,5 +140,5 @@ case "${1:-}" in
     fi
     ;;
   *)
-    sed -n '2,16p' "$0"; exit 1 ;;
+    sed -n '2,27p' "$0"; exit 1 ;;
 esac

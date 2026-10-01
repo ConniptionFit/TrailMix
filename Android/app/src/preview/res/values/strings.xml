@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Preview channel: a distinct launcher name so it can't be confused with the real app. -->
+    <string name="app_name">TrailMix Preview</string>
+</resources>

@@ -1,0 +1,100 @@
+name: Preview APK
+
+# Builds the `preview` build type (release settings, `com.trailmix.app.preview` package, debug
+# signing key) and publishes it as a GitHub pre-release so it can be installed on a test device
+# next to the real app. It can never update or replace the real `com.trailmix.app` install.
+# Pre-releases are never marked Latest, so Obtainium users are not offered it.
+
+on:
+  push:
+    branches: ['claude/**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Android
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build preview APK
+        run: ./gradlew :app:assemblePreview --stacktrace
+
+      - name: Verify and stage APK
+        id: stage
+        run: |
+          set -euo pipefail
+          BT="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+          APK="app/build/outputs/apk/preview/app-preview.apk"
+          VERSION="$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          NAME="TrailMix-v${VERSION}-preview-${SHORT_SHA}.apk"
+
+          PKG="$("$BT/aapt2" dump badging "$APK" | grep -oP "package: name='\K[^']+")"
+          [ "$PKG" = "com.trailmix.app.preview" ] || { echo "Wrong package: $PKG"; exit 1; }
+
+          "$BT/aapt2" dump permissions "$APK" | tee permissions.txt
+          if grep -qE "INTERNET|ACCESS_NETWORK_STATE" permissions.txt; then
+            echo "A network permission leaked into the APK."; exit 1
+          fi
+
+          SIGNER="$("$BT/apksigner" verify --print-certs "$APK" | grep -oiE '[0-9a-f]{2}(:?[0-9a-f]{2}){31}' | head -1 | tr -d ':' | tr 'A-F' 'a-f')"
+          SHA256_FILE="$(sha256sum "$APK" | cut -d' ' -f1)"
+          cp "$APK" "$NAME"
+
+          {
+            echo "Preview build of \`${GITHUB_REF_NAME}\` at ${GITHUB_SHA}."
+            echo
+            echo "- Package: \`com.trailmix.app.preview\` (app name **TrailMix Preview**). Installs next to the real TrailMix and never touches its notes."
+            echo "- versionName: \`${VERSION}-preview\`"
+            echo "- APK SHA-256: \`${SHA256_FILE}\`"
+            echo "- Signer SHA-256: \`${SIGNER}\` (CI debug key; it changes on every build, so updating Preview to a newer build means uninstalling **TrailMix Preview only** first)"
+            echo "- Permissions: no INTERNET / ACCESS_NETWORK_STATE (verified in CI)"
+            echo
+            echo "Install: \`Android/scripts/device-test.sh install-preview\`, or download the APK and \`adb install\` it."
+          } > notes.md
+
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: trailmix-preview-apk
+          path: Android/${{ steps.stage.outputs.name }}
+
+      - name: Publish GitHub pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="v${{ steps.stage.outputs.version }}-preview"
+          # One moving pre-release per version: replace the previous preview build of it.
+          gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes 2>/dev/null || true
+          gh release create "$TAG" "${{ steps.stage.outputs.name }}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "v${{ steps.stage.outputs.version }} preview (${GITHUB_SHA::7})" \
+            --notes-file notes.md \
+            --prerelease \
+            --latest=false

@@ -113,6 +113,22 @@ android {
                 abiFilters += listOf("arm64-v8a")
             }
         }
+        // Preview channel: identical to `release` (R8, resource shrinking, arm64 only, same ProGuard
+        // rules, so release-only failures like the sherpa-onnx JNI stripping show up here too),
+        // but under its own `.preview` package and the debug signing key, so it installs next to
+        // the real app and can never update or replace it, and the real release key never has to
+        // leave the user's machines. Built and published by .github/workflows/preview.yml as a
+        // GitHub pre-release for device testing.
+        create("preview") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".preview"
+            versionNameSuffix = "-preview"
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("release")
+            ndk {
+                abiFilters += listOf("arm64-v8a")
+            }
+        }
     }
 
     compileOptions {
