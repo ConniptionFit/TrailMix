@@ -46,6 +46,10 @@ object NoteShape {
 
     private class Item(var section: SummarySection, val locked: Boolean)
 
+    private val NEXT_STEPS_HEADINGS = setOf(
+        "next steps", "action items", "actions", "to do", "todo", "follow ups", "follow up", "tasks",
+    )
+
     fun apply(
         summary: StructuredSummary,
         anchors: List<Anchor> = emptyList(),
@@ -59,6 +63,11 @@ object NoteShape {
             Item(if (locked) s else s.copy(heading = cleanHeading(s.heading)), locked)
         }
         items = dedupe(items).filter { it.section.bullets.isNotEmpty() }
+        // The note always renders its own Next Steps list; a model-made section of the same name
+        // would show the actions twice. Kept when there are no real action items to stand in for it.
+        if (summary.actionItems.isNotEmpty()) {
+            items = items.filterNot { !it.locked && normalize(it.section.heading) in NEXT_STEPS_HEADINGS }
+        }
         if (!fixedSections) {
             items = collapseShort(items)
             items = capSections(items)

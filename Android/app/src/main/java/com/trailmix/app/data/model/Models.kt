@@ -461,9 +461,27 @@ data class ActionItem(
  * export so the two cannot drift.
  */
 fun ActionItem.displayText(): String = buildString {
-    owner?.takeIf { it.isNotBlank() }?.let { append(it.trim()).append(": ") }
-    append(text.trim())
+    val who = owner?.trim()?.takeIf { it.isNotEmpty() }
+    var action = text.trim()
+    if (who != null) {
+        append(who).append(": ")
+        action = action.withoutLeadingOwner(who)
+    }
+    append(action)
     deadline?.takeIf { it.isNotBlank() }?.let { append(" (by ").append(it.trim()).append(')') }
+}
+
+/**
+ * The model often restates the owner in the action ("Chloe to provide credentials") and the
+ * "Owner:" prefix already says it. Only a whole leading word is dropped (not "Chloe's laptop"), and
+ * a bare "to"/"will" left in front of the verb goes with it.
+ */
+private fun String.withoutLeadingOwner(owner: String): String {
+    if (!startsWith(owner, ignoreCase = true)) return this
+    val rest = substring(owner.length)
+    if (rest.firstOrNull().let { it != ' ' && it != ':' && it != ',' }) return this
+    val action = rest.trimStart(' ', ':', ',').removePrefix("to ").removePrefix("will ").trim()
+    return if (action.isEmpty()) this else action.replaceFirstChar { it.uppercase() }
 }
 
 /**

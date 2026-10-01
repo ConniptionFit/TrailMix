@@ -146,4 +146,22 @@ class NoteShapeTest {
         assertEquals(input.highlights, out.highlights)
         assertEquals(actions, out.actionItems)
     }
+
+    @Test
+    fun `a model-made Next Steps section is dropped when real action items exist`() {
+        val actions = listOf(ActionItem("Send the deck", owner = "Sam"))
+        val shaped = NoteShape.apply(
+            summary(sec("Routing", *routing.toTypedArray()), sec("Next Steps", "Sam to send the deck."), actions = actions),
+        )
+
+        assertEquals(listOf("Routing"), shaped.sections.map { it.heading })
+        assertEquals(actions, shaped.actionItems)
+    }
+
+    @Test
+    fun `a Next Steps section is kept when there are no action items to stand in for it`() {
+        val shaped = NoteShape.apply(summary(sec("Routing", *routing.toTypedArray()), sec("Next Steps", "Sam to send the deck.")))
+
+        assertTrue(shaped.sections.any { it.heading.equals("Next Steps", true) })
+    }
 }

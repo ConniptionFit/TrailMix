@@ -122,6 +122,17 @@ class ModelsTest {
     }
 
     @Test
+    fun `action item display text drops an owner the action restates`() {
+        assertEquals("Chloe: Provide staging credentials", ActionItem("Chloe to provide staging credentials", owner = "Chloe").displayText())
+        assertEquals("Sam: Send the deck (by Fri)", ActionItem("sam will send the deck", owner = "Sam", deadline = "Fri").displayText())
+        assertEquals("Rob: Scope it", ActionItem("Rob: scope it", owner = "Rob").displayText())
+        // Only a whole leading word counts, and an action that is only the owner is left alone.
+        assertEquals("Chloe: Chloe's laptop needs a patch", ActionItem("Chloe's laptop needs a patch", owner = "Chloe").displayText())
+        assertEquals("Chloe: Chloe", ActionItem("Chloe", owner = "Chloe").displayText())
+        assertEquals("Sam: Chloe to send it", ActionItem("Chloe to send it", owner = "Sam").displayText())
+    }
+
+    @Test
     fun `structured summary decode of null, blank, or empty-content JSON returns null`() {
         assertEquals(null, StructuredSummaryJson.decode(null))
         assertEquals(null, StructuredSummaryJson.decode(""))
