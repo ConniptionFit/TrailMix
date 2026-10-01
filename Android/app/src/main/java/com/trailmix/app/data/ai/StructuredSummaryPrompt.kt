@@ -67,10 +67,10 @@ object StructuredSummaryPrompt {
             $meetingLine
             $attendeeLine
             Transcript lines are prefixed with [mm:ss] and, when known, the speaker (Me = the note-taker).
-            Begin every bullet and action item with the [mm:ss] of the moment it came from, then the text.
             Respond with ONLY valid JSON, no markdown fences, matching exactly this shape:
-            {"sections": [{"heading": "Topic name", "bullets": [{"text": "[mm:ss] point", "details": ["optional sub-point"]}]}],
-             "actionItems": [{"text": "[mm:ss] what needs doing", "owner": "name or null", "deadline": "date/phrase or null"}]}
+            {"sections": [{"heading": "Topic name", "bullets": [{"text": "point"}]}],
+             "actionItems": [{"text": "what needs doing", "owner": "name or null", "deadline": "date/phrase or null"}]}
+            Your whole reply must stay short: add "details": ["sub-point"] to a bullet only when needed, never null.
             $sectionBlock
             $rules
             $GRANOLA_FORMAT
