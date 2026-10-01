@@ -52,6 +52,24 @@ allow your file manager to install unknown apps).
 > history, provenance tags, and the ability to resume a capture. The exports are a real
 > safety net for the *content*, not a backup you can restore from.
 
+### Test builds: TrailMix Preview (pre-release, for testers)
+
+Every push to a `claude/**` branch builds a **TrailMix Preview** APK in CI
+(`.github/workflows/preview.yml`) and publishes it as the GitHub **pre-release**
+`v<version>-preview` (for example `v1.22.0-preview`), replacing the previous preview of that
+version. It uses the release build settings but a separate package,
+`com.trailmix.app.preview`, and a CI debug signing key. That means:
+
+- It installs **next to** the real TrailMix and has its own, separate notes and settings. It
+  can never update, replace or read the real app or its data.
+- It is never marked Latest, so Obtainium does not offer it.
+- Each CI build has a different debug key, so moving Preview to a newer build means
+  uninstalling **TrailMix Preview** first (only its own test data is lost).
+- Give it its own Export location; never point it at the real app's export folder.
+
+Install from a workstation with `gh` and `adb`: `cd Android && scripts/device-test.sh install-preview`
+(see `Android/docs/test-plans/` for the full device test procedure).
+
 ### Build from source
 
 **Prerequisites:**
