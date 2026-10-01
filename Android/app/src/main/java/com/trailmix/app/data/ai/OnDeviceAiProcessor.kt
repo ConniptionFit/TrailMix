@@ -12,6 +12,7 @@ import com.trailmix.app.data.model.SummaryBullet
 import com.trailmix.app.data.model.SummarySection
 import com.trailmix.app.data.model.SummaryStyle
 import com.trailmix.app.data.model.SummaryTemplate
+import com.trailmix.app.data.model.TemplateSpec
 import com.trailmix.app.data.model.TranscriptLine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -134,6 +135,10 @@ class OnDeviceAiProcessor @Inject constructor() {
         attendees: List<String> = emptyList(),
         templateGuidance: String = SummaryTemplate.NONE.guidance,
         style: SummaryStyle = SummaryStyle.DISCUSSION,
+        /** AI-19: the template's context + required sections; null = context-only via [templateGuidance]. */
+        templateSpec: TemplateSpec? = null,
+        /** AI-21: [com.trailmix.app.data.model.UserProfile.promptLine], or null when no profile is set. */
+        profileLine: String? = null,
         /**
          * REL-10: called as each transcript chunk finishes condensing, with the number done
          * and the total. A keynote-scale merge is a dozen sequential model calls; the caller
@@ -145,7 +150,7 @@ class OnDeviceAiProcessor @Inject constructor() {
         // CAP-11 (v1.8.0): no transcript → nothing to merge or summarize. The typed notes
         // are saved verbatim via the deterministic path; the model is never invoked.
         if (!MergePolicy.hasTranscript(transcript)) {
-            return@withContext fallbackMerge(typedFragments, transcript, createdAtEpochMs, style)
+            return@withContext fallbackMerge(typedFragments, transcript, createdAtEpochMs, style, templateSpec)
         }
         // AI-05: sample evenly across the whole session rather than taking the first
         // MAX_CONTEXT_CHARS. The old `.take()` meant a 45-minute talk was titled and
@@ -153,7 +158,7 @@ class OnDeviceAiProcessor @Inject constructor() {
         val transcriptText = TranscriptCoverage.evenSample(transcript, MAX_CONTEXT_CHARS)
         val availability = ensureModelReady()
         if (availability !is AiAvailability.Available) {
-            return@withContext fallbackMerge(typedFragments, transcript, createdAtEpochMs, style)
+            return@withContext fallbackMerge(typedFragments, transcript, createdAtEpochMs, style, templateSpec)
         }
         try {
             val prompt = """
@@ -176,7 +181,7 @@ class OnDeviceAiProcessor @Inject constructor() {
 
             val output = generate(prompt)
             val lines = output.lines().map { it.trim() }.filter { it.isNotBlank() }
-            if (lines.size < 2) return@withContext fallbackMerge(typedFragments, transcript, createdAtEpochMs, style)
+            if (lines.size < 2) return@withContext fallbackMerge(typedFragments, transcript, createdAtEpochMs, style, templateSpec)
 
             // AI-07: the prompt's "max 8 words, no markdown" is a request, not a constraint.
             // NoteTitle.clean is the constraint — it also falls back to the default title,
@@ -188,21 +193,21 @@ class OnDeviceAiProcessor @Inject constructor() {
             // a bad/non-JSON model reply still yields sectioned output, never a flat wall.
             // The fallback reads the FULL transcript, not the sampled text the model saw.
             val structured = runCatching {
-                generateStructuredSummary(typedFragments, transcript, attendees, templateGuidance, onProgress)
+                generateStructuredSummary(typedFragments, transcript, attendees, templateGuidance, templateSpec, profileLine, onProgress)
             }.onFailure(::rethrowIfCancellation).getOrNull()
-                ?: DeterministicSummary.from(typedFragments, transcript, style)
+                ?: DeterministicSummary.from(typedFragments, transcript, style, templateSpec)
 
             MergeResult(
                 title = title,
                 segments = segments.ifEmpty {
-                    fallbackMerge(typedFragments, transcript, createdAtEpochMs, style).segments
+                    fallbackMerge(typedFragments, transcript, createdAtEpochMs, style, templateSpec).segments
                 },
                 usedOnDeviceAi = true,
                 structuredSummary = structured,
             )
         } catch (e: Exception) {
             rethrowIfCancellation(e)
-            fallbackMerge(typedFragments, transcript, createdAtEpochMs, style)
+            fallbackMerge(typedFragments, transcript, createdAtEpochMs, style, templateSpec)
         }
     }
 
@@ -336,6 +341,8 @@ class OnDeviceAiProcessor @Inject constructor() {
         transcript: List<TranscriptLine>,
         attendees: List<String>,
         templateGuidance: String,
+        templateSpec: TemplateSpec?,
+        profileLine: String?,
         onProgress: (done: Int, total: Int) -> Unit = { _, _ -> },
     ): StructuredSummary? {
         val chunks = TranscriptCoverage.chunks(transcript, CHUNK_CHARS)
@@ -366,7 +373,7 @@ class OnDeviceAiProcessor @Inject constructor() {
         // StructuredSummaryPrompt; AnchorCoverage re-checks the parsed result below.
         val anchors = NoteAnchors.parse(typedFragments)
         val prompt = StructuredSummaryPrompt.build(
-            templateGuidance, attendees, anchors, typedFragments, transcriptText,
+            templateGuidance, attendees, anchors, typedFragments, transcriptText, templateSpec, profileLine,
         )
 
         val raw = generate(prompt)
@@ -442,11 +449,13 @@ class OnDeviceAiProcessor @Inject constructor() {
 
         if (highlights.isEmpty() && sections.isEmpty() && actionItems.isEmpty()) return null
         // AI-17: whatever the model dropped, no typed note is lost.
-        return AnchorCoverage.ensure(
+        val covered = AnchorCoverage.ensure(
             StructuredSummary(highlights = highlights, sections = sections, actionItems = actionItems),
             anchors,
             transcript,
         )
+        // AI-19: the prompt only *asked* for the template's headings; this makes it so.
+        return if (templateSpec != null) TemplateSectioner.conform(covered, templateSpec) else covered
     }
 
     /** Map step: one chunk of a long session → a few timestamped factual bullets. */
@@ -524,6 +533,7 @@ class OnDeviceAiProcessor @Inject constructor() {
         transcript: List<TranscriptLine>,
         createdAtEpochMs: Long,
         style: SummaryStyle = SummaryStyle.DISCUSSION,
+        templateSpec: TemplateSpec? = null,
     ): MergeResult {
         val segments = buildList {
             splitSentences(typedFragments).forEach { add(NoteSegment(it, Provenance.FRAGMENT)) }
@@ -542,7 +552,7 @@ class OnDeviceAiProcessor @Inject constructor() {
                 listOf(NoteSegment("Empty capture.", Provenance.FRAGMENT))
             },
             usedOnDeviceAi = false,
-            structuredSummary = DeterministicSummary.from(typedFragments, transcript, style),
+            structuredSummary = DeterministicSummary.from(typedFragments, transcript, style, templateSpec),
         )
     }
 

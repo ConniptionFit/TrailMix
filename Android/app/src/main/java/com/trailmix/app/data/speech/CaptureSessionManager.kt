@@ -5,6 +5,7 @@ import android.content.Intent
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.util.Log
+import com.trailmix.app.data.ai.AutoTemplate
 import com.trailmix.app.data.ai.MergePolicy
 import com.trailmix.app.data.ai.NoteTitle
 import com.trailmix.app.data.ai.OnDeviceAiProcessor
@@ -259,7 +260,7 @@ class CaptureSessionManager @Inject constructor(
     // Resolved to its prompt-guidance sentence only at merge time (TemplateOptions.guidanceFor),
     // so editing a custom template mid-capture picks up the latest wording.
     @Volatile
-    private var template: String = SummaryTemplate.NONE.name
+    private var template: String = SummaryTemplate.AUTO.name
 
     /**
      * CAP-27 (2026-09-19): guards [beginSession] against the exact REL-19 scenario — the
@@ -317,7 +318,7 @@ class CaptureSessionManager @Inject constructor(
                 recoveredCreatedAtMs = 0L
                 capturedInCall = false
                 attendees = emptyList()
-                template = SummaryTemplate.NONE.name
+                template = SummaryTemplate.AUTO.name
                 callEndedPromptFired = false
                 _state.value = CaptureUiState(
                     meetingTitle = meetingTitle,
@@ -332,7 +333,8 @@ class CaptureSessionManager @Inject constructor(
                 if (resumeNoteId <= 0) {
                     // Fresh note: seed the template from the user's Settings default (UX-02); a
                     // resumed note keeps whatever template it was created with (see applyResume).
-                    settingsRepository.defaultSummaryTemplate.first()?.let { template = it }
+                    // AI-20: no stored default (a new install) means Auto.
+                    template = settingsRepository.defaultSummaryTemplate.first() ?: SummaryTemplate.AUTO.name
                 }
                 startRecording(applyPriorResume = true)
             } finally {
@@ -831,15 +833,28 @@ class CaptureSessionManager @Inject constructor(
         // the structured-summary attribution and the saved note should both see them.
         val diarizedTranscript = if (rediarize) diarizeIfEnabled(transcript) else transcript
         val customTemplates = settingsRepository.customSummaryTemplates.first()
+        // AI-20: "Auto" is resolved to a concrete template here, per merge; the note keeps
+        // storing "AUTO" (the `template` param below is what gets saved) so a regenerate
+        // re-resolves against the then-current title and notes.
+        val effectiveTemplate = if (template == SummaryTemplate.AUTO.name) {
+            AutoTemplate.resolve(meetingTitle, attendees.size, typed).name
+        } else {
+            template
+        }
+        val spec = TemplateOptions.specFor(effectiveTemplate, customTemplates)
+        // AI-21: who "Me" is, as one compact prompt sentence (null when no profile is set).
+        val profileLine = settingsRepository.userProfile.first().promptLine()
         val result = aiProcessor.merge(
             typedFragments = typed,
             transcript = diarizedTranscript,
             createdAtEpochMs = createdAtEpochMs,
             attendees = attendees,
-            templateGuidance = TemplateOptions.guidanceFor(template, customTemplates),
+            templateGuidance = spec.meetingContext,
+            templateSpec = spec,
+            profileLine = profileLine,
             // AI-05: the template also steers the zero-AI path now, so "Conference talk"
             // shapes the note on a device with no Gemini Nano.
-            style = TemplateOptions.styleFor(template, customTemplates),
+            style = TemplateOptions.styleFor(effectiveTemplate, customTemplates),
             // REL-10: a keynote merge is a dozen sequential model calls. Feed the count
             // through to the foreground notification so the wait reads as work, not a hang.
             onProgress = ::publishMergeProgress,

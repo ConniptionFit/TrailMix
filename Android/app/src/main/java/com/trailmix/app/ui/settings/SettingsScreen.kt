@@ -44,6 +44,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -66,6 +67,7 @@ import com.trailmix.app.data.ai.Recipe
 import com.trailmix.app.data.ai.VocabularyTerm
 import com.trailmix.app.data.export.ExportFormat
 import com.trailmix.app.data.model.CustomSummaryTemplate
+import com.trailmix.app.data.model.SectionSpec
 import com.trailmix.app.data.model.SummaryTemplate
 import com.trailmix.app.data.model.TemplateOptions
 import com.trailmix.app.data.model.UserProfile
@@ -193,14 +195,14 @@ fun SettingsScreen(
         PromptViewerDialog(
             title = template.name,
             kindLabel = if (viewingTemplateIsCustom) {
-                "CUSTOM TEMPLATE — PROMPT GUIDANCE"
+                "CUSTOM TEMPLATE — CONTEXT AND SECTIONS"
             } else {
-                "BUILT-IN TEMPLATE — PROMPT GUIDANCE"
+                "BUILT-IN TEMPLATE — CONTEXT AND SECTIONS"
             },
-            body = template.guidance,
-            footer = "This guidance is spliced into the structuring prompt when a capture " +
-                "ends, steering which sections the summary is grouped into. The rest of " +
-                "the prompt (JSON shape, factual-only rules) is fixed.",
+            body = template.spec.describe(),
+            footer = "The meeting context and sections are spliced into the structuring prompt " +
+                "when a capture ends, steering how the summary is grouped. Next Steps is " +
+                "always added. The rest of the prompt (JSON shape, factual-only rules) is fixed.",
             onEdit = if (viewingTemplateIsCustom) {
                 {
                     viewingTemplate = null
@@ -213,19 +215,10 @@ fun SettingsScreen(
         )
     }
     editingTemplate?.let { template ->
-        NamedPromptEditorDialog(
-            initialName = template.name,
-            initialText = template.guidance,
-            newTitle = "New template",
-            editTitle = "Edit template",
-            nameHint = "e.g. Sales call",
-            textLabel = "GUIDANCE",
-            textHint = "A sentence steering the summary's sections, e.g. \"This is a " +
-                "sales call — prefer sections like Customer Needs, Objections, " +
-                "Pricing, Next Steps.\"",
-            deleteLabel = "Delete template",
-            onSave = { name, guidance ->
-                viewModel.saveTemplate(name, guidance, originalName = template.name.ifBlank { null })
+        TemplateEditorDialog(
+            initial = template,
+            onSave = { name, context, sections ->
+                viewModel.saveTemplate(name, context, sections, originalName = template.name.ifBlank { null })
                 editingTemplate = null
             },
             onDelete = if (template.name.isNotBlank()) {
@@ -744,10 +737,15 @@ fun SettingsScreen(
             modifier = Modifier.padding(bottom = 8.dp),
         )
         SummaryTemplate.entries.forEach { template ->
-            val asViewable = CustomSummaryTemplate(template.label, template.guidance)
+            // AI-20: Auto has no guidance of its own; it picks one of the others per meeting.
+            val asViewable = if (template == SummaryTemplate.AUTO) {
+                CustomSummaryTemplate(template.label, AUTO_DESCRIPTION)
+            } else {
+                CustomSummaryTemplate(template.label, template.guidance, template.sections)
+            }
             PromptRow(
                 name = template.label,
-                preview = template.guidance,
+                preview = asViewable.guidance,
                 trailing = null,
                 onTrailingClick = null,
                 onClick = {
@@ -972,6 +970,174 @@ private fun NamedPromptEditorDialog(
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier
                     .clickable(enabled = valid) { onSave(name, text) }
+                    .padding(8.dp),
+            )
+        },
+        dismissButton = {
+            Text(
+                text = "Cancel",
+                color = c.dim,
+                fontSize = 14.sp,
+                modifier = Modifier.clickable { onDismiss() }.padding(8.dp),
+            )
+        },
+    )
+}
+
+private const val AUTO_DESCRIPTION =
+    "Picks the best template for each meeting from its calendar title and the first line of " +
+        "your notes (1:1, stand-up, interview, pitch, kick-off, talk, and so on), falling " +
+        "back to a flat topic summary. Re-resolved every time a note is regenerated."
+
+/**
+ * AI-19: create/edit dialog for a custom summary template — a name, the meeting context, and an
+ * ordered list of sections (heading + optional one-line instruction) with explicit up/down
+ * reorder buttons (the UX-04 reorder idiom: tap targets, not drag). A template with no
+ * sections is context-only and behaves exactly like a pre-AI-19 custom template. "Next Steps"
+ * is added automatically, so it is not a section to enter.
+ */
+@Composable
+private fun TemplateEditorDialog(
+    initial: CustomSummaryTemplate,
+    onSave: (name: String, context: String, sections: List<SectionSpec>) -> Unit,
+    onDelete: (() -> Unit)?,
+    onDismiss: () -> Unit,
+) {
+    val c = TrailMix.colors
+    var name by remember { mutableStateOf(initial.name) }
+    var context by remember { mutableStateOf(initial.guidance) }
+    val sections = remember { initial.sections.toMutableStateList() }
+    val valid = name.isNotBlank() && context.isNotBlank()
+
+    @Composable
+    fun Field(value: String, hint: String, singleLine: Boolean, minHeight: Int = 0, onChange: (String) -> Unit) {
+        BasicTextField(
+            value = value,
+            onValueChange = onChange,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = minHeight.dp)
+                .padding(top = 4.dp, bottom = 8.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(c.background)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            textStyle = TextStyle(color = c.text, fontSize = 14.sp, lineHeight = 20.sp),
+            cursorBrush = SolidColor(c.amber),
+            singleLine = singleLine,
+            decorationBox = { inner ->
+                if (value.isEmpty()) Text(hint, color = c.dim, fontSize = 13.sp, lineHeight = 18.sp)
+                inner()
+            },
+        )
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = c.card,
+        title = {
+            Text(
+                text = if (initial.name.isBlank()) "New template" else "Edit template",
+                color = c.text,
+                fontSize = 17.sp,
+            )
+        },
+        text = {
+            Column(modifier = Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
+                Text(text = "NAME", color = c.dim, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                Field(name, "e.g. Sales call", singleLine = true) { name = it }
+                Text(text = "MEETING CONTEXT", color = c.dim, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                Field(
+                    context,
+                    "What kind of meeting this is and what matters, e.g. \"This is a sales call. " +
+                        "Prioritize exact figures and the customer's own words.\"",
+                    singleLine = false,
+                    minHeight = 80,
+                ) { context = it }
+                Text(text = "SECTIONS (OPTIONAL)", color = c.dim, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    text = "In order. Leave empty to let the AI choose headings. Next Steps is always added.",
+                    color = c.dim,
+                    fontSize = 11.5.sp,
+                    lineHeight = 16.sp,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+                sections.forEachIndexed { i, section ->
+                    Column(modifier = Modifier.padding(top = 6.dp)) {
+                        Field(section.heading, "Heading, e.g. Objections", singleLine = true) {
+                            sections[i] = section.copy(heading = it)
+                        }
+                        Field(section.instruction, "What belongs here (optional)", singleLine = true) {
+                            sections[i] = section.copy(instruction = it)
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                text = "Up",
+                                color = if (i > 0) c.amber else c.dim.copy(alpha = 0.4f),
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier
+                                    .clickable(enabled = i > 0) {
+                                        val above = sections[i - 1]
+                                        sections[i - 1] = sections[i]
+                                        sections[i] = above
+                                    }
+                                    .padding(8.dp),
+                            )
+                            Text(
+                                text = "Down",
+                                color = if (i < sections.lastIndex) c.amber else c.dim.copy(alpha = 0.4f),
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier
+                                    .clickable(enabled = i < sections.lastIndex) {
+                                        val below = sections[i + 1]
+                                        sections[i + 1] = sections[i]
+                                        sections[i] = below
+                                    }
+                                    .padding(8.dp),
+                            )
+                            Text(
+                                text = "Remove",
+                                color = c.recordingRed,
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.clickable { sections.removeAt(i) }.padding(8.dp),
+                            )
+                        }
+                    }
+                }
+                Text(
+                    text = "+ Add section",
+                    color = c.amber,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .padding(top = 6.dp)
+                        .clickable { sections.add(SectionSpec("", "")) }
+                        .padding(4.dp),
+                )
+                onDelete?.let { delete ->
+                    Text(
+                        text = "Delete template",
+                        color = c.recordingRed,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier
+                            .padding(top = 14.dp)
+                            .clickable { delete() }
+                            .padding(4.dp),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Text(
+                text = "Save",
+                color = if (valid) c.amber else c.dim.copy(alpha = 0.5f),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .clickable(enabled = valid) { onSave(name, context, sections.toList()) }
                     .padding(8.dp),
             )
         },

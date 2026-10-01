@@ -10,6 +10,7 @@ import com.trailmix.app.data.ai.VocabularyTerm
 import com.trailmix.app.data.db.NotesRepository
 import com.trailmix.app.data.export.ExportFormat
 import com.trailmix.app.data.model.CustomSummaryTemplate
+import com.trailmix.app.data.model.SectionSpec
 import com.trailmix.app.data.model.SummaryTemplate
 import com.trailmix.app.data.model.TemplateOptions
 import com.trailmix.app.data.model.UserProfile
@@ -48,8 +49,9 @@ class SettingsViewModel @Inject constructor(
 
     /** The default template's STORED value (AI-03): enum name or `custom:<name>`. */
     val defaultTemplate: StateFlow<String> = settingsRepository.defaultSummaryTemplate
-        .map { it ?: SummaryTemplate.NONE.name }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SummaryTemplate.NONE.name)
+        // AI-20: no stored default (a new install) is Auto.
+        .map { it ?: SummaryTemplate.AUTO.name }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SummaryTemplate.AUTO.name)
 
     /** User-defined summary templates (AI-03). */
     val customTemplates: StateFlow<List<CustomSummaryTemplate>> =
@@ -222,7 +224,7 @@ class SettingsViewModel @Inject constructor(
 
     fun setDefaultTemplate(stored: String) {
         viewModelScope.launch {
-            settingsRepository.setDefaultSummaryTemplate(stored.takeIf { it != SummaryTemplate.NONE.name })
+            settingsRepository.setDefaultSummaryTemplate(stored.takeIf { it != SummaryTemplate.AUTO.name })
         }
     }
 
@@ -233,9 +235,18 @@ class SettingsViewModel @Inject constructor(
      * default if it referenced the old name (a stale default would silently fall back to
      * Flat at merge time).
      */
-    fun saveTemplate(name: String, guidance: String, originalName: String? = null) {
+    fun saveTemplate(
+        name: String,
+        guidance: String,
+        sections: List<SectionSpec> = emptyList(),
+        originalName: String? = null,
+    ) {
         val trimmedName = name.trim()
         val trimmedGuidance = guidance.trim()
+        // AI-19: blank headings are dropped, the rest trimmed.
+        val cleanSections = sections
+            .map { SectionSpec(it.heading.trim(), it.instruction.trim()) }
+            .filter { it.heading.isNotEmpty() }
         if (trimmedName.isBlank() || trimmedGuidance.isBlank()) return
         if (SummaryTemplate.entries.any { it.label.equals(trimmedName, ignoreCase = true) }) {
             _snackbarMessage.tryEmit("\"$trimmedName\" is a built-in template name — pick another")
@@ -244,7 +255,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             val current = settingsRepository.customSummaryTemplates.first()
                 .filterNot { it.name == originalName || it.name == trimmedName }
-            settingsRepository.setCustomSummaryTemplates(current + CustomSummaryTemplate(trimmedName, trimmedGuidance))
+            settingsRepository.setCustomSummaryTemplates(current + CustomSummaryTemplate(trimmedName, trimmedGuidance, cleanSections))
             if (originalName != null && originalName != trimmedName &&
                 settingsRepository.defaultSummaryTemplate.first() == TemplateOptions.customStored(originalName)
             ) {
@@ -260,7 +271,8 @@ class SettingsViewModel @Inject constructor(
                 settingsRepository.customSummaryTemplates.first().filterNot { it.name == name },
             )
             if (settingsRepository.defaultSummaryTemplate.first() == TemplateOptions.customStored(name)) {
-                settingsRepository.setDefaultSummaryTemplate(null)
+                // AI-20: null now means Auto, so fall back to Flat explicitly.
+                settingsRepository.setDefaultSummaryTemplate(SummaryTemplate.NONE.name)
             }
         }
     }
