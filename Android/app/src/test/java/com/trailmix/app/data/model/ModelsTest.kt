@@ -84,6 +84,44 @@ class ModelsTest {
     }
 
     @Test
+    fun `bullet details round-trip under the additive d key`() {
+        val summary = StructuredSummary(
+            highlights = emptyList(),
+            sections = listOf(
+                SummarySection(
+                    "Traction",
+                    listOf(SummaryBullet("ARR is 1.2M", Provenance.TRANSCRIPT, details = listOf("Up 15% MoM", "Mostly SMB"))),
+                ),
+            ),
+            actionItems = emptyList(),
+        )
+        val json = StructuredSummaryJson.encode(summary)
+        assertTrue(json.contains("\"d\""))
+        assertEquals(summary, StructuredSummaryJson.decode(json))
+    }
+
+    @Test
+    fun `empty details are omitted from JSON and pre-AI-18 JSON decodes to empty details`() {
+        val plain = StructuredSummary(
+            emptyList(),
+            listOf(SummarySection("A", listOf(SummaryBullet("x", Provenance.TRANSCRIPT)))),
+            emptyList(),
+        )
+        assertTrue(!StructuredSummaryJson.encode(plain).contains("\"d\""))
+        val old = """{"highlights":[],"sections":[{"heading":"A","bullets":[{"t":"x","s":"TRANSCRIPT"}]}],"actionItems":[]}"""
+        val decoded = StructuredSummaryJson.decode(old)!!
+        assertTrue(decoded.sections.single().bullets.single().details.isEmpty())
+    }
+
+    @Test
+    fun `action item display text is Owner colon action by deadline`() {
+        assertEquals("Sam: Send the deck (by Friday)", ActionItem("Send the deck", owner = "Sam", deadline = "Friday").displayText())
+        assertEquals("Send the deck", ActionItem("Send the deck").displayText())
+        assertEquals("Sam: Send the deck", ActionItem("Send the deck", owner = "Sam").displayText())
+        assertEquals("Send the deck (by Fri)", ActionItem("Send the deck", deadline = "Fri").displayText())
+    }
+
+    @Test
     fun `structured summary decode of null, blank, or empty-content JSON returns null`() {
         assertEquals(null, StructuredSummaryJson.decode(null))
         assertEquals(null, StructuredSummaryJson.decode(""))

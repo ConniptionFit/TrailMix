@@ -16,6 +16,7 @@ import com.trailmix.app.data.model.TranscriptLine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -361,25 +362,12 @@ class OnDeviceAiProcessor @Inject constructor() {
             }
         }
 
-        val prompt = """
-            You are structuring a meeting note into JSON. $templateGuidance
-            ${if (attendees.isNotEmpty()) "Attendees: ${attendees.joinToString(", ")}." else ""}
-            The transcript lines are prefixed with [mm:ss] timestamps. Begin every bullet and
-            action item you produce with the [mm:ss] of the moment it came from, then the text.
-            Respond with ONLY valid JSON, no markdown fences, matching exactly this shape:
-            {"highlights": ["[mm:ss] short key decision or highlight", "..."],
-             "sections": [{"heading": "Topic name", "bullets": ["[mm:ss] bullet text", "..."]}],
-             "actionItems": [{"text": "[mm:ss] what needs doing", "owner": "name or null", "deadline": "date/phrase or null"}]}
-            Rules: factual only, no invented details, omit owner/deadline (use null) when not statable,
-            2-5 highlights, cover the WHOLE session end to end in 2-6 topic sections ordered as they
-            occurred, action items only when real.
-
-            Typed notes:
-            ${typedFragments.ifBlank { "(none)" }}
-
-            Transcript:
-            ${transcriptText.ifBlank { "(none)" }}
-        """.trimIndent()
+        // AI-17: the typed notes are the backbone. Prompt wording + word cap live in the pure
+        // StructuredSummaryPrompt; AnchorCoverage re-checks the parsed result below.
+        val anchors = NoteAnchors.parse(typedFragments)
+        val prompt = StructuredSummaryPrompt.build(
+            templateGuidance, attendees, anchors, typedFragments, transcriptText,
+        )
 
         val raw = generate(prompt)
         val jsonText = raw.substringAfter('{', "").let { if (it.isBlank()) raw else "{$it" }
@@ -394,26 +382,43 @@ class OnDeviceAiProcessor @Inject constructor() {
         val fragWords = QuoteMatch.tokenize(typedFragments)
         val transWords = transcriptUnits.flatMapTo(mutableSetOf()) { it.second }
 
-        fun attribute(raw: String): SummaryBullet {
-            val (stamp, text) = splitTimestamp(raw)
-            val match = classify(text, fragWords, transWords, transcriptUnits)
+        // AI-18: a model bullet is a plain string (old shape) or {"text", "details"}. The 15-word
+        // cap is enforced here, never trusted to the prompt, except on a typed note echoed back
+        // verbatim, which is the user's own wording.
+        fun attribute(raw: String, details: List<String> = emptyList()): SummaryBullet {
+            val (stamp, rawText) = splitTimestamp(raw)
+            val match = classify(rawText, fragWords, transWords, transcriptUnits)
+            val text = if (StructuredSummaryPrompt.isVerbatimAnchor(rawText, anchors)) {
+                rawText
+            } else {
+                StructuredSummaryPrompt.capWords(rawText)
+            }
             return SummaryBullet(
                 text = text,
                 source = match.source,
                 sourceExcerpt = match.excerpt,
                 timestampLabel = stamp ?: match.label,
+                details = details.map { StructuredSummaryPrompt.capWords(it) }.filter { it.isNotBlank() },
             )
         }
 
+        fun attributeAny(arr: JSONArray, index: Int): SummaryBullet {
+            val o = arr.optJSONObject(index) ?: return attribute(arr.getString(index).trim())
+            val details = o.optJSONArray("details")?.let { d ->
+                (0 until d.length()).map { d.optString(it).trim() }
+            }.orEmpty()
+            return attribute(o.optString("text").trim(), details)
+        }
+
         val highlights = root.optJSONArray("highlights")?.let { arr ->
-            (0 until arr.length()).map { attribute(arr.getString(it).trim()) }
+            (0 until arr.length()).map { attributeAny(arr, it) }
         }.orEmpty().filter { it.text.isNotBlank() }
 
         val sections = root.optJSONArray("sections")?.let { arr ->
             (0 until arr.length()).map { i ->
                 val o = arr.getJSONObject(i)
                 val bullets = o.optJSONArray("bullets")?.let { barr ->
-                    (0 until barr.length()).map { attribute(barr.getString(it).trim()) }
+                    (0 until barr.length()).map { attributeAny(barr, it) }
                 }.orEmpty().filter { it.text.isNotBlank() }
                 SummarySection(heading = o.getString("heading").trim(), bullets = bullets)
             }
@@ -436,7 +441,12 @@ class OnDeviceAiProcessor @Inject constructor() {
         }.orEmpty().filter { it.text.isNotBlank() }
 
         if (highlights.isEmpty() && sections.isEmpty() && actionItems.isEmpty()) return null
-        return StructuredSummary(highlights = highlights, sections = sections, actionItems = actionItems)
+        // AI-17: whatever the model dropped, no typed note is lost.
+        return AnchorCoverage.ensure(
+            StructuredSummary(highlights = highlights, sections = sections, actionItems = actionItems),
+            anchors,
+            transcript,
+        )
     }
 
     /** Map step: one chunk of a long session → a few timestamped factual bullets. */

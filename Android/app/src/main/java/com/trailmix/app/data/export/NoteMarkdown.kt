@@ -6,6 +6,7 @@ import com.trailmix.app.data.model.Provenance
 import com.trailmix.app.data.model.StructuredSummary
 import com.trailmix.app.data.model.SummaryBullet
 import com.trailmix.app.data.model.TranscriptLine
+import com.trailmix.app.data.model.displayText
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -350,24 +351,25 @@ object NoteMarkdown {
         }
 
         if (summary.actionItems.isNotEmpty()) {
-            appendLine(heading("Action items", 2, format))
+            appendLine(heading("Next Steps", 2, format))
             appendLine()
             summary.actionItems.forEach { appendLine(actionItem(it, annotate, format)) }
             appendLine()
         }
     }
 
-    private fun bullet(b: SummaryBullet, annotate: Boolean) =
-        "- ${tag(b.source, b.timestampLabel, annotate)}${b.text.trim()}"
+    /** A bullet plus (AI-18) its optional one-level sub-bullets, indented two spaces. */
+    private fun bullet(b: SummaryBullet, annotate: Boolean): String =
+        buildString {
+            append("- ${tag(b.source, b.timestampLabel, annotate)}${b.text.trim()}")
+            b.details.filter { it.isNotBlank() }.forEach { append("\n  - ${it.trim()}") }
+        }
 
     private fun actionItem(item: ActionItem, annotate: Boolean, format: ExportFormat): String {
         val plain = format == ExportFormat.PLAIN_TEXT
-        val suffix = buildString {
-            item.owner?.let { append(if (plain) " — $it" else " — **$it**") }
-            item.deadline?.let { append(if (plain) " (due $it)" else " *(due $it)*") }
-        }
+        // AI-18: "Owner: action (by deadline)" (shared with the screen via displayText()).
         val box = if (plain) "[ ] " else "- [ ] "
-        return "$box${tag(item.source, item.timestampLabel, annotate)}${item.text.trim()}$suffix"
+        return "$box${tag(item.source, item.timestampLabel, annotate)}${item.displayText()}"
     }
 
     /** AI-05's provenance marker: `[you]` for typed, `[mm:ss]` for spoken. Gated off for the

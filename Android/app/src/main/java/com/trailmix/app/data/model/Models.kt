@@ -273,6 +273,11 @@ data class SummaryBullet(
      * exported Markdown, and is what makes a claim in a 45-minute talk findable again.
      */
     val timestampLabel: String? = null,
+    /**
+     * AI-18: optional one-level sub-bullets (supporting detail under the main point). Empty for
+     * every pre-AI-18 note and for deterministic bullets; stored under the additive `"d"` key.
+     */
+    val details: List<String> = emptyList(),
 )
 
 /** A topic-grouped block of bullets in the structured summary body. */
@@ -291,6 +296,17 @@ data class ActionItem(
     /** `mm:ss` capture offset of the originating transcript line, if any (AI-05). */
     val timestampLabel: String? = null,
 )
+
+/**
+ * AI-18: the Granola-style "Next Steps" line — `Owner: action (by deadline)`, falling back to the
+ * plain action when there is no owner and/or deadline. Shared by the screen and the Markdown
+ * export so the two cannot drift.
+ */
+fun ActionItem.displayText(): String = buildString {
+    owner?.takeIf { it.isNotBlank() }?.let { append(it.trim()).append(": ") }
+    append(text.trim())
+    deadline?.takeIf { it.isNotBlank() }?.let { append(" (by ").append(it.trim()).append(')') }
+}
 
 /**
  * AI-produced structured summary (UX-02): highlights near the top, bullets grouped by
@@ -323,6 +339,7 @@ object StructuredSummaryJson {
         .apply {
             b.sourceExcerpt?.let { put("e", it) }
             b.timestampLabel?.let { put("ts", it) }
+            if (b.details.isNotEmpty()) put("d", JSONArray().apply { b.details.forEach { put(it) } })
         }
 
     private fun bulletFromJson(o: JSONObject) = SummaryBullet(
@@ -330,6 +347,9 @@ object StructuredSummaryJson {
         source = runCatching { Provenance.valueOf(o.getString("s")) }.getOrDefault(Provenance.TRANSCRIPT),
         sourceExcerpt = o.optString("e").takeIf { it.isNotBlank() },
         timestampLabel = o.optString("ts").takeIf { it.isNotBlank() },
+        details = o.optJSONArray("d")?.let { arr ->
+            (0 until arr.length()).map { arr.optString(it) }.filter { it.isNotBlank() }
+        }.orEmpty(),
     )
 
     fun encode(summary: StructuredSummary): String {

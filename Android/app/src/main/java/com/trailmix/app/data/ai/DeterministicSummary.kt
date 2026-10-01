@@ -80,15 +80,37 @@ object DeterministicSummary {
         val actionTexts = actionItems.mapTo(mutableSetOf()) { it.text.lowercase() }
 
         // ── Sections ────────────────────────────────────────────────────────
-        val sections = buildList {
-            val yourNotes = fragmentSentences
-                .filterNot { it.lowercase() in actionTexts }
-                .take(MAX_SECTION_BULLETS)
-                .map { SummaryBullet(it, Provenance.FRAGMENT) }
-            if (yourNotes.isNotEmpty()) add(SummarySection("Your notes", yourNotes))
+        // AI-17: with typed notes present, each one becomes its own section (anchor order) filled
+        // with its best transcript evidence; the rest of the transcript follows as "Other Topics"
+        // (or the usual window headings). No typed notes -> exactly the pre-AI-17 shape below.
+        val anchors = if (NoteAnchors.isStructured(typedFragments)) NoteAnchors.parse(typedFragments) else emptyList()
+        val anchored: List<SummarySection> = if (anchors.isEmpty()) {
+            emptyList()
+        } else {
+            AnchorCoverage.ensure(
+                // Only the user's own commitments count as already covering an anchor; a spoken
+                // action item that merely shares words must not suppress the anchor's section.
+                StructuredSummary(emptyList(), emptyList(), actionItems.filter { it.source == Provenance.FRAGMENT }),
+                anchors,
+                utterances.flatMap { it.second },
+            ).sections
+        }
+        val anchorUsed = anchored.flatMapTo(mutableSetOf()) { sec -> sec.bullets.map { it.text.lowercase() } }
 
+        val sections = buildList {
+            if (anchors.isNotEmpty()) {
+                addAll(anchored)
+            } else {
+                val yourNotes = fragmentSentences
+                    .filterNot { it.lowercase() in actionTexts }
+                    .take(MAX_SECTION_BULLETS)
+                    .map { SummaryBullet(it, Provenance.FRAGMENT) }
+                if (yourNotes.isNotEmpty()) add(SummarySection("Your notes", yourNotes))
+            }
+
+            val taken = actionTexts + anchorUsed
             val windowsWithContent = utterances.filter { (_, lines) ->
-                lines.any { it.text.lowercase() !in actionTexts }
+                lines.any { it.text.lowercase() !in taken }
             }
             val budget = bulletBudget(windowsWithContent.size)
             // Terms that show up in nearly every window can't distinguish one from another,
@@ -96,7 +118,7 @@ object DeterministicSummary {
             val generic = SummaryText.commonTerms(windowsWithContent.map { it.first.text })
 
             windowsWithContent.forEach { (window, lines) ->
-                val candidates = lines.filterNot { it.text.lowercase() in actionTexts }
+                val candidates = lines.filterNot { it.text.lowercase() in taken }
                 val chosen = SummaryText.selectDistinct(candidates.map { it.text }, budget).toSet()
                 val bullets = candidates
                     .filter { it.text in chosen }
@@ -108,7 +130,7 @@ object DeterministicSummary {
                         )
                     }
                 if (bullets.isNotEmpty()) {
-                    add(SummarySection(headingFor(window, generic, single = windowsWithContent.size == 1), bullets))
+                    add(SummarySection(headingFor(window, generic, windowsWithContent.size == 1, anchors.isNotEmpty()), bullets))
                 }
             }
         }
@@ -156,8 +178,9 @@ object DeterministicSummary {
         window: TranscriptCoverage.Window,
         generic: Set<String>,
         single: Boolean,
+        anchored: Boolean = false,
     ): String {
-        if (single || window.rangeLabel.isEmpty()) return "Key topics"
+        if (single || window.rangeLabel.isEmpty()) return if (anchored) "Other Topics" else "Key topics"
         val terms = SummaryText.keywords(window.text, limit = KEYWORDS_PER_HEADING, exclude = generic)
         return if (terms.isEmpty()) window.rangeLabel else "${window.rangeLabel} · ${terms.joinToString(", ")}"
     }

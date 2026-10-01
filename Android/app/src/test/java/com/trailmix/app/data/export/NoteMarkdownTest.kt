@@ -120,7 +120,7 @@ class NoteMarkdownTest {
         assertTrue(md.contains("## Key points"))
         assertTrue(md.contains("### 0:00 – 7:00 · sharding"))
         assertTrue(md.contains("### 7:00 – 14:00 · replication"))
-        assertTrue(md.contains("## Action items"))
+        assertTrue(md.contains("## Next Steps"))
         // TL;DR precedes the detail it summarizes.
         assertTrue(md.indexOf("TL;DR") < md.indexOf("## Key points"))
         // Action-item count is surfaced in the TL;DR.
@@ -138,7 +138,7 @@ class NoteMarkdownTest {
     }
 
     @Test
-    fun `action items are checkboxes and keep owner and due date`() {
+    fun `next steps render as Owner colon action by deadline`() {
         val md = NoteMarkdown.buildNote(
             source(
                 summary = summary.copy(
@@ -149,8 +149,37 @@ class NoteMarkdownTest {
             ),
         )
         assertTrue(md.contains("- [ ] "))
-        assertTrue(md.contains("**Sam**"))
-        assertTrue(md.contains("*(due Friday)*"))
+        assertTrue(md.contains("Sam: Send the deck. (by Friday)"))
+        assertFalse(md.contains("## Action items"))
+    }
+
+    @Test
+    fun `next steps without owner or deadline are just the action`() {
+        val md = NoteMarkdown.buildNote(source())
+        assertTrue(md.contains("Benchmark our p99 next sprint."))
+        assertFalse(md.contains(": Benchmark"))
+        assertFalse(md.contains("(by "))
+    }
+
+    @Test
+    fun `bullet details render as indented sub-bullets`() {
+        val withDetails = summary.copy(
+            sections = listOf(
+                SummarySection(
+                    "Traction",
+                    listOf(
+                        SummaryBullet(
+                            "ARR is 1.2M",
+                            Provenance.TRANSCRIPT,
+                            timestampLabel = "0:05",
+                            details = listOf("Growing 15% MoM", "Mostly SMB"),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val md = NoteMarkdown.buildNote(source(summary = withDetails))
+        assertTrue(md.contains("- **`[0:05]`** ARR is 1.2M\n  - Growing 15% MoM\n  - Mostly SMB"))
     }
 
     @Test
@@ -372,7 +401,7 @@ class NoteMarkdownTest {
         assertFalse(md.contains("`"))
         assertTrue(md.contains("SCALING POSTGRES") || md.contains("Scaling Postgres"))
         assertTrue(md.contains("KEY POINTS"))
-        assertTrue(md.contains("ACTION ITEMS"))
+        assertTrue(md.contains("NEXT STEPS"))
         assertTrue(md.contains("[ ] "))
     }
 
