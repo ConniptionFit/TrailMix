@@ -21,6 +21,10 @@ jobs:
           java-version: '17'
 
       - uses: android-actions/setup-android@v3
+        with:
+          # The action's default list includes the legacy 'tools' package, which the SDK
+          # repository no longer serves ("Failed to find package 'tools'").
+          packages: 'platform-tools'
 
       - uses: gradle/actions/setup-gradle@v4
 
