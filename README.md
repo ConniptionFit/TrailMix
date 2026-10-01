@@ -177,16 +177,25 @@ the asset — it never publishes anything itself.
    before discarding. You can also freely navigate into any other note while a capture
    is running in the background — nothing about it depends on the Capture screen staying
    open. The 3-dot menu also has a **"What can be captured?"** help sheet summarizing all
-   of the above limits honestly, in-app. Above *End & Merge*, a template row (Flat / 1:1 /
-   Weekly Standup / Learning / **Conference talk** / User Interview, plus any **custom
-   templates** you've saved in Settings) steers how the summary is structured for this
-   capture. Pick **Conference talk** for a talk or presentation: it tells the summarizer
+   of the above limits honestly, in-app. Above *End & Merge*, a template row (**Auto** / Flat / 1:1 /
+   Weekly Standup / Team Meeting / Learning / **Conference talk** / User Interview /
+   Customer Discovery / Pitch / Project Kick-Off / Interview Debrief / Pipeline Review, plus
+   any **custom templates** you've saved in Settings) steers how the summary is structured
+   for this capture. Each template is a short meeting context plus a list of sections that
+   become the note's headings. **Auto** (the default for new installs) picks one from the
+   meeting title and attendee count, falling back to Flat. Pick **Conference talk** for a talk or presentation: it tells the summarizer
    that one person is speaking to an audience, so the speaker's instructional phrasing
    ("you should…", "let's look at…") is kept as content instead of being mistaken for your
    to-do list. Unlike the other templates, the built-in styles now also steer the
    **no-AI** path, so the choice matters even on a device without Gemini Nano. Ending a
    capture with **nothing typed and nothing transcribed saves no note at all**, and a
    typed-only capture is saved verbatim without invoking the AI.
+   - **Your typed notes steer the note.** Each line you type is an anchor: a `# Heading`
+     or a bullet becomes a section, a line ending in `?` is answered from the transcript
+     (or listed under *Open Questions*), and a judgment ("not convinced by the timeline")
+     is kept as *your* view, never restated as fact. Every anchor is guaranteed to appear
+     in the merged note, with or without AI. Type nothing and the note is built from the
+     transcript alone.
 3. **Note detail** — the merged note; amber tint = from your typed fragments, teal tint =
    from the transcript. *Sources shown* pill toggles provenance tinting (on by default
    after a merge). The meta line shows the meeting name and an in-call tag when the
@@ -196,14 +205,19 @@ the asset — it never publishes anything itself.
    reopens capture seeded with this note's transcript and fragments, and re-merges back
    into the same note when you finish. A **Share** icon sends the note's Markdown export
    through the standard Android share sheet. Notes are shown as a **structured summary** —
-   **Highlights**, expandable/collapsible **topic sections**, and an **Action Items**
-   checklist (owner/deadline when statable) — rather than a flat block of text. When the
+   **Highlights**, expandable/collapsible **topic sections** (with optional sub-bullets),
+   and a **Next Steps** list written as `Owner: action (by deadline)` when those are
+   statable — rather than a flat block of text. When the
    on-device AI is available it groups the content by topic; when it isn't (or returns
    something unusable), a rule-based fallback still lays the note out as *Your notes*
    bullets plus topic sections and a detected *Action Items* list, so the default is
    readable either way. Tap the small "ⓘ" next to any bullet to see the transcript/fragment
    sentence it came from, and use **Reorder sections** to move topic sections up/down (the
    new order persists and carries into exports). Very short notes stay as plain text.
+   An **Enhanced / My notes** toggle shows the merged note or the raw notes you typed;
+   edit your raw notes and tap **Re-enhance** to rebuild the note from them.
+   **Regenerate** re-runs the merge, and **Change template** re-runs it with a different
+   template (both ask first if you've hand-edited the body; a real title is kept).
    - **Long sessions are summarized end to end.** A talk or presentation is divided into
      time windows, each becoming its own section headed by its range and topic (e.g.
      `15:48 – 23:40 · routing, table`), so the last half hour of a conference session is
@@ -229,7 +243,9 @@ from Obsidian Dataview, scannable on a phone, and unambiguous to a model reading
    - **Upcoming meetings** — tap the calendar label on Home to see the next 7 days; tap a
      meeting to capture it (a meeting more than 5 minutes out asks first).
 4. **Transcript** — full-screen, timestamp-labeled lines, with a speaker label on each line
-   when the optional **Speaker labels** setting is on (off by default). Diarization runs
+   when the optional **Speaker labels** setting is on (off by default). When the device-audio
+   lane was on, lines are also tagged **Me** (your mic) or **Them** (the other device's
+   audio) by comparing the two lanes' loudness. Diarization runs
    entirely on-device — audio is never sent anywhere to identify who's speaking. A Share
    icon sends the raw transcript through the Android share sheet.
 5. **Chat & Recipes** — chat about the note; recipe chips (Follow-up email, Create ticket,
@@ -238,16 +254,18 @@ from Obsidian Dataview, scannable on a phone, and unambiguous to a model reading
    did Charlie say I need to do." Every assistant reply has a **Copy** button, and the
    latest output of each recipe is included in the note's Markdown export as a
    *Recipe Outputs* section.
-6. **Settings** — dark mode (follows system until overridden), privacy disclosure, a
+6. **Settings** — dark mode (follows system until overridden), an optional **Your profile**
+   (name, role, company, focus areas; stays on-device and tells the on-device AI whose
+   notes these are), privacy disclosure, a
    **Speech recognition language** picker, an optional off-by-default **Speaker labels**
    toggle (on-device diarization, no audio ever leaves the device), an optional
    **Export location** (pick any folder via the system picker; changing it moves your
    already-exported files over automatically, and an **Open folder** button jumps to it),
    **Built-in and Custom
    Recipes** (tap any recipe to see the exact prompt it runs; create/edit/delete your own),
-   **Built-in and Custom summary templates** (tap any template to see the exact guidance
-   it adds to the AI's structuring prompt, and add your own — e.g. a "Sales call" template
-   preferring Customer Needs / Objections / Pricing / Next Steps sections), and a
+   **Built-in and Custom summary templates** (tap any template to see its meeting context
+   and sections, and add your own with a meeting context plus an ordered section list,
+   each section with an optional one-line instruction), and a
    **Default summary template** (custom templates selectable there and on Capture too).
 
 ## Architecture (Android)
