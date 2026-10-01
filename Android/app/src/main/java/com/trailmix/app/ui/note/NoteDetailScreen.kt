@@ -50,6 +50,7 @@ import com.trailmix.app.data.db.toMarkdown
 import com.trailmix.app.data.export.ExportFormat
 import com.trailmix.app.data.model.Provenance
 import com.trailmix.app.data.model.SummaryBullet
+import com.trailmix.app.data.model.displayText
 import com.trailmix.app.ui.components.ActiveCaptureChip
 import com.trailmix.app.ui.components.BackChevron
 import com.trailmix.app.ui.export.ExportFormatPickerDialog
@@ -490,7 +491,7 @@ private fun StructuredSummaryBody(
         if (summary.actionItems.isNotEmpty()) {
             Spacer(modifier = Modifier.size(8.dp))
             Text(
-                text = "ACTION ITEMS",
+                text = "NEXT STEPS",
                 color = c.dim,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.SemiBold,
@@ -509,18 +510,12 @@ private fun StructuredSummaryBody(
                         )
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = withTimestamp(item.text, item.timestampLabel, showSources),
+                                // AI-18: "Owner: action (by deadline)" — same line as the export.
+                                text = withTimestamp(item.displayText(), item.timestampLabel, showSources),
                                 color = c.text,
                                 fontSize = 14.5.sp,
                                 lineHeight = 20.sp,
                             )
-                            val suffix = buildList {
-                                item.owner?.let { add("Owner: $it") }
-                                item.deadline?.let { add("Due: $it") }
-                            }.joinToString(" · ")
-                            if (suffix.isNotBlank()) {
-                                Text(text = suffix, color = c.dim, fontSize = 12.sp, modifier = Modifier.padding(top = 2.dp))
-                            }
                         }
                         if (item.sourceExcerpt != null) {
                             Text(
@@ -622,6 +617,24 @@ private fun SummaryBulletRow(bullet: SummaryBullet, showSources: Boolean) {
                     modifier = Modifier
                         .clickable { showExcerpt = !showExcerpt }
                         .padding(start = 8.dp),
+                )
+            }
+        }
+        // AI-18: optional one-level sub-bullets, indented under the main point.
+        bullet.details.forEach { detail ->
+            Row(modifier = Modifier.padding(start = 22.dp, top = 3.dp), verticalAlignment = Alignment.Top) {
+                Text(
+                    text = "–",
+                    color = c.dim,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(end = 6.dp),
+                )
+                Text(
+                    text = detail,
+                    color = c.text,
+                    fontSize = 13.5.sp,
+                    lineHeight = 19.sp,
+                    modifier = Modifier.weight(1f),
                 )
             }
         }

@@ -189,4 +189,74 @@ class DeterministicSummaryTest {
         assertFalse(bullets.any { it == "Right." || it == "Next slide." })
         assertTrue(bullets.any { it == "The latency dropped by half after sharding." })
     }
+
+    // ── AI-17: anchor mode (Granola doc examples 1, 3, 6) ────────────────────
+
+    private fun assertAllAnchorsCovered(typed: String, summary: com.trailmix.app.data.model.StructuredSummary) {
+        val anchors = NoteAnchors.parse(typed)
+        assertTrue(anchors.isNotEmpty())
+        anchors.forEach { assertTrue("anchor not covered: $it", AnchorCoverage.isCovered(summary, it)) }
+    }
+
+    @Test
+    fun `anchor mode team sync - each typed note becomes its own section with transcript evidence`() {
+        val typed = "- confirm ICP alignment\n- Deal stalls - sales input"
+        val transcript = listOf(
+            TranscriptLine("00:12", "Sales input is that deal stalls usually happen at the business case stage."),
+            TranscriptLine("00:40", "Let us narrow Q3 to mid-market finance and ops, park SMB."),
+            TranscriptLine("01:05", "The ICP alignment for mid-market finance is settled."),
+            TranscriptLine("01:30", "Sales and CS are not yet briefed on the new messaging."),
+        )
+        val summary = DeterministicSummary.from(typed, transcript)!!
+        assertAllAnchorsCovered(typed, summary)
+        assertEquals("Confirm ICP alignment", summary.sections[0].heading)
+        assertEquals("Deal stalls - sales input", summary.sections[1].heading)
+        assertEquals("00:12", summary.sections[1].bullets.first().timestampLabel)
+        // Remaining transcript is grouped after the anchors, never before them.
+        assertEquals("Other Topics", summary.sections.last().heading)
+        // Evidence is not repeated under Other Topics.
+        val other = summary.sections.last().bullets.map { it.text }
+        assertFalse(other.any { it.startsWith("Sales input is that deal stalls") })
+    }
+
+    @Test
+    fun `anchor mode 1-1 - question, point and judgment all survive and the judgment is attributed to you`() {
+        val typed = "onboarding proj slipping?\nwants more design exposure\nI don't buy the 2wk estimate"
+        val transcript = listOf(
+            TranscriptLine("00:10", "We are about a week behind on the onboarding project because analytics events were never specced."),
+            TranscriptLine("00:50", "I would love to sit in on design crits, maybe lead one next quarter."),
+            TranscriptLine("01:20", "Two weeks to finish is realistic."),
+        )
+        val summary = DeterministicSummary.from(typed, transcript)!!
+        assertAllAnchorsCovered(typed, summary)
+        val all = summary.sections.flatMap { it.bullets }
+        val judgment = all.single { it.text.startsWith("You noted:") }
+        assertEquals(Provenance.FRAGMENT, judgment.source)
+        assertTrue(judgment.text.contains("I don't buy the 2wk estimate"))
+        assertTrue(summary.sections.any { it.heading == "Wants more design exposure" })
+    }
+
+    @Test
+    fun `anchor mode pitch - question answered from transcript and unanswered one left open`() {
+        val typed = "ARR?\nchurn seems high\nfounder ex-Stripe\nCohort retention data?"
+        val transcript = listOf(
+            TranscriptLine("00:05", "We're at 1.2 million ARR, growing 15% month over month."),
+            TranscriptLine("00:20", "Logo churn is about 4% monthly, mostly SMB."),
+            TranscriptLine("00:30", "Our founder previously worked at Stripe."),
+            TranscriptLine("00:40", "Raising 6 million on a 30 post."),
+        )
+        val summary = DeterministicSummary.from(typed, transcript)!!
+        assertAllAnchorsCovered(typed, summary)
+        assertEquals("ARR", summary.sections.first().heading)
+        assertTrue(summary.sections.first().bullets.first().text.contains("1.2 million ARR"))
+        val open = summary.sections.single { it.heading == AnchorCoverage.OPEN_QUESTIONS }
+        assertEquals("Cohort retention data?", open.bullets.single().text)
+        assertTrue(summary.sections.any { it.bullets.any { b -> b.text.contains("Raising 6 million") } })
+    }
+
+    @Test
+    fun `no typed notes keeps the pre-anchor shape exactly`() {
+        val summary = DeterministicSummary.from("", "We reviewed the roadmap. Design is on track. QA starts Monday.")!!
+        assertEquals(listOf("Key topics"), summary.sections.map { it.heading })
+    }
 }
