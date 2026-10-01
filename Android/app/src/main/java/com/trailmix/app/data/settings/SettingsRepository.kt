@@ -162,7 +162,9 @@ class SettingsRepository @Inject constructor(
     suspend fun setCustomSummaryTemplates(templates: List<CustomSummaryTemplate>) {
         context.dataStore.edit { prefs ->
             val cleaned = templates
-                .map { CustomSummaryTemplate(it.name.trim(), it.guidance.trim()) }
+                // AI-19: keep the template's sections (dropping them here would silently turn
+                // every saved custom template back into a context-only one).
+                .map { it.copy(name = it.name.trim(), guidance = it.guidance.trim()) }
                 .filter { it.name.isNotBlank() && it.guidance.isNotBlank() }
                 .distinctBy { it.name }
             if (cleaned.isEmpty()) {
