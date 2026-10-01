@@ -207,6 +207,18 @@ class NotesRepository @Inject constructor(
     suspend fun setShowSources(id: Long, show: Boolean) = noteDao.setShowSources(id, show)
 
     /**
+     * UX-36: save hand-edited raw notes without touching the enhanced body. Writes only the
+     * `typedFragments` column (REL-14), then re-exports so the file on disk — which carries
+     * the typed notes — doesn't go stale. The enhanced note is deliberately left as is until
+     * the user chooses Re-enhance.
+     */
+    suspend fun updateTypedFragments(id: Long, typedFragments: String) {
+        val existing = noteDao.getById(id) ?: return
+        noteDao.setTypedFragments(id, typedFragments)
+        exportIfConfigured(existing.copy(typedFragments = typedFragments))
+    }
+
+    /**
      * Photo-export feature: persists which MediaStore photos the user selected for this
      * note's export, then re-exports so the change is reflected on disk immediately — the
      * same "persist, then re-export" shape as [updateNoteContent]. An empty [photoUris]

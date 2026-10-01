@@ -120,6 +120,14 @@ interface NoteDao {
     @Update
     suspend fun update(note: NoteEntity)
 
+    /**
+     * UX-36: persists the user's hand-edited raw notes. One column, addressed by id — the
+     * REL-14 rule: never a whole-row `@Update` from a snapshot, which could revert a
+     * concurrent soft-delete or export write.
+     */
+    @Query("UPDATE notes SET typedFragments = :typedFragments WHERE id = :id")
+    suspend fun setTypedFragments(id: Long, typedFragments: String)
+
     @Query("UPDATE notes SET showSources = :show WHERE id = :id")
     suspend fun setShowSources(id: Long, show: Boolean)
 

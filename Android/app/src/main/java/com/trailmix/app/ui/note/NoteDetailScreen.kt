@@ -23,8 +23,14 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -46,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.trailmix.app.data.ai.RegeneratePolicy
 import com.trailmix.app.data.db.toMarkdown
 import com.trailmix.app.data.export.ExportFormat
 import com.trailmix.app.data.model.Provenance
@@ -75,6 +82,8 @@ fun NoteDetailScreen(
     val defaultExportFormat by viewModel.exportFormat.collectAsStateWithLifecycle()
     val photoPermissionGranted by viewModel.photoPermissionGranted.collectAsStateWithLifecycle()
     val matchedPhotos by viewModel.matchedPhotos.collectAsStateWithLifecycle()
+    val templateOptions by viewModel.templateOptions.collectAsStateWithLifecycle()
+    val regenerating by viewModel.regenerating.collectAsStateWithLifecycle()
     val c = TrailMix.colors
     val current = note ?: return
     val context = LocalContext.current
@@ -84,6 +93,76 @@ fun NoteDetailScreen(
     var bodyDraft by remember(current.id) { mutableStateOf("") }
     var showFormatPicker by remember { mutableStateOf(false) }
     var showPhotoPicker by remember { mutableStateOf(false) }
+
+    // UX-36: 0 = Enhanced (default), 1 = My notes (the raw typed fragments).
+    var tab by remember(current.id) { mutableStateOf(0) }
+    var editingRaw by remember(current.id) { mutableStateOf(false) }
+    var rawDraft by remember(current.id) { mutableStateOf("") }
+    var rawJustSaved by remember(current.id) { mutableStateOf(false) }
+
+    // UX-35: template picker, and the template awaiting a "replace your edits?" confirm.
+    var showTemplatePicker by remember { mutableStateOf(false) }
+    var pendingRegen by remember { mutableStateOf<PendingRegen?>(null) }
+
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(Unit) {
+        viewModel.messages.collect { snackbarHostState.showSnackbar(it) }
+    }
+
+    fun startRegenerate(template: String?) {
+        // Regenerating rebuilds the body from the transcript and typed notes, so it discards
+        // a hand-edited body — confirm first rather than silently losing the edit.
+        if (RegeneratePolicy.needsOverwriteConfirm(current.bodyOverride)) {
+            pendingRegen = PendingRegen(template)
+        } else {
+            viewModel.regenerate(template)
+        }
+    }
+
+    if (showTemplatePicker) {
+        AlertDialog(
+            onDismissRequest = { showTemplatePicker = false },
+            title = { Text("Regenerate with template") },
+            text = {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                    templateOptions.forEach { option ->
+                        val isCurrent = option.stored == (current.template ?: "NONE")
+                        Text(
+                            text = if (isCurrent) "${option.label}  (current)" else option.label,
+                            color = if (isCurrent) c.amber else c.text,
+                            fontSize = 14.sp,
+                            fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showTemplatePicker = false
+                                    startRegenerate(option.stored)
+                                }
+                                .padding(vertical = 10.dp),
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showTemplatePicker = false }) { Text("Cancel") }
+            },
+        )
+    }
+
+    pendingRegen?.let { pending ->
+        AlertDialog(
+            onDismissRequest = { pendingRegen = null },
+            title = { Text("Replace your edits?") },
+            text = { Text("Regenerating rebuilds this note and replaces the changes you made by hand.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingRegen = null
+                    viewModel.regenerate(pending.template)
+                }) { Text("Regenerate") }
+            },
+            dismissButton = { TextButton(onClick = { pendingRegen = null }) { Text("Cancel") } },
+        )
+    }
 
     fun shareNote(format: ExportFormat) {
         val sendIntent = Intent(Intent.ACTION_SEND).apply {
@@ -130,6 +209,7 @@ fun NoteDetailScreen(
 
     // While editing, Back cancels the edit rather than leaving the note.
     BackHandler(enabled = editing) { editing = false }
+    BackHandler(enabled = editingRaw) { editingRaw = false }
 
     Column(
         modifier = Modifier
@@ -194,7 +274,7 @@ fun NoteDetailScreen(
                         modifier = Modifier
                             .clip(RoundedCornerShape(100.dp))
                             .border(1.dp, c.border, RoundedCornerShape(100.dp))
-                            .clickable { enterEdit() }
+                            .clickable(enabled = !regenerating) { enterEdit() }
                             .padding(horizontal = 12.dp, vertical = 6.dp),
                     )
                     // Provenance tinting only applies to an un-edited, merged body.
@@ -289,6 +369,39 @@ fun NoteDetailScreen(
                         .padding(bottom = 14.dp),
                 )
 
+                // UX-36: Enhanced (today's view) vs My notes (the raw typed fragments).
+                NoteViewToggle(selected = tab, onSelect = { tab = it; editingRaw = false })
+                Spacer(modifier = Modifier.size(12.dp))
+
+                if (tab == 1) {
+                    MyNotesPane(
+                        raw = current.typedFragments,
+                        editing = editingRaw,
+                        draft = rawDraft,
+                        onDraftChange = { rawDraft = it },
+                        busy = regenerating,
+                        justSaved = rawJustSaved,
+                        onEdit = {
+                            rawDraft = current.typedFragments
+                            rawJustSaved = false
+                            editingRaw = true
+                        },
+                        onCancel = { editingRaw = false },
+                        onSave = {
+                            viewModel.saveRawNotes(rawDraft) {
+                                editingRaw = false
+                                rawJustSaved = true
+                            }
+                        },
+                        onReEnhance = { startRegenerate(current.template) },
+                    )
+                } else {
+                RegenerateRow(
+                    regenerating = regenerating,
+                    onRegenerate = { startRegenerate(current.template) },
+                    onPickTemplate = { showTemplatePicker = true },
+                )
+
                 val summary = current.structuredSummary
                 when {
                     current.bodyOverride != null -> {
@@ -333,8 +446,11 @@ fun NoteDetailScreen(
                         )
                     }
                 }
+                }
             }
         }
+
+        SnackbarHost(hostState = snackbarHostState) { data -> Snackbar(snackbarData = data) }
 
         // Bottom two-item nav row (hidden while editing)
         if (!editing) {
@@ -651,4 +767,167 @@ private fun relativeDay(epochMs: Long): String {
 private fun durationLabel(durationMs: Long): String {
     val min = (durationMs / 60_000).coerceAtLeast(0)
     return if (min < 1) "<1 min" else "$min min"
+}
+
+/** Template (stored value) awaiting the "replace your edits?" confirm; null = keep the note's own. */
+private data class PendingRegen(val template: String?)
+
+/** UX-36: two-segment Enhanced / My notes switch. */
+@Composable
+private fun NoteViewToggle(selected: Int, onSelect: (Int) -> Unit) {
+    val c = TrailMix.colors
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(100.dp))
+            .border(1.dp, c.border, RoundedCornerShape(100.dp)),
+    ) {
+        listOf("Enhanced", "My notes").forEachIndexed { i, label ->
+            val on = i == selected
+            Text(
+                text = label,
+                color = if (on) Color.White else c.dim,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(100.dp))
+                    .background(if (on) c.amber else Color.Transparent)
+                    .clickable { onSelect(i) }
+                    .padding(horizontal = 16.dp, vertical = 7.dp),
+            )
+        }
+    }
+}
+
+/** UX-35: Regenerate (same template) and a template picker; a spinner while one is running. */
+@Composable
+private fun RegenerateRow(regenerating: Boolean, onRegenerate: () -> Unit, onPickTemplate: () -> Unit) {
+    val c = TrailMix.colors
+    Row(
+        modifier = Modifier.padding(bottom = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (regenerating) {
+            CircularProgressIndicator(
+                color = c.amber,
+                strokeWidth = 2.dp,
+                modifier = Modifier.size(16.dp),
+            )
+            Text(
+                text = "Regenerating on-device…",
+                color = c.dim,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(start = 8.dp),
+            )
+        } else {
+            listOf("Regenerate" to onRegenerate, "Change template" to onPickTemplate)
+                .forEachIndexed { i, (label, action) ->
+                    if (i > 0) Spacer(modifier = Modifier.size(8.dp))
+                    Text(
+                        text = label,
+                        color = c.amber,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(100.dp))
+                            .border(1.dp, c.amber, RoundedCornerShape(100.dp))
+                            .clickable(onClick = action)
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                }
+        }
+    }
+}
+
+/**
+ * UX-36: the raw typed fragments, plain proportional text (not monospace), editable. Saving
+ * persists only the `typedFragments` column; Re-enhance then re-runs the merge with them.
+ */
+@Composable
+private fun MyNotesPane(
+    raw: String,
+    editing: Boolean,
+    draft: String,
+    onDraftChange: (String) -> Unit,
+    busy: Boolean,
+    justSaved: Boolean,
+    onEdit: () -> Unit,
+    onCancel: () -> Unit,
+    onSave: () -> Unit,
+    onReEnhance: () -> Unit,
+) {
+    val c = TrailMix.colors
+    if (editing) {
+        BasicTextField(
+            value = draft,
+            onValueChange = onDraftChange,
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            textStyle = TextStyle(color = c.text, fontSize = 15.sp, lineHeight = 26.25.sp),
+            cursorBrush = SolidColor(c.amber),
+        )
+        Row {
+            Text(
+                text = "Cancel",
+                color = c.dim,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.clickable(onClick = onCancel).padding(end = 20.dp, top = 4.dp, bottom = 4.dp),
+            )
+            Text(
+                text = "Save",
+                color = c.amber,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clickable(onClick = onSave).padding(vertical = 4.dp),
+            )
+        }
+        return
+    }
+    if (raw.isBlank()) {
+        Text(
+            text = "No raw notes on this note. Tap Edit to add some, then Re-enhance.",
+            color = c.dim,
+            fontSize = 13.sp,
+            modifier = Modifier.padding(bottom = 16.dp),
+        )
+    } else {
+        Text(text = raw, color = c.text, fontSize = 15.sp, lineHeight = 26.25.sp)
+        Spacer(modifier = Modifier.size(16.dp))
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = "Edit",
+            color = c.dim,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier
+                .clip(RoundedCornerShape(100.dp))
+                .border(1.dp, c.border, RoundedCornerShape(100.dp))
+                .clickable(enabled = !busy, onClick = onEdit)
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+        )
+        Spacer(modifier = Modifier.size(8.dp))
+        if (busy) {
+            CircularProgressIndicator(color = c.amber, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+        } else {
+            Text(
+                text = "Re-enhance",
+                color = c.amber,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(100.dp))
+                    .border(1.dp, c.amber, RoundedCornerShape(100.dp))
+                    .clickable(onClick = onReEnhance)
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+            )
+        }
+    }
+    if (justSaved && !busy) {
+        Text(
+            text = "Saved. Re-enhance to rebuild the note from your updated notes.",
+            color = c.dim,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(top = 8.dp),
+        )
+    }
 }

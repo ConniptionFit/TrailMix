@@ -86,6 +86,34 @@ class NotesRepositoryTest {
         mergedWithAi = false,
     )
 
+    // ── UX-36: raw-notes edit touches only typedFragments ───────────────────
+
+    @Test
+    fun `updateTypedFragments writes only the raw notes and leaves the body alone`() = runBlocking {
+        val id = seed()
+        repo.updateNoteContent(id, "Hand title", "Hand body")
+
+        repo.updateTypedFragments(id, "my rough notes")
+
+        val row = noteDao.rows.getValue(id)
+        assertEquals("my rough notes", row.typedFragments)
+        assertEquals("Hand body", row.bodyOverride)
+        assertEquals("Hand title", row.title)
+    }
+
+    @Test
+    fun `a raw-notes save landing after a delete does not resurrect the note`() = runBlocking {
+        val id = seed()
+        exporter.onExport = {
+            exporter.onExport = null
+            repo.delete(id)
+        }
+
+        repo.updateTypedFragments(id, "late edit")
+
+        assertNotNull(noteDao.rows.getValue(id).deletedAtEpochMs)
+    }
+
     // ── A stale export must not revert the row it lands on ──────────────────
 
     /**
@@ -620,6 +648,11 @@ private class FakeNoteDao : NoteDao {
     override suspend fun update(note: NoteEntity) {
         if (note.id !in rows) return
         rows[note.id] = note
+        changes.value++
+    }
+
+    override suspend fun setTypedFragments(id: Long, typedFragments: String) {
+        rows[id] = rows[id]?.copy(typedFragments = typedFragments) ?: return
         changes.value++
     }
 
