@@ -6,6 +6,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.util.Log
 import com.trailmix.app.data.ai.MergePolicy
+import com.trailmix.app.data.ai.RegeneratePolicy
 import com.trailmix.app.data.ai.OnDeviceAiProcessor
 import com.trailmix.app.data.ai.VocabularyCorrection
 import com.trailmix.app.data.calendar.UpcomingMeetingSource
@@ -794,13 +795,17 @@ class CaptureSessionManager @Inject constructor(
         attendees: List<String>,
         template: String,
         flags: List<String> = emptyList(),
+        // UX-35: a regeneration starts from a stored transcript that already carries its
+        // speaker labels — never diarize again (and never consume a retained-audio buffer
+        // that belongs to some other session).
+        rediarize: Boolean = true,
     ): Long {
         // CAP-11: an entirely empty session — nothing typed, nothing transcribed —
         // saves nothing at all. -1 tells the caller no note was created.
         if (MergePolicy.nothingToSave(typed, transcript)) return -1L
         // AI-01: attach "Speaker N" labels before anything downstream reads the transcript —
         // the structured-summary attribution and the saved note should both see them.
-        val diarizedTranscript = diarizeIfEnabled(transcript)
+        val diarizedTranscript = if (rediarize) diarizeIfEnabled(transcript) else transcript
         val customTemplates = settingsRepository.customSummaryTemplates.first()
         val result = aiProcessor.merge(
             typedFragments = typed,
@@ -849,6 +854,64 @@ class CaptureSessionManager @Inject constructor(
             template = template,
             flags = flags,
         )
+    }
+
+    /**
+     * UX-35/UX-36: re-run the merge over an already-saved note — switch [template], or
+     * re-enhance after the user edited their raw notes ([typedFragmentsOverride]). Reports
+     * false (never throws) when refused or when the merge failed; the existing note is left
+     * untouched in both cases.
+     *
+     * Goes through the same [mergeAndSave] as End & Merge (template resolution, style, AI-06
+     * title protection, export) and the same REL-10 protection: `merging` is set so no capture
+     * can start, the foreground service carries the merge, [MergeStatus] drives progress, and
+     * the teardown is unconditional. Call from the main thread (like [endAndMerge]); [onDone]
+     * is delivered on it.
+     */
+    fun regenerateNote(
+        noteId: Long,
+        template: String?,
+        typedFragmentsOverride: String? = null,
+        onDone: (Boolean) -> Unit,
+    ) {
+        val s = _state.value
+        if (RegeneratePolicy.isBusy(s.recording, s.paused, s.merging, _recovering.value)) {
+            onDone(false)
+            return
+        }
+        _state.update { it.copy(merging = true) }
+        _mergeStatus.value = MergeStatus(CaptureUiState.UNTITLED)
+        CaptureService.merge(appContext)
+        scope.launch {
+            // CAP-28: runCatching catches CancellationException too — rethrow it.
+            val ok = runCatching {
+                val note = notesRepository.getNote(noteId) ?: return@runCatching false
+                _mergeStatus.update { it?.copy(title = note.title) }
+                val typed = typedFragmentsOverride ?: note.typedFragments
+                val transcript = note.transcript
+                mergeAndSave(
+                    noteId = noteId,
+                    typed = typed,
+                    transcript = transcript,
+                    durationMs = note.durationMs,
+                    createdAtEpochMs = note.createdAtEpochMs,
+                    meetingTitle = note.meetingTitle,
+                    capturedInCall = note.capturedInCall,
+                    attendees = note.attendees,
+                    template = template ?: note.template ?: SummaryTemplate.NONE.name,
+                    flags = note.flaggedLabels,
+                    rediarize = false,
+                ) > 0
+            }
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrElse { false }
+            _mergeStatus.value = null
+            _state.update { it.copy(merging = false) }
+            // AI-13: see endAndMerge's identical call for why.
+            aiProcessor.releaseModel()
+            runCatching { CaptureService.stop(appContext) }
+            withContext(Dispatchers.Main) { onDone(ok) }
+        }
     }
 
     fun cancel() {

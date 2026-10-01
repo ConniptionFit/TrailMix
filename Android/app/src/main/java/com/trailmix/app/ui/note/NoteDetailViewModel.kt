@@ -3,20 +3,27 @@ package com.trailmix.app.ui.note
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.trailmix.app.data.ai.RegeneratePolicy
 import com.trailmix.app.data.db.NoteEntity
 import com.trailmix.app.data.db.NotesRepository
 import com.trailmix.app.data.export.ExportFormat
 import com.trailmix.app.data.media.MatchedPhoto
 import com.trailmix.app.data.media.PhotoSource
+import com.trailmix.app.data.model.TemplateOption
+import com.trailmix.app.data.model.TemplateOptions
 import com.trailmix.app.data.settings.SettingsRepository
 import com.trailmix.app.data.speech.CaptureSessionManager
 import com.trailmix.app.ui.home.ActiveCaptureUi
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -25,7 +32,7 @@ import javax.inject.Inject
 class NoteDetailViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val notesRepository: NotesRepository,
-    captureSessionManager: CaptureSessionManager,
+    private val captureSessionManager: CaptureSessionManager,
     settingsRepository: SettingsRepository,
     private val photoSource: PhotoSource,
 ) : ViewModel() {
@@ -38,6 +45,59 @@ class NoteDetailViewModel @Inject constructor(
     /** Persisted default (Settings) the share sheet's one-off picker starts from. */
     val exportFormat: StateFlow<ExportFormat> = settingsRepository.exportFormat
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ExportFormat.LLM_OPTIMIZED)
+
+    // ── UX-35/UX-36: regenerate / re-enhance ────────────────────────────────
+
+    /** Built-ins plus the user's custom templates — same list the Capture chips show. */
+    val templateOptions: StateFlow<List<TemplateOption>> = settingsRepository.customSummaryTemplates
+        .map { TemplateOptions.all(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), TemplateOptions.builtIns())
+
+    private val _regenerating = MutableStateFlow(false)
+
+    /** True while a regeneration started from this screen is running (drives the disabled state). */
+    val regenerating: StateFlow<Boolean> = _regenerating.asStateFlow()
+
+    private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 1)
+
+    /** One-shot snackbar lines (refusal / failure). */
+    val messages: SharedFlow<String> = _messages.asSharedFlow()
+
+    /**
+     * Re-run the merge for this note with [template] (null = keep the note's own). Runs behind
+     * the capture foreground service — see [CaptureSessionManager.regenerateNote]. A refusal or
+     * failure leaves the note unchanged and surfaces a snackbar line.
+     */
+    fun regenerate(template: String?) {
+        val current = note.value ?: return
+        if (_regenerating.value) return
+        val s = captureSessionManager.state.value
+        val refusal = RegeneratePolicy.refusal(
+            recording = s.recording,
+            paused = s.paused,
+            merging = s.merging,
+            recovering = false,
+            typedFragments = current.typedFragments,
+            transcript = current.transcript,
+        )
+        if (refusal != null) {
+            _messages.tryEmit(RegeneratePolicy.failureMessage(refusal))
+            return
+        }
+        _regenerating.value = true
+        captureSessionManager.regenerateNote(noteId, template) { ok ->
+            _regenerating.value = false
+            if (!ok) _messages.tryEmit(RegeneratePolicy.failureMessage(null))
+        }
+    }
+
+    /** UX-36: persist hand-edited raw notes — only the `typedFragments` column. */
+    fun saveRawNotes(text: String, onDone: () -> Unit) {
+        viewModelScope.launch {
+            notesRepository.updateTypedFragments(noteId, text)
+            onDone()
+        }
+    }
 
     // ── Photo-export feature ────────────────────────────────────────────────
 
