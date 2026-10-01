@@ -718,7 +718,10 @@ class CaptureSessionManager @Inject constructor(
             // not be swallowed and reported as an ordinary -1L failure.
             val id = runCatching { runMerge(durationMs) }
                 .onFailure { if (it is CancellationException) throw it }
-                .getOrElse { -1L }
+                .getOrElse {
+                    Log.e(TAG, "End & Merge failed; the journal is kept for recovery", it)
+                    -1L
+                }
             resumeNoteId = -1L
             recoveredCreatedAtMs = 0L
             _mergeStatus.value = null
@@ -946,7 +949,10 @@ class CaptureSessionManager @Inject constructor(
                 ) > 0
             }
                 .onFailure { if (it is CancellationException) throw it }
-                .getOrElse { false }
+                .getOrElse {
+                    Log.e(TAG, "Regenerate failed; the existing note is untouched", it)
+                    false
+                }
             _mergeStatus.value = null
             _state.update { it.copy(merging = false) }
             // AI-13: see endAndMerge's identical call for why.
@@ -1324,7 +1330,10 @@ class CaptureSessionManager @Inject constructor(
                     template = recovered.template,
                     flags = recovered.flags.map { it.label },
                 )
-            }.getOrElse { -1L }
+            }.getOrElse {
+                Log.e(TAG, "Recovery merge failed; the journal is kept", it)
+                -1L
+            }
             // Only discard the journal once the note exists. If the merge threw, the
             // transcript stays on disk and is offered again rather than being thrown away
             // on the strength of a failed rescue.

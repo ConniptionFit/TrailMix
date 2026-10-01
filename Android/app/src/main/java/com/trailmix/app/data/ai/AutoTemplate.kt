@@ -33,7 +33,12 @@ object AutoTemplate {
     }
 
     private val RULES: List<Pair<Regex, SummaryTemplate>> = listOf(
-        Regex("""(?<![\d:])1\s*[:\-]\s*1(?![\d:])|\bone[ -]on[ -]one\b|\b1on1\b""") to SummaryTemplate.ONE_ON_ONE,
+        // The set is `[\-:]`, never `[:\-]`: Android's regex engine is ICU, which reads a set that
+        // opens with `[:` as a POSIX class (`[:alpha:]`) and scans ahead for a closing `:]` — here
+        // the one in the lookahead — then throws "Incorrect Unicode property" from this object's
+        // static initializer. The host JVM accepts it, so only a device caught it (v1.22.0 live
+        // test); `IcuRegexSafetyTest` now keeps `[:` out of the main sources.
+        Regex("""(?<![\d:])1\s*[\-:]\s*1(?![\d:])|\bone[ -]on[ -]one\b|\b1on1\b""") to SummaryTemplate.ONE_ON_ONE,
         Regex("""\bstand[ -]?up\b""") to SummaryTemplate.WEEKLY_STANDUP,
         Regex("""\binterview\b.*\bdebrief\b|\bdebrief\b.*\binterview\b""") to SummaryTemplate.INTERVIEW_DEBRIEF,
         Regex("""\binterview\b|\buser research\b""") to SummaryTemplate.USER_INTERVIEW,

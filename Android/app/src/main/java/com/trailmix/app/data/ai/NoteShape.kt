@@ -73,7 +73,7 @@ object NoteShape {
     private val TIME = "\\d{1,2}:\\d{2}(?::\\d{2})?"
     private val TIME_RANGE_PREFIX = Regex("^\\s*$TIME\\s*(?:[–—-]|to)\\s*$TIME\\s*[·:–—-]?\\s*", RegexOption.IGNORE_CASE)
     private val NUMBERING = Regex("^\\s*(?:[-•]\\s*)?(?:\\d+[.)]|\\(\\d+\\))\\s+")
-    private val LABEL = Regex("^(?:topic|section|heading|title)\\s*\\d*\\s*[:–—-]\\s*", RegexOption.IGNORE_CASE)
+    private val LABEL = Regex("^(?:topic|section|heading|title)\\s*\\d*\\s*[–—\\-:]\\s*", RegexOption.IGNORE_CASE)
     private val MULTI_SPACE = Regex("\\s{2,}")
 
     /** Strip markdown, numbering, label prefixes, a leading time range and trailing punctuation; Title Case. */

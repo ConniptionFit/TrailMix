@@ -129,7 +129,7 @@ object NoteTitle {
      * matched the `99.` of a title beginning `99.9% uptime regressions` and silently ate it.
      */
     private val LEADING_ENUMERATION = Regex("^\\d{1,3}[.)]\\s+")
-    private val LEADING_LABEL = Regex("^(title|note|subject|summary)\\s*[:\\-–]\\s*", RegexOption.IGNORE_CASE)
+    private val LEADING_LABEL = Regex("^(title|note|subject|summary)\\s*[\\-–:]\\s*", RegexOption.IGNORE_CASE)
     private val WHITESPACE = Regex("\\s+")
     private val SENTENCE_END = Regex("[.!?](\\s|$)")
     private val TRAILING_PUNCTUATION = charArrayOf(' ', ',', ':', ';', '-', '–', '—', '.')
