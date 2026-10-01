@@ -12,6 +12,7 @@ import com.trailmix.app.data.export.ExportFormat
 import com.trailmix.app.data.model.CustomSummaryTemplate
 import com.trailmix.app.data.model.SummaryTemplate
 import com.trailmix.app.data.model.TemplateOptions
+import com.trailmix.app.data.model.UserProfile
 import com.trailmix.app.data.settings.SettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -58,6 +59,14 @@ class SettingsViewModel @Inject constructor(
     /** ASR locale (AI-02) — null means "use the default" (`AsrLocales.default`). */
     val asrLocaleTag: StateFlow<String?> = settingsRepository.asrLocaleTag
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** The note-taker's profile (AI-21) — empty until the user fills it in. */
+    val userProfile: StateFlow<UserProfile> = settingsRepository.userProfile
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UserProfile())
+
+    fun saveUserProfile(profile: UserProfile) {
+        viewModelScope.launch { settingsRepository.setUserProfile(profile) }
+    }
 
     /** User-defined recipes (UX-06). */
     val customRecipes: StateFlow<List<Recipe>> = settingsRepository.customRecipes

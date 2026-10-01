@@ -50,6 +50,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -66,6 +68,7 @@ import com.trailmix.app.data.export.ExportFormat
 import com.trailmix.app.data.model.CustomSummaryTemplate
 import com.trailmix.app.data.model.SummaryTemplate
 import com.trailmix.app.data.model.TemplateOptions
+import com.trailmix.app.data.model.UserProfile
 import com.trailmix.app.data.speech.AsrLocales
 import com.trailmix.app.ui.components.BackChevron
 import com.trailmix.app.ui.components.SectionLabel
@@ -88,6 +91,7 @@ fun SettingsScreen(
     val defaultTemplate by viewModel.defaultTemplate.collectAsStateWithLifecycle()
     val asrLocaleTag by viewModel.asrLocaleTag.collectAsStateWithLifecycle()
     val customRecipes by viewModel.customRecipes.collectAsStateWithLifecycle()
+    val userProfile by viewModel.userProfile.collectAsStateWithLifecycle()
     val vocabularyTerms by viewModel.vocabularyTerms.collectAsStateWithLifecycle()
     val speakerDiarizationEnabled by viewModel.speakerDiarizationEnabled.collectAsStateWithLifecycle()
     val customTemplates by viewModel.customTemplates.collectAsStateWithLifecycle()
@@ -125,6 +129,20 @@ fun SettingsScreen(
     // AI-08 vocabulary editor dialog state: null = closed; VocabularyTerm("", "") = creating
     // new. No built-ins and no separate viewer — a wrong/right pair is short enough to just edit.
     var editingVocabularyTerm by remember { mutableStateOf<VocabularyTerm?>(null) }
+
+    // AI-21 profile editor dialog state.
+    var editingProfile by remember { mutableStateOf(false) }
+
+    if (editingProfile) {
+        UserProfileEditorDialog(
+            initial = userProfile,
+            onSave = { profile ->
+                viewModel.saveUserProfile(profile)
+                editingProfile = false
+            },
+            onDismiss = { editingProfile = false },
+        )
+    }
 
     viewingRecipe?.let { recipe ->
         PromptViewerDialog(
@@ -293,6 +311,36 @@ fun SettingsScreen(
             TrackSwitch(on = darkOn, onToggle = { viewModel.setDarkMode(!darkOn) })
         }
         Hairline()
+
+        // AI-21: who "Me" is — fed to the on-device model so notes are written from the
+        // note-taker's perspective. Stored in DataStore only, never transmitted.
+        SectionLabel(
+            text = "Your profile",
+            modifier = Modifier.padding(top = 28.dp, bottom = 6.dp),
+        )
+        Text(
+            text = "Stays on this device. Helps the on-device AI write your notes from your " +
+                "perspective — who you are and what matters to you.",
+            color = c.dim,
+            fontSize = 12.5.sp,
+            lineHeight = 18.sp,
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
+        PromptRow(
+            name = if (userProfile.isEmpty) "Set up your profile" else userProfile.name.ifBlank { "Your profile" },
+            preview = if (userProfile.isEmpty) {
+                "Name, role, company, focus areas"
+            } else {
+                listOf(
+                    listOf(userProfile.role, userProfile.company).filter { it.isNotBlank() }.joinToString(" at "),
+                    userProfile.focusAreas.joinToString(", "),
+                ).filter { it.isNotBlank() }.joinToString(" · ").ifBlank { "No role or focus areas yet" }
+            },
+            trailing = "Edit",
+            onTrailingClick = { editingProfile = true },
+            onClick = { editingProfile = true },
+            onLongClick = { editingProfile = true },
+        )
 
         // SEC-02 (v1.7.0): honest local-only disclosure. The Google Drive sync exception is
         // gone with the feature (INT-02); the one remaining nuance is that the user-chosen
@@ -933,6 +981,93 @@ private fun NamedPromptEditorDialog(
                 color = c.dim,
                 fontSize = 14.sp,
                 modifier = Modifier.clickable { onDismiss() }.padding(8.dp),
+            )
+        },
+    )
+}
+
+/** AI-21: name / role / company / focus-areas editor. Focus areas are comma-separated text. */
+@Composable
+private fun UserProfileEditorDialog(
+    initial: UserProfile,
+    onSave: (UserProfile) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val c = TrailMix.colors
+    var name by remember { mutableStateOf(initial.name) }
+    var role by remember { mutableStateOf(initial.role) }
+    var company by remember { mutableStateOf(initial.company) }
+    var focus by remember { mutableStateOf(initial.focusAreas.joinToString(", ")) }
+
+    @Composable
+    fun Field(
+        label: String,
+        value: String,
+        hint: String,
+        max: Int,
+        singleLine: Boolean = true,
+        onChange: (String) -> Unit,
+    ) {
+        Text(text = label, color = c.dim, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+        BasicTextField(
+            value = value,
+            onValueChange = { onChange(it.take(max)) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 4.dp, bottom = 12.dp)
+                .heightIn(min = 48.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(c.background)
+                .padding(horizontal = 12.dp, vertical = 12.dp)
+                .semantics { contentDescription = label },
+            textStyle = TextStyle(color = c.text, fontSize = 14.sp),
+            cursorBrush = SolidColor(c.amber),
+            singleLine = singleLine,
+            decorationBox = { inner ->
+                if (value.isEmpty()) Text(hint, color = c.dim, fontSize = 14.sp)
+                inner()
+            },
+        )
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = c.card,
+        title = { Text(text = "Your profile", color = c.text, fontSize = 17.sp) },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Field("NAME", name, "e.g. Sam", UserProfile.MAX_NAME) { name = it }
+                Field("ROLE", role, "e.g. Engineering Manager", UserProfile.MAX_ROLE) { role = it }
+                Field("COMPANY", company, "e.g. Acme", UserProfile.MAX_COMPANY) { company = it }
+                Field(
+                    "FOCUS AREAS (COMMA-SEPARATED)",
+                    focus,
+                    "e.g. hiring, roadmap",
+                    UserProfile.MAX_FOCUS * UserProfile.MAX_FOCUS_AREAS,
+                    singleLine = false,
+                ) { focus = it }
+            }
+        },
+        confirmButton = {
+            Text(
+                text = "Save",
+                color = c.amber,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .heightIn(min = 48.dp)
+                    .clickable {
+                        onSave(UserProfile(name, role, company, UserProfile.parseFocusAreas(focus)))
+                    }
+                    .padding(8.dp),
+            )
+        },
+        dismissButton = {
+            Text(
+                text = "Cancel",
+                color = c.dim,
+                fontSize = 14.sp,
+                modifier = Modifier.heightIn(min = 48.dp).clickable { onDismiss() }.padding(8.dp),
             )
         },
     )

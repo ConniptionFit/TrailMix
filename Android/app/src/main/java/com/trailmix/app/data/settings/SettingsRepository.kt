@@ -14,6 +14,8 @@ import com.trailmix.app.data.ai.VocabularyTerm
 import com.trailmix.app.data.export.ExportFormat
 import com.trailmix.app.data.model.CustomSummaryTemplate
 import com.trailmix.app.data.model.CustomTemplatesJson
+import com.trailmix.app.data.model.UserProfile
+import com.trailmix.app.data.model.UserProfileJson
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -42,6 +44,7 @@ class SettingsRepository @Inject constructor(
     private val customTemplatesKey = stringPreferencesKey("custom_summary_templates")
     private val exportFormatKey = stringPreferencesKey("export_format")
     private val vocabularyKey = stringPreferencesKey("vocabulary_terms")
+    private val userProfileKey = stringPreferencesKey("user_profile")
     private val speakerDiarizationEnabledKey = booleanPreferencesKey("speaker_diarization_enabled")
     private val speakerRecognitionEnabledKey = booleanPreferencesKey("speaker_recognition_enabled")
 
@@ -112,6 +115,21 @@ class SettingsRepository @Inject constructor(
     suspend fun setAsrLocaleTag(tag: String?) {
         context.dataStore.edit { prefs ->
             if (tag == null) prefs.remove(asrLocaleTagKey) else prefs[asrLocaleTagKey] = tag
+        }
+    }
+
+    /**
+     * AI-21: the note-taker's own profile (name/role/company/focus areas), stored as one JSON
+     * string. Never leaves the device; a later stage feeds `UserProfile.promptLine()` into the
+     * on-device note prompt. Malformed or absent -> empty profile.
+     */
+    val userProfile: Flow<UserProfile> =
+        context.dataStore.data.map { UserProfileJson.decode(it[userProfileKey]) }
+
+    suspend fun setUserProfile(profile: UserProfile) {
+        context.dataStore.edit { prefs ->
+            val cleaned = profile.normalized()
+            if (cleaned.isEmpty) prefs.remove(userProfileKey) else prefs[userProfileKey] = UserProfileJson.encode(cleaned)
         }
     }
 
