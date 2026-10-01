@@ -22,9 +22,50 @@ object StructuredJson {
 
     fun parse(raw: String): Parsed? {
         val (repaired, truncated) = scan(raw)
-        if (repaired.isBlank()) return null
-        val root = runCatching { JSONObject(repaired) }.getOrNull() ?: return null
-        return Parsed(root, truncated)
+        if (repaired.isNotBlank()) {
+            runCatching { JSONObject(repaired) }.getOrNull()?.let { return Parsed(it, truncated) }
+        }
+        return harvest(raw)
+    }
+
+    /**
+     * Last resort for a reply that is not JSON even after [repair] (Gemini Nano has been seen to
+     * leave the `sections` array unclosed before `actionItems`): every complete `{...}` object
+     * that is a section (`heading` + `bullets`) or an action item (`text` + `owner`/`deadline`) is
+     * kept, wherever it sits, and a clean root is rebuilt from them. Marked truncated when no
+     * action item was recovered, so the caller asks for them separately.
+     */
+    private fun harvest(raw: String): Parsed? {
+        val sections = JSONArray()
+        val actions = JSONArray()
+        val starts = ArrayDeque<Int>()
+        var inString = false
+        var escaped = false
+        for (i in raw.indices) {
+            val c = raw[i]
+            if (inString) {
+                when {
+                    escaped -> escaped = false
+                    c == '\\' -> escaped = true
+                    c == '"' -> inString = false
+                }
+                continue
+            }
+            when (c) {
+                '"' -> inString = true
+                '{' -> starts.addLast(i)
+                '}' -> starts.removeLastOrNull()?.let { start ->
+                    val obj = runCatching { JSONObject(raw.substring(start, i + 1)) }.getOrNull() ?: return@let
+                    when {
+                        obj.has("heading") && obj.has("bullets") -> sections.put(obj)
+                        obj.has("text") && (obj.has("owner") || obj.has("deadline")) -> actions.put(obj)
+                    }
+                }
+            }
+        }
+        if (sections.length() == 0 && actions.length() == 0) return null
+        val root = JSONObject().put("sections", sections).put("actionItems", actions)
+        return Parsed(root, truncated = actions.length() == 0)
     }
 
     /**

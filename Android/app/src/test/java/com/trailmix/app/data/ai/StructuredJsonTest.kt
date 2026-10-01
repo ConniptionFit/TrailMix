@@ -85,6 +85,37 @@ class StructuredJsonTest {
         assertTrue(StructuredJson.sectionObjects(null).isEmpty())
     }
 
+    /** A second real reply (case C2): the `sections` array is never closed before `actionItems`. */
+    private val unclosedSectionsReply = "```json\n" +
+        """{"sections": [{"heading": "Migration Status", "bullets": [{"text": "[0:32] Health service migration completed yesterday."}, {"text": "[0:32] Currently working on billing tests."}]}, """ +
+        """{"heading": "Credential Request", "bullets": [{"text": "[0:32] Requires Chloe for staging credentials."}]}, """ +
+        """{"heading": "Rate Limiter PR", "bullets": [{"text": "[0:32] Returning to rate limiter pull request."}]}, """ +
+        """"actionItems": [{"text": "[0:32] Chloe to provide staging credentials", "owner": "Chloe", "deadline": null}]}""" + "\n```"
+
+    @Test
+    fun `an unclosed sections array still yields every section and the action item`() {
+        val parsed = parse(unclosedSectionsReply)
+
+        val sections = StructuredJson.sectionObjects(parsed.root.opt("sections"))
+        assertEquals(listOf("Migration Status", "Credential Request", "Rate Limiter PR"), sections.map { it.getString("heading") })
+        assertEquals(listOf(2, 1, 1), sections.map { it.getJSONArray("bullets").length() })
+        val action = parsed.root.getJSONArray("actionItems").getJSONObject(0)
+        assertEquals("Chloe", action.getString("owner"))
+        // An action item was recovered, so nothing needs to be asked for again.
+        assertFalse(parsed.truncated)
+    }
+
+    @Test
+    fun `harvested sections with no action item are marked truncated so the caller asks for them`() {
+        val reply = """{"sections": [{"heading": "A", "bullets": [{"text": "one"}]}, "oops": 1, "x": [{"y": 2}]}"""
+
+        val parsed = parse(reply)
+
+        assertEquals(1, StructuredJson.sectionObjects(parsed.root.opt("sections")).size)
+        assertEquals(0, parsed.root.getJSONArray("actionItems").length())
+        assertTrue(parsed.truncated)
+    }
+
     private fun parse(raw: String): StructuredJson.Parsed {
         val parsed = StructuredJson.parse(raw)
         assertNotNull("expected a salvageable object in: $raw", parsed)
