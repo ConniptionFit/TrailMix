@@ -28,8 +28,17 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Run unit tests
-        run: ./gradlew testDebugUnitTest --stacktrace
+      # BLD-03's full gate: unit tests (both variants), Android Lint against the committed
+      # baseline, and ktlint. Matches what a contributor runs locally before handoff.
+      - name: Run checks (unit tests, lint, ktlint)
+        run: ./gradlew check --stacktrace
+
+      - name: Upload lint report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-results
+          path: Android/app/build/reports/lint-results-debug.html
 
       - name: Upload test reports
         if: always()
