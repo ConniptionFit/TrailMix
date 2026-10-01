@@ -2,6 +2,7 @@ package com.trailmix.app.data.export
 
 import com.trailmix.app.data.model.ActionItem
 import com.trailmix.app.data.model.Provenance
+import com.trailmix.app.data.model.SpeechSource
 import com.trailmix.app.data.model.StructuredSummary
 import com.trailmix.app.data.model.SummaryBullet
 import com.trailmix.app.data.model.SummarySection
@@ -451,5 +452,24 @@ class NoteMarkdownTest {
             "2026-07-25-scaling-postgres.transcript.txt",
             NoteMarkdown.transcriptFileName("Scaling Postgres", at, ExportFormat.PLAIN_TEXT),
         )
+    }
+
+    @Test
+    fun `speech source prefixes the cell and plain text when there is no speaker label`() {
+        val t = source(transcript = listOf(TranscriptLine("0:01", "Hi.", speechSource = SpeechSource.THEM)))
+        assertTrue(NoteMarkdown.buildTranscript(t).contains("| `0:01` | **Them:** Hi. |"))
+        assertTrue(NoteMarkdown.buildTranscript(t, ExportFormat.PLAIN_TEXT).contains("0:01  Them: Hi."))
+    }
+
+    @Test
+    fun `a diarization speaker label wins over the speech source`() {
+        val t = source(
+            transcript = listOf(
+                TranscriptLine("0:01", "Hi.", speakerLabel = "Speaker 1", speechSource = SpeechSource.ME),
+            ),
+        )
+        val md = NoteMarkdown.buildTranscript(t)
+        assertTrue(md.contains("**Speaker 1:** Hi."))
+        assertTrue(!md.contains("Me:"))
     }
 }

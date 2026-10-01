@@ -395,7 +395,8 @@ object NoteMarkdown {
             appendLine()
             source.transcript.filter { it.text.isNotBlank() }.forEach {
                 val label = it.label.ifBlank { "--" }
-                val prefix = it.speakerLabel?.let { speaker -> "$speaker: " }.orEmpty()
+                // CAP-31: Me/Them lane name when no diarization label exists (speakerLabel wins).
+                val prefix = (it.speakerLabel ?: it.speechSource?.displayName)?.let { who -> "$who: " }.orEmpty()
                 appendLine("$label  $prefix${it.text.trim()}")
             }
             return@buildString
@@ -418,7 +419,9 @@ object NoteMarkdown {
             // AI-01 (Falcon path): speaker labels were landing in the data model all session
             // with nowhere to be seen — this is the first real consumer, additive to the
             // existing two-column shape so a note with no diarization renders identically.
-            val cell = it.speakerLabel?.let { speaker -> "**$speaker:** $body" } ?: body
+            // CAP-31: same fallback to the Me/Them lane name.
+            val cell = (it.speakerLabel ?: it.speechSource?.displayName)
+                ?.let { who -> "**$who:** $body" } ?: body
             appendLine("| `$label` | $cell |")
         }
     }.trimEnd() + "\n"

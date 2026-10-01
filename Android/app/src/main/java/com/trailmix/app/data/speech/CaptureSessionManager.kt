@@ -208,6 +208,18 @@ class CaptureSessionManager @Inject constructor(
     @Volatile
     private var audioRetention: AudioRetentionBuffer? = null
 
+    /**
+     * CAP-31: Me/Them lane energy timeline, created with the session's other one-time setup and
+     * reset at exactly the same points as [audioRetention] (survives pause/resume; cleared on
+     * cancel, new session, resume-into-note and recovery).
+     */
+    @Volatile
+    private var laneActivity: LaneActivity? = null
+
+    /** CAP-31: elapsed ms of the previous finalized line, the start of the next one's span. */
+    @Volatile
+    private var lastLineMs = -1L
+
     /** Guards the one-time-per-session setup above — true from the first [runListenSession]
      *  of a session onward; reset to false wherever [audioRetention] itself is reset. */
     @Volatile
@@ -296,6 +308,8 @@ class CaptureSessionManager @Inject constructor(
                 lastRollingSummaryLineCount = 0
                 audioRetention = null
                 diarizationConfiguredForSession = false
+                laneActivity = null
+                lastLineMs = -1L
                 priorDurationMs = 0L
                 resumeCreatedAt = 0L
                 recoveredCreatedAtMs = 0L
@@ -371,6 +385,7 @@ class CaptureSessionManager @Inject constructor(
                 null
             }
             engine.setAudioSink(audioRetention)
+            laneActivity = LaneActivity(clock = { currentDurationMs() }).also { engine.setLaneActivity(it) }
         }
         val selected = _state.value.inputOptions
             .getOrNull(_state.value.selectedInputIndex)?.device
@@ -396,10 +411,13 @@ class CaptureSessionManager @Inject constructor(
             }
             if (event.finalizedUtterance.isNotBlank()) {
                 val correctedText = VocabularyCorrection.apply(event.finalizedUtterance, vocabularyTerms)
+                val nowMs = currentDurationMs()
                 val finalized = TranscriptLine(
                     label = elapsedLabel(),
                     text = correctedText,
+                    speechSource = laneActivity?.sourceForLine(lastLineMs, nowMs),
                 )
+                lastLineMs = nowMs
                 // REL-09: journal it before it is anything but a value in RAM. Everything
                 // else here is display state that can be rebuilt; this line cannot.
                 journal.line(finalized)
@@ -579,6 +597,8 @@ class CaptureSessionManager @Inject constructor(
         // whatever gets captured from this point forward, never the note's existing transcript.
         audioRetention = null
         diarizationConfiguredForSession = false
+        laneActivity = null
+        lastLineMs = -1L
         fragments.value = note.typedFragments
         priorDurationMs = note.durationMs
         resumeCreatedAt = note.createdAtEpochMs
@@ -869,6 +889,8 @@ class CaptureSessionManager @Inject constructor(
         // completeRecovered() for an unrelated session could diarize against it by mistake.
         audioRetention = null
         diarizationConfiguredForSession = false
+        laneActivity = null
+        lastLineMs = -1L
     }
 
     /** CAP-12: clears the one-shot call-ended dialog/notification without ending the
@@ -1140,6 +1162,8 @@ class CaptureSessionManager @Inject constructor(
         // be retained, so diarization (if enabled) starts a fresh buffer from here too.
         audioRetention = null
         diarizationConfiguredForSession = false
+        laneActivity = null
+        lastLineMs = -1L
         priorDurationMs = recovered.durationMs
         resumeCreatedAt = 0L
         recoveredCreatedAtMs = recovered.startedAtEpochMs
@@ -1183,6 +1207,8 @@ class CaptureSessionManager @Inject constructor(
         // over from some earlier, unrelated session that never reached its own cleanup.
         audioRetention = null
         diarizationConfiguredForSession = false
+        laneActivity = null
+        lastLineMs = -1L
         // REL-10: this merge is the same chunked on-device work End & Merge runs, so it needs
         // the same protection — previously it ran with no foreground component at all, and
         // backgrounding the app during a long rescue could have the process killed mid-way.

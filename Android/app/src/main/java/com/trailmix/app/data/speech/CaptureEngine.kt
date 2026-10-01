@@ -90,6 +90,14 @@ class CaptureEngine @Inject constructor(
         pipeline?.setAudioSink(sink)
     }
 
+    /** CAP-31: same plumbing as [audioSink] — each pause/resume builds a new pipeline. */
+    private var laneActivity: LaneActivity? = null
+
+    fun setLaneActivity(activity: LaneActivity?) {
+        laneActivity = activity
+        pipeline?.setLaneActivity(activity)
+    }
+
     /**
      * Start a session and return the speech-event stream. Prefers the ML Kit
      * pipeline; if the model is merely not downloaded yet, kicks the download
@@ -103,6 +111,7 @@ class CaptureEngine @Inject constructor(
                 val pipe = AudioPipeline()
                 pipeline = pipe
                 pipe.setAudioSink(audioSink)
+                pipe.setLaneActivity(laneActivity)
                 // REL-11: opening the mic is the one step here that routinely fails for
                 // reasons outside the app — something else holds it. Previously that threw
                 // straight through begin() into an unguarded coroutine and killed the

@@ -198,6 +198,15 @@ fun TranscriptScreen(
                                             fontSize = 14.sp,
                                             modifier = Modifier.padding(end = 6.dp),
                                         )
+                                    } ?: line.speechSource?.let { src ->
+                                        // CAP-31: lane attribution, dimmer than a diarized name.
+                                        Text(
+                                            text = src.displayName,
+                                            color = c.dim,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontSize = 14.sp,
+                                            modifier = Modifier.padding(end = 6.dp),
+                                        )
                                     }
                                     Text(
                                         text = line.label,
@@ -249,6 +258,12 @@ fun TranscriptScreen(
                                         withStyle(
                                             SpanStyle(color = c.amber, fontWeight = FontWeight.SemiBold),
                                         ) { append(speaker) }
+                                        append("  ")
+                                    } ?: line.speechSource?.let { src ->
+                                        // CAP-31: Me/Them lane attribution; speakerLabel wins.
+                                        withStyle(
+                                            SpanStyle(color = c.dim, fontWeight = FontWeight.SemiBold),
+                                        ) { append(src.displayName) }
                                         append("  ")
                                     }
                                     withStyle(
