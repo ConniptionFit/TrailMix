@@ -173,4 +173,26 @@ class StructuredSummaryPromptTest {
             TranscriptLabels.render(lines),
         )
     }
+
+    @Test
+    fun `the action-items follow-up asks for owner and deadline in a shape that fits the token cap`() {
+        val prompt = StructuredSummaryPrompt.buildActionItems(listOf("Rob", "Jack"), "[0:10] Rob: I'll scope it by Tuesday.")
+
+        assertTrue(prompt.contains("\"actionItems\""))
+        assertTrue(prompt.contains("\"owner\"") && prompt.contains("\"deadline\""))
+        assertTrue(prompt.contains("Attendees: Rob, Jack."))
+        // The transcript is fenced as data, and nothing but the action list is requested, so the
+        // reply is a fraction of the 256-token cap that truncated the full structure.
+        assertTrue(prompt.contains("<<<TRANSCRIPT\n[0:10] Rob: I'll scope it by Tuesday.\nTRANSCRIPT>>>"))
+        assertFalse(prompt.contains("\"sections\""))
+        assertFalse(prompt.contains("\"bullets\""))
+    }
+
+    @Test
+    fun `the action-items follow-up copes with no attendees and an empty transcript`() {
+        val prompt = StructuredSummaryPrompt.buildActionItems(emptyList(), "")
+
+        assertFalse(prompt.contains("Attendees:"))
+        assertTrue(prompt.contains("(none)"))
+    }
 }
