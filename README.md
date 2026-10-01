@@ -177,13 +177,20 @@ the asset — it never publishes anything itself.
    before discarding. You can also freely navigate into any other note while a capture
    is running in the background — nothing about it depends on the Capture screen staying
    open. The 3-dot menu also has a **"What can be captured?"** help sheet summarizing all
-   of the above limits honestly, in-app. Above *End & Merge*, a template row (**Auto** / Flat / 1:1 /
+   of the above limits honestly, in-app. Above *End & Merge*, a template row (**Auto** / General / 1:1 /
    Weekly Standup / Team Meeting / Learning / **Conference talk** / User Interview /
    Customer Discovery / Pitch / Project Kick-Off / Interview Debrief / Pipeline Review, plus
    any **custom templates** you've saved in Settings) steers how the summary is structured
    for this capture. Each template is a short meeting context plus a list of sections that
-   become the note's headings. **Auto** (the default for new installs) picks one from the
-   meeting title and attendee count, falling back to Flat. Pick **Conference talk** for a talk or presentation: it tells the summarizer
+   become the note's headings. **Auto** (the default, including for installs that never
+   chose a template) is the Granola-style note: it picks a specific template from the
+   meeting title and attendee count, and otherwise falls back to **General** — 3-6 topic
+   sections with short Title Case headings (never time ranges or "Discussion 1"),
+   telegraphic 5-15 word bullets in neutral third person, organised around what you typed,
+   ending in owner-tagged **Next Steps**. The model also sees the calendar title and who
+   said each line (Me / Them, or the diarized speaker), and the shape is enforced in plain
+   code afterwards, so the no-AI path gets the same topic headings. Notes you already saved
+   keep the template they were saved with. Pick **Conference talk** for a talk or presentation: it tells the summarizer
    that one person is speaking to an audience, so the speaker's instructional phrasing
    ("you should…", "let's look at…") is kept as content instead of being mistaken for your
    to-do list. Unlike the other templates, the built-in styles now also steer the

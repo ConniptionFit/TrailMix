@@ -55,7 +55,9 @@ object DeterministicSummary {
         spec: TemplateSpec? = null,
     ): StructuredSummary? {
         val fragmentSentences = SummaryText.dedupe(SummaryText.splitSentences(typedFragments))
-        val windows = TranscriptCoverage.windows(transcript)
+        // AI-22: at most MAX_TOPIC_SECTIONS windows, so a long session merges adjacent time slices
+        // into fewer, longer topics instead of an 8-section wall.
+        val windows = TranscriptCoverage.windows(transcript, maxWindows = NoteShape.MAX_TOPIC_SECTIONS)
         val utterances = windows.map { window -> window to cleanedUtterances(window.lines, style) }
         val transcriptCount = utterances.sumOf { it.second.size }
         if (fragmentSentences.size + transcriptCount < MIN_SENTENCES) return null
@@ -154,8 +156,11 @@ object DeterministicSummary {
             headSections + windowSections
         }
 
-        if (sections.isEmpty() && actionItems.isEmpty()) return null
-        return StructuredSummary(highlights = emptyList(), sections = sections, actionItems = actionItems)
+        // AI-22: the same Granola shaping the AI path gets — clean topic headings, no repeated
+        // bullets, short notes in one block, at most six topics.
+        val shaped = NoteShape.apply(StructuredSummary(emptyList(), sections, emptyList()), anchors, spec).sections
+        if (shaped.isEmpty() && actionItems.isEmpty()) return null
+        return StructuredSummary(highlights = emptyList(), sections = shaped, actionItems = actionItems)
     }
 
     /** Text-only convenience (and the pre-AI-05 signature): no timestamps, never windowed. */
@@ -201,9 +206,12 @@ object DeterministicSummary {
         single: Boolean,
         anchored: Boolean = false,
     ): String {
-        if (single || window.rangeLabel.isEmpty()) return if (anchored) "Other Topics" else "Key topics"
-        val terms = SummaryText.keywords(window.text, limit = KEYWORDS_PER_HEADING, exclude = generic)
-        return if (terms.isEmpty()) window.rangeLabel else "${window.rangeLabel} · ${terms.joinToString(", ")}"
+        // AI-22: a topic name, never a time range ("Routing and Tables"); the window's time span
+        // is still findable through its bullets' own mm:ss stamps.
+        if (single || window.rangeLabel.isEmpty()) {
+            return if (anchored) "Other Topics" else NoteShape.topicHeading(window.text) ?: "Key Topics"
+        }
+        return NoteShape.topicHeading(window.text, generic) ?: NoteShape.topicHeading(window.text) ?: "Key Topics"
     }
 
     private fun isAction(sentence: String, cues: List<String>): Boolean {
@@ -253,5 +261,4 @@ object DeterministicSummary {
     private const val MIN_WINDOW_BULLETS = 4
     private const val MAX_ACTION_ITEMS = 15
     private const val MIN_SENTENCES = 3
-    private const val KEYWORDS_PER_HEADING = 3
 }

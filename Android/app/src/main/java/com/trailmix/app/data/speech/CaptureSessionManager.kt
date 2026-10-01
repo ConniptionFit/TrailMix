@@ -852,6 +852,8 @@ class CaptureSessionManager @Inject constructor(
             templateGuidance = spec.meetingContext,
             templateSpec = spec,
             profileLine = profileLine,
+            // AI-22: the calendar title is one cheap line of context for the model.
+            meetingTitle = meetingTitle,
             // AI-05: the template also steers the zero-AI path now, so "Conference talk"
             // shapes the note on a device with no Gemini Nano.
             style = TemplateOptions.styleFor(effectiveTemplate, customTemplates),

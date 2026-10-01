@@ -19,11 +19,12 @@ class DeterministicSummaryTest {
     }
 
     @Test
-    fun `transcript-only content becomes a Key topics section`() {
+    fun `transcript-only content becomes one topic-named section`() {
         val transcript = "We reviewed the roadmap. Design is on track. QA starts Monday."
         val summary = DeterministicSummary.from("", transcript)!!
         assertTrue(summary.highlights.isEmpty())
-        assertEquals(listOf("Key topics"), summary.sections.map { it.heading })
+        // AI-22: the heading names the topic (Title Case keywords), not "Key topics".
+        assertEquals(listOf("Roadmap and Design"), summary.sections.map { it.heading })
         assertEquals(3, summary.sections.single().bullets.size)
         assertTrue(summary.sections.single().bullets.all { it.source == Provenance.TRANSCRIPT })
     }
@@ -33,7 +34,9 @@ class DeterministicSummaryTest {
         val typed = "Client wants a demo. Budget is approved."
         val transcript = "The team discussed timelines. Launch is targeted for fall."
         val summary = DeterministicSummary.from(typed, transcript)!!
-        assertEquals(listOf("Your notes", "Key topics"), summary.sections.map { it.heading })
+        assertEquals("Your notes", summary.sections.first().heading)
+        assertEquals(2, summary.sections.size)
+        assertFalse(NoteShape.isGenericHeading(summary.sections.last().heading))
         assertTrue(summary.sections[0].bullets.all { it.source == Provenance.FRAGMENT })
         assertTrue(summary.sections[1].bullets.all { it.source == Provenance.TRANSCRIPT })
     }
@@ -86,10 +89,12 @@ class DeterministicSummaryTest {
     fun `a 45-minute talk is summarized end to end, not just its opening`() {
         val summary = DeterministicSummary.from("", talk(45), SummaryStyle.PRESENTATION)!!
 
-        // Multiple time-ranged sections rather than one front-loaded "Key topics" block.
+        // Multiple topic sections rather than one front-loaded "Key topics" block (AI-22: named
+        // for their topic, never a time range, and at most six of them).
         assertTrue("expected windowed sections", summary.sections.size > 1)
+        assertTrue(summary.sections.size <= NoteShape.MAX_TOPIC_SECTIONS)
         assertTrue(summary.sections.none { it.heading == "Key topics" })
-        assertTrue(summary.sections.first().heading.contains("–"))
+        assertTrue(summary.sections.none { it.heading.contains("–") || Regex("\\d+:\\d{2}").containsMatchIn(it.heading) })
 
         // The regression this whole feature exists to prevent: v1.9.0 took the first 25
         // sentences (~3 minutes) and silently dropped the rest of the talk.
@@ -257,6 +262,37 @@ class DeterministicSummaryTest {
     @Test
     fun `no typed notes keeps the pre-anchor shape exactly`() {
         val summary = DeterministicSummary.from("", "We reviewed the roadmap. Design is on track. QA starts Monday.")!!
-        assertEquals(listOf("Key topics"), summary.sections.map { it.heading })
+        // AI-22: still one transcript section and no "Your notes" — but named for its topic.
+        assertEquals(listOf("Roadmap and Design"), summary.sections.map { it.heading })
+    }
+
+    // ── AI-22: Granola-shaped default ────────────────────────────────────────
+
+    @Test
+    fun `a 90-minute session yields at most six topic-named sections with no highlights`() {
+        val summary = DeterministicSummary.from("", talk(90))!!
+        assertTrue(summary.highlights.isEmpty())
+        assertTrue("sections=${summary.sections.size}", summary.sections.size in 2..NoteShape.MAX_TOPIC_SECTIONS)
+        assertTrue(summary.sections.none { NoteShape.isGenericHeading(it.heading) })
+        assertTrue(summary.sections.none { Regex("\\d+:\\d{2}").containsMatchIn(it.heading) })
+        // Timestamps survive on every spoken bullet and the end of the session is represented.
+        val bullets = summary.sections.flatMap { it.bullets }
+        assertTrue(bullets.all { it.timestampLabel != null })
+        assertTrue(bullets.mapNotNull { it.timestampLabel?.substringBefore(':')?.toIntOrNull() }.max() > 70)
+    }
+
+    @Test
+    fun `presentation style gets topic headings too`() {
+        val summary = DeterministicSummary.from("", talk(45), SummaryStyle.PRESENTATION)!!
+        assertTrue(summary.sections.all { Regex("^[A-Z]").containsMatchIn(it.heading) })
+        assertTrue(summary.sections.none { it.heading.contains("·") })
+    }
+
+    @Test
+    fun `anchored sections stay locked while windows are capped at six`() {
+        val typed = "# Pricing\n# Hiring\n# Roadmap"
+        val summary = DeterministicSummary.from(typed, talk(90))!!
+        listOf("Pricing", "Hiring", "Roadmap").forEach { h -> assertTrue(summary.sections.any { it.heading == h }) }
+        assertTrue(summary.sections.size <= NoteShape.MAX_TOPIC_SECTIONS + 3)
     }
 }

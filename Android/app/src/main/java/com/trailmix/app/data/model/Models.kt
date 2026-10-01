@@ -117,6 +117,15 @@ object StringListJson {
 enum class SummaryStyle { DISCUSSION, PRESENTATION }
 
 /**
+ * Granola-style default meeting context shared by [SummaryTemplate.AUTO] and
+ * [SummaryTemplate.NONE] ("General"): the note is the user's own, organised by topic, anchored on
+ * what they typed, ending in owner-tagged next steps. Two sentences — Nano's context is ~8k chars.
+ */
+const val GENERAL_MEETING_CONTEXT =
+    "General meeting notes for the note-taker, grouped by topic and anchored on their own typed " +
+        "notes. Concise and specific, ending in next steps with an owner."
+
+/**
  * Pre-generated structuring templates that steer [StructuredSummary] generation (UX-02).
  * UX-05 (v1.7.0): LEARNING replaced SALES_PITCH — old notes that stored "SALES_PITCH"
  * still load fine ([fromStored] falls back to NONE for any retired/unknown value; the
@@ -144,13 +153,11 @@ enum class SummaryTemplate(
      */
     AUTO(
         "Auto",
-        "Group the discussion into a few clearly-named topic sections and keep any tasks " +
-            "or commitments in a separate Action Items list.",
+        GENERAL_MEETING_CONTEXT,
     ),
     NONE(
-        "Flat (no template)",
-        "Group the discussion into a few clearly-named topic sections and keep any tasks " +
-            "or commitments in a separate Action Items list.",
+        "General",
+        GENERAL_MEETING_CONTEXT,
     ),
     ONE_ON_ONE(
         "1:1",

@@ -233,7 +233,7 @@ class SettingsViewModel @Inject constructor(
      * [originalName] replaces the old entry on rename, names colliding with a built-in
      * template label are rejected with a hint. A rename also re-points the Settings
      * default if it referenced the old name (a stale default would silently fall back to
-     * Flat at merge time).
+     * General at merge time).
      */
     fun saveTemplate(
         name: String,
@@ -264,14 +264,14 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    /** Delete a custom template; a default pointing at it falls back to Flat explicitly. */
+    /** Delete a custom template; a default pointing at it falls back to General explicitly. */
     fun deleteTemplate(name: String) {
         viewModelScope.launch {
             settingsRepository.setCustomSummaryTemplates(
                 settingsRepository.customSummaryTemplates.first().filterNot { it.name == name },
             )
             if (settingsRepository.defaultSummaryTemplate.first() == TemplateOptions.customStored(name)) {
-                // AI-20: null now means Auto, so fall back to Flat explicitly.
+                // AI-20: null now means Auto, so fall back to General explicitly.
                 settingsRepository.setDefaultSummaryTemplate(SummaryTemplate.NONE.name)
             }
         }

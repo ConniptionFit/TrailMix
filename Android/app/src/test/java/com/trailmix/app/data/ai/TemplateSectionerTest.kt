@@ -158,7 +158,9 @@ class TemplateSectionerTest {
         assertEquals("Pain Points", headings.first())
         assertTrue(headings.contains("Product Feedback"))
         assertNull(out.sections.firstOrNull { it.heading == "Follow-ups" })
-        assertNotNull(out.sections.firstOrNull { it.heading == "Key topics" })
+        // AI-22: the unplaced leftover is no longer "Key topics" but a keyword-named topic.
+        val templateHeadings = spec.sections.map { it.heading }
+        assertNotNull(out.sections.firstOrNull { it.heading !in templateHeadings && it.heading != "Key topics" })
     }
 
     @Test

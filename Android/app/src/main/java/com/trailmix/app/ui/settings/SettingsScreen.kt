@@ -987,7 +987,7 @@ private fun NamedPromptEditorDialog(
 private const val AUTO_DESCRIPTION =
     "Picks the best template for each meeting from its calendar title and the first line of " +
         "your notes (1:1, stand-up, interview, pitch, kick-off, talk, and so on), falling " +
-        "back to a flat topic summary. Re-resolved every time a note is regenerated."
+        "back to the General (Granola-style) topic summary. Re-resolved every time a note is regenerated."
 
 /**
  * AI-19: create/edit dialog for a custom summary template — a name, the meeting context, and an

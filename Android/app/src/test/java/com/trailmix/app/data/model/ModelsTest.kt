@@ -203,4 +203,14 @@ class ModelsTest {
         assertEquals(null, TranscriptJson.decode(old).single().speechSource)
         assertEquals(null, SpeechSource.fromStored("BOGUS"))
     }
+
+    @Test
+    fun `Auto and General share a compact Granola-style context and General is the renamed flat`() {
+        assertEquals("General", SummaryTemplate.NONE.label)
+        assertEquals("Auto", SummaryTemplate.AUTO.label)
+        assertEquals(SummaryTemplate.NONE.guidance, SummaryTemplate.AUTO.guidance)
+        assertTrue(SummaryTemplate.NONE.guidance.length < 300)
+        assertTrue(SummaryTemplate.NONE.guidance.contains("next steps"))
+        assertEquals(SummaryTemplate.NONE, SummaryTemplate.fromStored("NONE"))
+    }
 }

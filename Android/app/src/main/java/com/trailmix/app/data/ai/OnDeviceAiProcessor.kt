@@ -139,6 +139,8 @@ class OnDeviceAiProcessor @Inject constructor() {
         templateSpec: TemplateSpec? = null,
         /** AI-21: [com.trailmix.app.data.model.UserProfile.promptLine], or null when no profile is set. */
         profileLine: String? = null,
+        /** AI-22: the calendar event's title, given to the model as one "Meeting:" line. */
+        meetingTitle: String? = null,
         /**
          * REL-10: called as each transcript chunk finishes condensing, with the number done
          * and the total. A keynote-scale merge is a dozen sequential model calls; the caller
@@ -193,7 +195,7 @@ class OnDeviceAiProcessor @Inject constructor() {
             // a bad/non-JSON model reply still yields sectioned output, never a flat wall.
             // The fallback reads the FULL transcript, not the sampled text the model saw.
             val structured = runCatching {
-                generateStructuredSummary(typedFragments, transcript, attendees, templateGuidance, templateSpec, profileLine, onProgress)
+                generateStructuredSummary(typedFragments, transcript, attendees, templateGuidance, templateSpec, profileLine, meetingTitle, onProgress)
             }.onFailure(::rethrowIfCancellation).getOrNull()
                 ?: DeterministicSummary.from(typedFragments, transcript, style, templateSpec)
 
@@ -343,6 +345,7 @@ class OnDeviceAiProcessor @Inject constructor() {
         templateGuidance: String,
         templateSpec: TemplateSpec?,
         profileLine: String?,
+        meetingTitle: String?,
         onProgress: (done: Int, total: Int) -> Unit = { _, _ -> },
     ): StructuredSummary? {
         val chunks = TranscriptCoverage.chunks(transcript, CHUNK_CHARS)
@@ -373,7 +376,7 @@ class OnDeviceAiProcessor @Inject constructor() {
         // StructuredSummaryPrompt; AnchorCoverage re-checks the parsed result below.
         val anchors = NoteAnchors.parse(typedFragments)
         val prompt = StructuredSummaryPrompt.build(
-            templateGuidance, attendees, anchors, typedFragments, transcriptText, templateSpec, profileLine,
+            templateGuidance, attendees, anchors, typedFragments, transcriptText, templateSpec, profileLine, meetingTitle,
         )
 
         val raw = generate(prompt)
@@ -455,7 +458,10 @@ class OnDeviceAiProcessor @Inject constructor() {
             transcript,
         )
         // AI-19: the prompt only *asked* for the template's headings; this makes it so.
-        return if (templateSpec != null) TemplateSectioner.conform(covered, templateSpec) else covered
+        val conformed = if (templateSpec != null) TemplateSectioner.conform(covered, templateSpec) else covered
+        // AI-22: and the Granola shape (topic headings, no duplicates, <= 6 topics) is enforced
+        // last, so it can never undo an anchor or a template section.
+        return NoteShape.apply(conformed, anchors, templateSpec)
     }
 
     /** Map step: one chunk of a long session → a few timestamped factual bullets. */
@@ -472,8 +478,7 @@ class OnDeviceAiProcessor @Inject constructor() {
         return generate(prompt)
     }
 
-    private fun labelled(lines: List<TranscriptLine>): String =
-        lines.joinToString("\n") { if (it.label.isBlank()) it.text else "[${it.label}] ${it.text}" }
+    private fun labelled(lines: List<TranscriptLine>): String = TranscriptLabels.render(lines)
 
     /** Pull a leading `[mm:ss]` / `[h:mm:ss]` marker off a model-produced bullet. */
     private fun splitTimestamp(text: String): Pair<String?, String> {

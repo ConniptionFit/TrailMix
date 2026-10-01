@@ -1,6 +1,8 @@
 package com.trailmix.app.data.ai
 
+import com.trailmix.app.data.model.SpeechSource
 import com.trailmix.app.data.model.SummaryTemplate
+import com.trailmix.app.data.model.TranscriptLine
 import com.trailmix.app.data.model.UserProfile
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -124,7 +126,51 @@ class StructuredSummaryPromptTest {
             largest.spec.meetingContext, listOf("A", "B"), anchors, "", "", largest.spec, profile,
         )
         // Overhead = everything except the transcript, with the maximum 20 anchors listed: it
-        // must leave most of Gemini Nano's ~8k-char context for the transcript.
-        assertTrue("prompt overhead ${prompt.length}", prompt.length < 3_600)
+        // must leave about half of Gemini Nano's ~8k-char context for the transcript (AI-22: the
+        // Granola style contract raised this cap from 3,600 to 3,900).
+        assertTrue("prompt overhead ${prompt.length}", prompt.length < 3_900)
+    }
+
+    // ── AI-22: Granola output contract ───────────────────────────────────────
+
+    @Test
+    fun `highlights are no longer requested but the Granola rules are`() {
+        listOf(emptyList(), NoteAnchors.parse("# plan\nARR?")).forEach { anchors ->
+            val prompt = StructuredSummaryPrompt.build("G", emptyList(), anchors, "x", "[00:01] hi")
+            assertFalse(prompt.contains("highlights"))
+            assertTrue(prompt.contains("telegraphic bullets of 5-15 words"))
+            assertTrue(prompt.contains("past or neutral present tense"))
+            assertTrue(prompt.contains("Skip small talk, logistics and audio checks"))
+            assertTrue(prompt.contains("self-introduced or addressed by name"))
+            assertTrue(prompt.contains("A very short or aborted meeting gets 1-3 bullets, no forced sections"))
+            assertTrue(prompt.contains("Title Case topic names of 2-5 words"))
+        }
+        val sectioned = StructuredSummaryPrompt.build(spec.meetingContext, emptyList(), emptyList(), "", "t", spec)
+        assertFalse(sectioned.contains("highlights"))
+        assertTrue(sectioned.contains("telegraphic bullets"))
+        assertFalse(sectioned.contains("Title Case topic names"))
+    }
+
+    @Test
+    fun `meeting title adds one Meeting line and blank is ignored`() {
+        val with = StructuredSummaryPrompt.build("G", emptyList(), emptyList(), "", "t", null, null, "Acme renewal call")
+        assertTrue(with.contains("Meeting: Acme renewal call"))
+        val without = StructuredSummaryPrompt.build("G", emptyList(), emptyList(), "", "t", null, null, "  ")
+        assertFalse(without.contains("Meeting:"))
+        assertEquals(StructuredSummaryPrompt.build("G", emptyList(), emptyList(), "", "t"), without)
+    }
+
+    @Test
+    fun `transcript lines are prefixed with the speaker when known`() {
+        val lines = listOf(
+            TranscriptLine("12:30", "we need a quote", speechSource = SpeechSource.THEM),
+            TranscriptLine("12:40", "sending it today", speakerLabel = "Speaker 2", speechSource = SpeechSource.ME),
+            TranscriptLine("12:50", "ok"),
+            TranscriptLine("", "bare", speechSource = SpeechSource.ME),
+        )
+        assertEquals(
+            "[12:30] Them: we need a quote\n[12:40] Speaker 2: sending it today\n[12:50] ok\nMe: bare",
+            TranscriptLabels.render(lines),
+        )
     }
 }
