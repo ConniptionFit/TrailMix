@@ -108,6 +108,8 @@ object TrailMix {
         @Composable @ReadOnlyComposable get() = LocalTrailMixColors.current
     val type: TrailMixType
         @Composable @ReadOnlyComposable get() = LocalTrailMixType.current
+    val shapes: Shapes
+        @Composable @ReadOnlyComposable get() = MaterialTheme.shapes
 }
 
 /** Spacing on a 4dp grid. [l] is the screen gutter, everywhere. */
