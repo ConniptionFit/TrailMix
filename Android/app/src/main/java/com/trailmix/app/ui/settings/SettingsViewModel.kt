@@ -15,6 +15,7 @@ import com.trailmix.app.data.model.SummaryTemplate
 import com.trailmix.app.data.model.TemplateOptions
 import com.trailmix.app.data.model.UserProfile
 import com.trailmix.app.data.settings.SettingsRepository
+import com.trailmix.app.data.settings.ThemeMode
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -37,8 +38,8 @@ class SettingsViewModel @Inject constructor(
     private val notesRepository: NotesRepository,
 ) : ViewModel() {
 
-    val darkModeOverride: StateFlow<Boolean?> = settingsRepository.darkModeOverride
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    val themeMode: StateFlow<ThemeMode> = settingsRepository.themeMode
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ThemeMode.SYSTEM)
 
     /** Export location (INT-02, v1.7.0 — formerly the Obsidian vault link). */
     val exportLocationName: StateFlow<String?> = settingsRepository.exportLocationName
@@ -126,8 +127,8 @@ class SettingsViewModel @Inject constructor(
     private val _snackbarMessage = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val snackbarMessage: SharedFlow<String> = _snackbarMessage
 
-    fun setDarkMode(enabled: Boolean) {
-        viewModelScope.launch { settingsRepository.setDarkModeOverride(enabled) }
+    fun setThemeMode(mode: ThemeMode) {
+        viewModelScope.launch { settingsRepository.setThemeMode(mode) }
     }
 
     /**

@@ -28,7 +28,9 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 class SettingsRepository @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
+    // Legacy boolean (pre-G2). Still read so an existing override migrates; never written again.
     private val darkModeOverrideKey = booleanPreferencesKey("dark_mode_override")
+    private val themeModeKey = stringPreferencesKey("theme_mode")
 
     // INT-02 (v1.7.0): the "Obsidian export" setting became the destination-agnostic
     // "Export location". The DataStore key names keep their historical "obsidian_*" spelling
@@ -54,8 +56,10 @@ class SettingsRepository @Inject constructor(
     // - "picovoice_access_key" (AI-01/AI-12, v1.20.0-dev, 2026-09-13 — Falcon and then Eagle
     //   both removed in the sherpa-onnx migration; nothing left needs a Picovoice key at all)
 
-    /** null = follow the system setting (design default). */
-    val darkModeOverride: Flow<Boolean?> = context.dataStore.data.map { it[darkModeOverrideKey] }
+    /** G2: System / Light / Dark. A legacy boolean override migrates on read (see [ThemeMode.resolve]). */
+    val themeMode: Flow<ThemeMode> = context.dataStore.data.map {
+        ThemeMode.resolve(it[themeModeKey], it[darkModeOverrideKey])
+    }
 
     /** Whether the one-time "audio only, not your screen" explainer has been shown. */
     val projectionExplainerShown: Flow<Boolean> =
@@ -75,9 +79,10 @@ class SettingsRepository @Inject constructor(
     val exportLocationName: Flow<String?> = context.dataStore.data.map { it[exportLocationNameKey] }
     val notesFolder: Flow<String> = context.dataStore.data.map { it[folderKey] ?: "TrailMix" }
 
-    suspend fun setDarkModeOverride(value: Boolean?) {
+    suspend fun setThemeMode(mode: ThemeMode) {
         context.dataStore.edit { prefs ->
-            if (value == null) prefs.remove(darkModeOverrideKey) else prefs[darkModeOverrideKey] = value
+            prefs[themeModeKey] = mode.name
+            prefs.remove(darkModeOverrideKey)
         }
     }
 

@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import com.trailmix.app.data.settings.SettingsRepository
+import com.trailmix.app.data.settings.ThemeMode
 import com.trailmix.app.ui.TrailMixNavHost
 import com.trailmix.app.ui.theme.TrailMix
 import com.trailmix.app.ui.theme.TrailMixTheme
@@ -31,11 +32,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val darkOverrideFlow = settingsRepository.darkModeOverride
-            .stateIn(lifecycleScope, SharingStarted.Eagerly, null)
+        val themeModeFlow = settingsRepository.themeMode
+            .stateIn(lifecycleScope, SharingStarted.Eagerly, ThemeMode.SYSTEM)
         setContent {
-            val darkOverride by darkOverrideFlow.collectAsStateWithLifecycle()
-            val darkOn = darkOverride ?: isSystemInDarkTheme()
+            val themeMode by themeModeFlow.collectAsStateWithLifecycle()
+            val darkOn = themeMode.darkOverride ?: isSystemInDarkTheme()
             // E1 (2026-09-19): enableEdgeToEdge()'s default SystemBarStyle.auto reads the
             // *system's* dark/light config at the moment it's called — it has no idea about
             // this app's own in-app dark-mode override, so whenever the override disagreed
@@ -53,7 +54,7 @@ class MainActivity : ComponentActivity() {
                 }
                 enableEdgeToEdge(statusBarStyle = style, navigationBarStyle = style)
             }
-            TrailMixTheme(darkModeOverride = darkOverride) {
+            TrailMixTheme(themeMode = themeMode) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
