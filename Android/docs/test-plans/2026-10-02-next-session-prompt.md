@@ -2,6 +2,8 @@
 
 Paste everything below the line into a clean session on the Linux workstation.
 
+> **Status update (2026-10-02, later):** item 1 below is done. v1.22.0 was tagged at `3b67b0d` and published as the GitHub Release `v1.22.0`, marked Latest, with `TrailMix-v1.22.0.apk`. The private-data cleanup (PR #19) also landed on `main`. Treat the "no tag and no GitHub Release" lines below as history.
+
 ---
 
 You are picking up TrailMix (a local-only Android app, Kotlin + Compose) after a long live-device test of v1.22.0. The testing and fixing are finished and merged to `main`. What is left is the release decision, a short list of filed follow-ups, and some tidy-up. Work from the repo and the vault; do not rely on this prompt for details it points at.
