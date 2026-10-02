@@ -2,6 +2,7 @@ package com.trailmix.app.ui.theme
 
 import androidx.compose.material3.Typography
 import androidx.compose.runtime.Immutable
+import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -16,6 +17,7 @@ import com.trailmix.app.R
  * weights 400/500/600) and IBM Plex Mono are bundled in res/font, both SIL OFL, because the
  * app has no network permission and so can never use downloadable fonts.
  */
+@OptIn(ExperimentalTextApi::class)
 val InstrumentSans = FontFamily(
     Font(R.font.instrument_sans, FontWeight.Normal, variationSettings = FontVariation.Settings(FontVariation.weight(400))),
     Font(R.font.instrument_sans, FontWeight.Medium, variationSettings = FontVariation.Settings(FontVariation.weight(500))),
