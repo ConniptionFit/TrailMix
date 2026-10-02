@@ -40,6 +40,8 @@ object StructuredSummaryPrompt {
         spec: TemplateSpec? = null,
         profileLine: String? = null,
         meetingTitle: String? = null,
+        /** AI-28: "part 2 of 4" when a long session is structured in reply-sized parts, else null. */
+        partLabel: String? = null,
     ): String {
         val attendeeLine = if (attendees.isNotEmpty()) "Attendees: ${attendees.joinToString(", ")}." else ""
         val anchorBlock = if (anchors.isEmpty()) {
@@ -60,12 +62,16 @@ object StructuredSummaryPrompt {
         val sectionBlock = if (sectioned) sectionBlock(spec!!) else ""
         val profile = profileLine?.takeIf { it.isNotBlank() }.orEmpty()
         val meetingLine = meetingTitle?.trim()?.takeIf { it.isNotEmpty() }?.let { "Meeting: ${it.take(MAX_TITLE_CHARS)}" }.orEmpty()
+        val partLine = partLabel?.let {
+            "This is $it of a longer session: write only the 1-3 topic sections this part supports; the other parts are handled separately."
+        }.orEmpty()
 
         return """
             $profile
             You are structuring a meeting note into JSON. $templateGuidance
             $meetingLine
             $attendeeLine
+            $partLine
             Transcript lines are prefixed with [mm:ss] and, when known, the speaker (Me = the note-taker).
             Respond with ONLY valid JSON, no markdown fences, matching exactly this shape:
             {"sections": [{"heading": "Topic name", "bullets": [{"text": "point"}]}],

@@ -195,4 +195,16 @@ class StructuredSummaryPromptTest {
         assertFalse(prompt.contains("Attendees:"))
         assertTrue(prompt.contains("(none)"))
     }
+
+    @Test
+    fun `a part prompt says which part it is and asks only for that part's sections`() {
+        val part = StructuredSummaryPrompt.build("Ctx.", emptyList(), emptyList(), "", "[1:00] a", partLabel = "part 2 of 4")
+        val whole = StructuredSummaryPrompt.build("Ctx.", emptyList(), emptyList(), "", "[1:00] a")
+
+        assertTrue(part.contains("This is part 2 of 4 of a longer session"))
+        assertTrue(part.contains("the other parts are handled separately"))
+        assertFalse(whole.contains("longer session"))
+        // The part line costs prompt overhead, not reply budget; the overhead cap still holds.
+        assertTrue("part prompt overhead ${part.length}", part.length < 3_900)
+    }
 }

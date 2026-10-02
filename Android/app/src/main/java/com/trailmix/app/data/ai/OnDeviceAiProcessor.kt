@@ -3,6 +3,7 @@ package com.trailmix.app.data.ai
 import android.util.Log
 import com.google.mlkit.genai.common.DownloadStatus
 import com.google.mlkit.genai.common.FeatureStatus
+import com.google.mlkit.genai.common.GenAiException
 import com.google.mlkit.genai.prompt.Generation
 import com.google.mlkit.genai.prompt.GenerativeModel
 import com.trailmix.app.data.model.ActionItem
@@ -19,6 +20,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
+import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -380,19 +382,6 @@ class OnDeviceAiProcessor @Inject constructor() {
         // AI-17: the typed notes are the backbone. Prompt wording + word cap live in the pure
         // StructuredSummaryPrompt; AnchorCoverage re-checks the parsed result below.
         val anchors = NoteAnchors.parse(typedFragments)
-        val prompt = StructuredSummaryPrompt.build(
-            templateGuidance, attendees, anchors, typedFragments, transcriptText, templateSpec, profileLine, meetingTitle,
-        )
-
-        val raw = generate(prompt)
-        // AI-23: the reply is capped at 256 tokens and often cut off mid-element; keep what is
-        // complete instead of throwing the whole summary away (see StructuredJson).
-        val parsed = StructuredJson.parse(raw)
-        if (parsed == null) {
-            Log.w(TAG, "structured summary: no JSON object in the model reply; using deterministic fallback")
-            return null
-        }
-        val root = parsed.root
 
         // Tokenize the attribution corpora once — a long talk has hundreds of candidate
         // sentences and this runs per produced bullet.
@@ -431,17 +420,14 @@ class OnDeviceAiProcessor @Inject constructor() {
         }
 
         // A malformed element is skipped, not fatal: one bad bullet must not cost the whole note.
-        val highlights = root.optJSONArray("highlights")?.let { arr ->
-            (0 until arr.length()).mapNotNull { runCatching { attributeAny(arr, it) }.getOrNull() }
-        }.orEmpty().filter { it.text.isNotBlank() }
-
-        val sections = StructuredJson.sectionObjects(root.opt("sections")).mapNotNull { o ->
-            val heading = o.optString("heading").trim()
-            val bullets = o.optJSONArray("bullets")?.let { barr ->
-                (0 until barr.length()).mapNotNull { runCatching { attributeAny(barr, it) }.getOrNull() }
-            }.orEmpty().filter { it.text.isNotBlank() }
-            SummarySection(heading = heading, bullets = bullets).takeIf { heading.isNotEmpty() }
-        }.filter { it.bullets.isNotEmpty() }
+        fun sectionsFrom(root: JSONObject): List<SummarySection> =
+            StructuredJson.sectionObjects(root.opt("sections")).mapNotNull { o ->
+                val heading = o.optString("heading").trim()
+                val bullets = o.optJSONArray("bullets")?.let { barr ->
+                    (0 until barr.length()).mapNotNull { runCatching { attributeAny(barr, it) }.getOrNull() }
+                }.orEmpty().filter { it.text.isNotBlank() }
+                SummarySection(heading = heading, bullets = bullets).takeIf { heading.isNotEmpty() }
+            }.filter { it.bullets.isNotEmpty() }
 
         fun actionsFrom(arr: JSONArray?): List<ActionItem> = arr?.let {
             (0 until it.length()).mapNotNull { i ->
@@ -461,20 +447,67 @@ class OnDeviceAiProcessor @Inject constructor() {
             }
         }.orEmpty().filter { it.text.isNotBlank() }
 
-        val modelActions = actionsFrom(root.optJSONArray("actionItems"))
-        // actionItems is the last key in the requested shape, so a cut-off reply loses exactly
-        // them, and Next Steps (owner + deadline) is a headline feature. Ask for them on their own,
-        // which fits the cap; the cue-based extractor is only the last resort. Only when the reply
-        // was truncated: an untruncated reply with no actions means none were real.
-        val actionItems = when {
-            modelActions.isNotEmpty() || !parsed.truncated -> modelActions
-            else -> {
-                val retried = runCatching {
-                    val reply = generate(StructuredSummaryPrompt.buildActionItems(attendees, transcriptText))
-                    actionsFrom(StructuredJson.parse(reply)?.root?.optJSONArray("actionItems"))
-                }.onFailure(::rethrowIfCancellation).getOrDefault(emptyList())
-                retried.ifEmpty { DeterministicSummary.from(typedFragments, transcript)?.actionItems.orEmpty() }
+        // AI-28: a reply is capped at 256 tokens (see StructuredJson), so one structuring call can
+        // only cover a few minutes of dense speech; a 13-minute session used to yield a note built
+        // from its first ~1.5 minutes and silently drop the rest. Structure the text in parts that
+        // each fit the cap and merge them. A short session is one part, exactly as before.
+        val parts = StructuredParts.split(transcriptText)
+        // The map step above already reported its chunks; the parts count after them.
+        val progressBase = if (chunks.size > 1) chunks.size else 0
+        val partSections = mutableListOf<SummarySection>()
+        val partActions = mutableListOf<ActionItem>()
+        var parsedAny = false
+        var truncatedAny = false
+        parts.forEachIndexed { index, part ->
+            val prompt = StructuredSummaryPrompt.build(
+                templateGuidance, attendees,
+                // The typed notes belong to the note as a whole: given to the first part only, so
+                // later parts do not each rebuild every anchor (AnchorCoverage still places them).
+                if (index == 0) anchors else emptyList(),
+                if (index == 0) typedFragments else "",
+                part, templateSpec, profileLine, meetingTitle,
+                partLabel = if (parts.size > 1) "part ${index + 1} of ${parts.size}" else null,
+            )
+            // AI-23: keep what is complete instead of throwing a cut-off reply away. A part that
+            // fails outright is skipped, like a failed chunk, so one bad call does not cost the note.
+            val parsed = runCatching { StructuredJson.parse(generate(prompt)) }
+                .onFailure {
+                    rethrowIfCancellation(it)
+                    logFailure("structured summary part ${index + 1} of ${parts.size}", it)
+                }.getOrNull()
+            if (parsed == null) {
+                Log.w(TAG, "structured summary: part ${index + 1} of ${parts.size} had no usable JSON")
+            } else {
+                parsedAny = true
+                partSections += sectionsFrom(parsed.root)
+                var actions = actionsFrom(parsed.root.optJSONArray("actionItems"))
+                // actionItems is the last key in the requested shape, so a cut-off reply loses
+                // exactly them, and Next Steps (owner + deadline) is a headline feature. Ask for
+                // them on their own, which fits the cap. Only when the reply was truncated: an
+                // untruncated reply with no actions means none were real.
+                if (actions.isEmpty() && parsed.truncated) {
+                    truncatedAny = true
+                    actions = runCatching {
+                        val reply = generate(StructuredSummaryPrompt.buildActionItems(attendees, part))
+                        actionsFrom(StructuredJson.parse(reply)?.root?.optJSONArray("actionItems"))
+                    }.onFailure {
+                        rethrowIfCancellation(it)
+                        logFailure("action-items follow-up for part ${index + 1}", it)
+                    }.getOrDefault(emptyList())
+                }
+                partActions += actions
             }
+            onProgress(progressBase + index + 1, progressBase + parts.size)
+        }
+        if (!parsedAny) {
+            Log.w(TAG, "structured summary: no usable JSON from any of ${parts.size} part(s); using deterministic fallback")
+            return null
+        }
+        val highlights = emptyList<SummaryBullet>() // no longer requested (AI-22)
+        val sections = StructuredParts.mergeSections(partSections)
+        // The cue-based extractor is only the last resort, when the model gave none and was cut off.
+        val actionItems = StructuredParts.mergeActions(partActions).ifEmpty {
+            if (truncatedAny) DeterministicSummary.from(typedFragments, transcript)?.actionItems.orEmpty() else emptyList()
         }
 
         if (highlights.isEmpty() && sections.isEmpty() && actionItems.isEmpty()) return null
@@ -489,6 +522,17 @@ class OnDeviceAiProcessor @Inject constructor() {
         // AI-22: and the Granola shape (topic headings, no duplicates, <= 6 topics) is enforced
         // last, so it can never undo an anchor or a template section.
         return NoteShape.apply(conformed, anchors, templateSpec)
+    }
+
+    /**
+     * Log why a model step failed without logging content: the exception type, plus ML Kit's
+     * integer error code (BUSY = 9, PER_APP_BATTERY_USE_QUOTA_EXCEEDED = 27, BACKGROUND_USE_BLOCKED
+     * = 30, ...). Never the message: a `JSONException` or a model error can embed the model's
+     * reply, i.e. transcript content, and this app keeps note content out of logcat.
+     */
+    private fun logFailure(what: String, e: Throwable) {
+        val code = (e as? GenAiException)?.let { ", code ${it.errorCode}" }.orEmpty()
+        Log.w(TAG, "$what failed (${e::class.java.simpleName}$code)")
     }
 
     /** Map step: one chunk of a long session → a few timestamped factual bullets. */
@@ -536,14 +580,21 @@ class OnDeviceAiProcessor @Inject constructor() {
         return Attribution(source, best?.text, best?.label?.takeIf { it.isNotBlank() })
     }
 
+    /**
+     * One model call. AICore rejects a call that arrives while it is still closing the previous
+     * session with BUSY; that is transient, so wait and retry a few times (see [retryWhile]) before
+     * letting the caller's fail-soft fallback take over.
+     */
     private suspend fun generate(prompt: String): String =
-        modelOrNull()
-            ?.generateContent(prompt)
-            ?.candidates
-            ?.firstOrNull()
-            ?.text
-            ?.trim()
-            .orEmpty()
+        retryWhile(BUSY_RETRIES, BUSY_BACKOFF_MS, { it is GenAiException && it.errorCode == GenAiException.ErrorCode.BUSY }) {
+            modelOrNull()
+                ?.generateContent(prompt)
+                ?.candidates
+                ?.firstOrNull()
+                ?.text
+                ?.trim()
+                .orEmpty()
+        }
 
     /**
      * CAP-28: every fail-soft boundary in this file — `catch (e: Exception)` and
@@ -620,6 +671,10 @@ class OnDeviceAiProcessor @Inject constructor() {
 
     companion object {
         private const val TAG = "TrailMixAI"
+
+        /** AICore BUSY is transient: up to 4 retries, 2 s, 4 s, 6 s, 8 s apart. */
+        private const val BUSY_RETRIES = 4
+        private const val BUSY_BACKOFF_MS = 2_000L
         private const val MAX_CONTEXT_CHARS = 8_000
 
         /** Per-chunk budget for map-reduce; below MAX_CONTEXT_CHARS to leave room for the prompt. */
