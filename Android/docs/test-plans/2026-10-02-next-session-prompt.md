@@ -1,6 +1,6 @@
 # Prompt for the next agent: TrailMix v1.22.0 wrap-up
 
-Paste everything below the line into a clean session on the Linux workstation (`RX9070`).
+Paste everything below the line into a clean session on the Linux workstation.
 
 ---
 
@@ -10,7 +10,7 @@ You are picking up TrailMix (a local-only Android app, Kotlin + Compose) after a
 - **Repo:** `~/Projects/trailmix-android` (the Android app is under `Android/`). Remotes: `github` (https://github.com/ConniptionFit/TrailMix, private; `origin` is the same URL) and `forgejo` (https://git.pwrs.dev/powers/trailmix). `main` carries v1.22.0 (versionName 1.22.0, versionCode 26) on **both**, fast-forwarded from the PR branch `claude/compassionate-feynman-34pau4` (PR ConniptionFit/TrailMix#18, which GitHub should now show as merged). **No tag and no GitHub Release has been cut for v1.22.0.**
 - **Read first, in this order:** `CLAUDE.md` (the whole Non-negotiable Principles section and **every Trap row**, especially the three added in this pass: the ICU regex rule, the 256-token reply cap with fail-soft logging and BUSY retry, and the live-device harness gotchas), then `Android/docs/test-plans/2026-10-01-v1.22.0-live-test-results.md` (the full results table, the defects found, the rows filed, the ID reconciliation), then `Android/docs/test-plans/2026-10-02-v1.22.0-live-test.md` (the original plan).
 - **Vault** (Obsidian, unversioned): `~/Documents/Obsidian Vault/TrailMix/` on this machine. `Future Improvements.md` has the v1.22.0 Complete row and the To-Do rows. The four owning notes (On-Device AI, Architecture, UI and Design, Build and Deployment) each have a v1.22.0 section, and `Master Prompt.md` mirrors `CLAUDE.md` byte for byte (keep it that way). **Vault sync rule** (CLAUDE.md Trap): edits made on disk are only indexed by the fast-note-sync plugin while Obsidian is running; check `pgrep -a electron` and after writing compare the note's size in `.obsidian/plugins/fast-note-sync/fileHashMap.json` with the file on disk. The `obsidian` MCP server was refusing connections all session; the disk route worked.
-- **Device:** Pixel 9 Pro, serial `46121FDAP007J9`, adb at `~/Android/Sdk/platform-tools/adb`. Two packages: **`com.trailmix.app` is the user's real app with their real notes** and **`com.trailmix.app.preview` is "TrailMix Preview", a disposable test copy**. `Android/scripts/device-test.sh` drives both (`preflight`, `install-preview`, `replace-preview`, `install`, `logs-start/stop`, `crashes`, `shot`, `ui`, `state`).
+- **Device:** Pixel 9 Pro, adb at `~/Android/Sdk/platform-tools/adb`. Two packages: **`com.trailmix.app` is the user's real app with their real notes** and **`com.trailmix.app.preview` is "TrailMix Preview", a disposable test copy**. `Android/scripts/device-test.sh` drives both (`preflight`, `install-preview`, `replace-preview`, `install`, `logs-start/stop`, `crashes`, `shot`, `ui`, `state`).
 
 ## State when this session ended (verify, do not assume)
 - Final code head was `1aa2d9f`; later commits are docs only. CI was green on `e017939`. `./gradlew check` was green: 495 unit tests (debug) and 490 (release). The known `lintAnalyze*` K2 flake sometimes needs one retry (CLAUDE.md).
