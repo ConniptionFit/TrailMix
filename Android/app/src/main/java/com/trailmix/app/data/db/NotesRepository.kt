@@ -207,7 +207,7 @@ class NotesRepository @Inject constructor(
     suspend fun setShowSources(id: Long, show: Boolean) = noteDao.setShowSources(id, show)
 
     /**
-     * UX-36: save hand-edited raw notes without touching the enhanced body. Writes only the
+     * UX-40: save hand-edited raw notes without touching the enhanced body. Writes only the
      * `typedFragments` column (REL-14), then re-exports so the file on disk — which carries
      * the typed notes — doesn't go stale. The enhanced note is deliberately left as is until
      * the user chooses Re-enhance.

@@ -821,11 +821,11 @@ class CaptureSessionManager @Inject constructor(
         attendees: List<String>,
         template: String,
         flags: List<String> = emptyList(),
-        // UX-35: a regeneration starts from a stored transcript that already carries its
+        // UX-39: a regeneration starts from a stored transcript that already carries its
         // speaker labels — never diarize again (and never consume a retained-audio buffer
         // that belongs to some other session).
         rediarize: Boolean = true,
-        // UX-35: a regeneration keeps the note's current real title (it may be hand-edited);
+        // UX-39: a regeneration keeps the note's current real title (it may be hand-edited);
         // null lets the merge's own title through, as End & Merge always has.
         keepTitle: String? = null,
     ): Long {
@@ -901,7 +901,7 @@ class CaptureSessionManager @Inject constructor(
     }
 
     /**
-     * UX-35/UX-36: re-run the merge over an already-saved note — switch [template], or
+     * UX-39/UX-40: re-run the merge over an already-saved note — switch [template], or
      * re-enhance after the user edited their raw notes ([typedFragmentsOverride]). Reports
      * false (never throws) when refused or when the merge failed; the existing note is left
      * untouched in both cases.

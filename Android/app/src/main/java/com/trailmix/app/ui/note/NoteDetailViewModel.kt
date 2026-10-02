@@ -46,7 +46,7 @@ class NoteDetailViewModel @Inject constructor(
     val exportFormat: StateFlow<ExportFormat> = settingsRepository.exportFormat
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ExportFormat.LLM_OPTIMIZED)
 
-    // ── UX-35/UX-36: regenerate / re-enhance ────────────────────────────────
+    // ── UX-39/UX-40: regenerate / re-enhance ────────────────────────────────
 
     /** Built-ins plus the user's custom templates — same list the Capture chips show. */
     val templateOptions: StateFlow<List<TemplateOption>> = settingsRepository.customSummaryTemplates
@@ -91,7 +91,7 @@ class NoteDetailViewModel @Inject constructor(
         }
     }
 
-    /** UX-36: persist hand-edited raw notes — only the `typedFragments` column. */
+    /** UX-40: persist hand-edited raw notes — only the `typedFragments` column. */
     fun saveRawNotes(text: String, onDone: () -> Unit) {
         viewModelScope.launch {
             notesRepository.updateTypedFragments(noteId, text)

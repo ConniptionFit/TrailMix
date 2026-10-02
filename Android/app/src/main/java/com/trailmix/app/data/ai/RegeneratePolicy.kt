@@ -3,7 +3,7 @@ package com.trailmix.app.data.ai
 import com.trailmix.app.data.model.TranscriptLine
 
 /**
- * UX-35/UX-36: pure decisions for re-running the merge over an already-saved note. Kept free
+ * UX-39/UX-40: pure decisions for re-running the merge over an already-saved note. Kept free
  * of Android so the rules are unit-testable; the session manager's `regenerateNote` and Note
  * Detail both ask this rather than restating the conditions.
  */

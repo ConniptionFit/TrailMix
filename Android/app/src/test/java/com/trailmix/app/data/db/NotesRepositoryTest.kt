@@ -86,7 +86,7 @@ class NotesRepositoryTest {
         mergedWithAi = false,
     )
 
-    // ── UX-36: raw-notes edit touches only typedFragments ───────────────────
+    // ── UX-40: raw-notes edit touches only typedFragments ───────────────────
 
     @Test
     fun `updateTypedFragments writes only the raw notes and leaves the body alone`() = runBlocking {

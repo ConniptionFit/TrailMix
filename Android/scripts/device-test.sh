@@ -39,7 +39,7 @@ case "${1:-}" in
     for P in "$REAL_PKG" "$PREVIEW_PKG"; do
       echo "--- $P"
       "$ADB" shell dumpsys package "$P" | grep -E "versionName|versionCode|firstInstallTime|lastUpdateTime" || echo "NOT INSTALLED"
-      APK_PATH=$("$ADB" shell pm path "$P" 2>/dev/null | head -1 | sed 's/package://' | tr -d '\r')
+      APK_PATH=$("$ADB" shell pm path "$P" 2>/dev/null | head -1 | sed 's/package://' | tr -d '\r' || true)
       if [ -n "$APK_PATH" ]; then
         "$ADB" pull "$APK_PATH" "$ART/installed-$P.apk" >/dev/null
         echo "signer: $("$(latest_build_tool)/apksigner" verify --print-certs "$ART/installed-$P.apk" | digest_of)"

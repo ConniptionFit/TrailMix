@@ -95,13 +95,13 @@ fun NoteDetailScreen(
     var showFormatPicker by remember { mutableStateOf(false) }
     var showPhotoPicker by remember { mutableStateOf(false) }
 
-    // UX-36: 0 = Enhanced (default), 1 = My notes (the raw typed fragments).
+    // UX-40: 0 = Enhanced (default), 1 = My notes (the raw typed fragments).
     var tab by remember(current.id) { mutableStateOf(0) }
     var editingRaw by remember(current.id) { mutableStateOf(false) }
     var rawDraft by remember(current.id) { mutableStateOf("") }
     var rawJustSaved by remember(current.id) { mutableStateOf(false) }
 
-    // UX-35: template picker, and the template awaiting a "replace your edits?" confirm.
+    // UX-39: template picker, and the template awaiting a "replace your edits?" confirm.
     var showTemplatePicker by remember { mutableStateOf(false) }
     var pendingRegen by remember { mutableStateOf<PendingRegen?>(null) }
 
@@ -370,7 +370,7 @@ fun NoteDetailScreen(
                         .padding(bottom = 14.dp),
                 )
 
-                // UX-36: Enhanced (today's view) vs My notes (the raw typed fragments).
+                // UX-40: Enhanced (today's view) vs My notes (the raw typed fragments).
                 NoteViewToggle(selected = tab, onSelect = { tab = it; editingRaw = false })
                 Spacer(modifier = Modifier.size(12.dp))
 
@@ -785,7 +785,7 @@ private fun durationLabel(durationMs: Long): String {
 /** Template (stored value) awaiting the "replace your edits?" confirm; null = keep the note's own. */
 private data class PendingRegen(val template: String?)
 
-/** UX-36: two-segment Enhanced / My notes switch. */
+/** UX-40: two-segment Enhanced / My notes switch. */
 @Composable
 private fun NoteViewToggle(selected: Int, onSelect: (Int) -> Unit) {
     val c = TrailMix.colors
@@ -811,7 +811,7 @@ private fun NoteViewToggle(selected: Int, onSelect: (Int) -> Unit) {
     }
 }
 
-/** UX-35: Regenerate (same template) and a template picker; a spinner while one is running. */
+/** UX-39: Regenerate (same template) and a template picker; a spinner while one is running. */
 @Composable
 private fun RegenerateRow(regenerating: Boolean, onRegenerate: () -> Unit, onPickTemplate: () -> Unit) {
     val c = TrailMix.colors
@@ -852,7 +852,7 @@ private fun RegenerateRow(regenerating: Boolean, onRegenerate: () -> Unit, onPic
 }
 
 /**
- * UX-36: the raw typed fragments, plain proportional text (not monospace), editable. Saving
+ * UX-40: the raw typed fragments, plain proportional text (not monospace), editable. Saving
  * persists only the `typedFragments` column; Re-enhance then re-runs the merge with them.
  */
 @Composable
