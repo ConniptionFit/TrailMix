@@ -801,6 +801,19 @@ class CaptureSessionManager @Inject constructor(
      * this that drifted would mean recovered notes were quietly second-class.
      */
     /**
+     * SPK-03: replace "Speaker N"/"Them" with a calendar attendee's name where the evidence is
+     * strong enough (see [SpeakerFusion]). Pure and fail-soft: any problem leaves the labels as
+     * they were. Skipped on a regeneration, whose stored transcript already carries its names.
+     */
+    private suspend fun nameSpeakers(transcript: List<TranscriptLine>, attendees: List<String>): List<TranscriptLine> {
+        if (attendees.isEmpty()) return transcript
+        val userName = settingsRepository.userProfile.first().name.takeIf { it.isNotBlank() }
+        return runCatching { SpeakerFusion.apply(transcript, attendees, userName) }
+            .onFailure { Log.w(TAG, "speaker naming failed, keeping anonymous labels: ${it.javaClass.simpleName}") }
+            .getOrDefault(transcript)
+    }
+
+    /**
      * AI-01: attach "Speaker N" labels via [speakerDiarizer] if this session actually retained
      * audio for it — which by itself already means the user had diarization on when the
      * session's mic last started (see [runListenSession]). Fully on-device, no account/key of
@@ -844,7 +857,7 @@ class CaptureSessionManager @Inject constructor(
         if (MergePolicy.nothingToSave(typed, transcript)) return -1L
         // AI-01: attach "Speaker N" labels before anything downstream reads the transcript —
         // the structured-summary attribution and the saved note should both see them.
-        val diarizedTranscript = if (rediarize) diarizeIfEnabled(transcript) else transcript
+        val diarizedTranscript = if (rediarize) nameSpeakers(diarizeIfEnabled(transcript), attendees) else transcript
         val customTemplates = settingsRepository.customSummaryTemplates.first()
         // AI-20: "Auto" is resolved to a concrete template here, per merge; the note keeps
         // storing "AUTO" (the `template` param below is what gets saved) so a regenerate
