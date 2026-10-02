@@ -47,10 +47,11 @@ allow your file manager to install unknown apps).
 > updates install cleanly with no data loss. Before uninstalling anything, set
 > **Settings → Export location** — TrailMix then writes every note out as Markdown, and
 > those files live in shared storage, so they survive. Be clear-eyed about what that buys
-> you: the Markdown is readable and greppable forever, but **there is no import path back
-> into the app** (see INT-04), so a reinstall still costs you the in-app library — chat
-> history, provenance tags, and the ability to resume a capture. The exports are a real
-> safety net for the *content*, not a backup you can restore from.
+> you: after a reinstall, link the same folder again and tap **Settings → Restore from
+> export folder** to rebuild your notes from those files (existing notes are never
+> duplicated). The restore is deliberately lossy: each note comes back as the file's own
+> text, without chat history, provenance tags, or the ability to resume a capture. The
+> exports are a real safety net for your *content*, not a full backup of the in-app library.
 
 ### Test builds: TrailMix Preview (pre-release, for testers)
 
