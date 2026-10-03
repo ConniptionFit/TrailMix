@@ -3,34 +3,26 @@ package com.trailmix.app.ui.note
 import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.Snackbar
-import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -39,39 +31,62 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.trailmix.app.R
 import com.trailmix.app.data.ai.RegeneratePolicy
+import com.trailmix.app.data.db.NoteEntity
 import com.trailmix.app.data.db.toMarkdown
 import com.trailmix.app.data.export.ExportFormat
 import com.trailmix.app.data.model.Provenance
-import com.trailmix.app.data.model.SummaryBullet
-import com.trailmix.app.data.model.displayText
+import com.trailmix.app.data.model.StructuredEdits
+import com.trailmix.app.data.model.StructuredSummary
+import com.trailmix.app.data.speech.MergeStatus
 import com.trailmix.app.ui.components.ActiveCaptureChip
-import com.trailmix.app.ui.components.BackChevron
+import com.trailmix.app.ui.components.TmBackButton
+import com.trailmix.app.ui.components.TmButtonIcon
+import com.trailmix.app.ui.components.TmCloseButton
+import com.trailmix.app.ui.components.TmConfirmDialog
+import com.trailmix.app.ui.components.TmFilterChip
+import com.trailmix.app.ui.components.TmIconButton
+import com.trailmix.app.ui.components.TmIcons
+import com.trailmix.app.ui.components.TmLongTaskProgress
+import com.trailmix.app.ui.components.TmMenuItem
+import com.trailmix.app.ui.components.TmOverflowMenu
+import com.trailmix.app.ui.components.TmSegmented
+import com.trailmix.app.ui.components.TmSheet
+import com.trailmix.app.ui.components.TmSheetAction
+import com.trailmix.app.ui.components.TmSnackbarHost
+import com.trailmix.app.ui.components.TmTextButton
+import com.trailmix.app.ui.components.TmTonalButton
+import com.trailmix.app.ui.components.TmTopBar
 import com.trailmix.app.ui.export.ExportFormatPickerDialog
 import com.trailmix.app.ui.export.PhotoPickerSheet
+import com.trailmix.app.ui.theme.TmSpacing
 import com.trailmix.app.ui.theme.TrailMix
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
+/** The widest the reading column grows; on a tablet the note stays a comfortable line length. */
+private val ReadingWidth = 680.dp
+
 @Composable
 fun NoteDetailScreen(
     onBack: () -> Unit,
-    onOpenTranscript: () -> Unit,
+    /** Opens the transcript, scrolled to the line with this `mm:ss` label when there is one. */
+    onOpenTranscript: (String?) -> Unit,
     onOpenChat: () -> Unit,
     onResume: () -> Unit,
     /** CAP-10/Part 3.2: jump back into a capture that's live in the background. */
@@ -85,85 +100,49 @@ fun NoteDetailScreen(
     val matchedPhotos by viewModel.matchedPhotos.collectAsStateWithLifecycle()
     val templateOptions by viewModel.templateOptions.collectAsStateWithLifecycle()
     val regenerating by viewModel.regenerating.collectAsStateWithLifecycle()
+    val mergeStatus by viewModel.mergeStatus.collectAsStateWithLifecycle()
+    val rebuildTemplate by viewModel.rebuildTemplate.collectAsStateWithLifecycle()
     val c = TrailMix.colors
     val current = note ?: return
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
 
-    var editing by remember(current.id) { mutableStateOf(false) }
+    // Flat edit (legacy notes with no structure, or a hand-edited body) vs structure edit (N4).
+    var flatEditing by remember(current.id) { mutableStateOf(false) }
     var titleDraft by remember(current.id) { mutableStateOf("") }
     var bodyDraft by remember(current.id) { mutableStateOf("") }
+    var summaryDraft by remember(current.id) { mutableStateOf<StructuredSummary?>(null) }
+    var summaryBaseline by remember(current.id) { mutableStateOf<StructuredSummary?>(null) }
+    val structureEditing = summaryDraft != null
+    val editing = flatEditing || structureEditing
+    var showDiscard by remember { mutableStateOf(false) }
+
     var showFormatPicker by remember { mutableStateOf(false) }
     var showPhotoPicker by remember { mutableStateOf(false) }
+    var showRebuild by remember { mutableStateOf(false) }
+    var showDelete by remember { mutableStateOf(false) }
+    var reordering by remember(current.id) { mutableStateOf(false) }
+    var sourceSheet by remember { mutableStateOf<SourceSheetData?>(null) }
 
-    // UX-40: 0 = Enhanced (default), 1 = My notes (the raw typed fragments).
+    // 0 = Note (default), 1 = My notes (the raw typed fragments).
     var tab by remember(current.id) { mutableStateOf(0) }
     var editingRaw by remember(current.id) { mutableStateOf(false) }
     var rawDraft by remember(current.id) { mutableStateOf("") }
     var rawJustSaved by remember(current.id) { mutableStateOf(false) }
-
-    // UX-39: template picker, and the template awaiting a "replace your edits?" confirm.
-    var showTemplatePicker by remember { mutableStateOf(false) }
-    var pendingRegen by remember { mutableStateOf<PendingRegen?>(null) }
 
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(Unit) {
         viewModel.messages.collect { snackbarHostState.showSnackbar(it) }
     }
 
-    fun startRegenerate(template: String?) {
-        // Regenerating rebuilds the body from the transcript and typed notes, so it discards
-        // a hand-edited body — confirm first rather than silently losing the edit.
-        if (RegeneratePolicy.needsOverwriteConfirm(current.bodyOverride)) {
-            pendingRegen = PendingRegen(template)
-        } else {
-            viewModel.regenerate(template)
-        }
-    }
+    val summary = current.structuredSummary
+    val structuredEditable = summary != null && current.bodyOverride == null
+    val editCount = RegeneratePolicy.editsToReplace(
+        bodyOverride = current.bodyOverride,
+        structuredEdits = summary?.let(StructuredEdits::editCount) ?: 0,
+    )
 
-    if (showTemplatePicker) {
-        AlertDialog(
-            onDismissRequest = { showTemplatePicker = false },
-            title = { Text("Regenerate with template") },
-            text = {
-                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                    templateOptions.forEach { option ->
-                        val isCurrent = option.stored == (current.template ?: "NONE")
-                        Text(
-                            text = if (isCurrent) "${option.label}  (current)" else option.label,
-                            color = if (isCurrent) c.amber else c.text,
-                            fontSize = 14.sp,
-                            fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    showTemplatePicker = false
-                                    startRegenerate(option.stored)
-                                }
-                                .padding(vertical = 10.dp),
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showTemplatePicker = false }) { Text("Cancel") }
-            },
-        )
-    }
-
-    pendingRegen?.let { pending ->
-        AlertDialog(
-            onDismissRequest = { pendingRegen = null },
-            title = { Text("Replace your edits?") },
-            text = { Text("Regenerating rebuilds this note and replaces the changes you made by hand.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    pendingRegen = null
-                    viewModel.regenerate(pending.template)
-                }) { Text("Regenerate") }
-            },
-            dismissButton = { TextButton(onClick = { pendingRegen = null }) { Text("Cancel") } },
-        )
-    }
+    val shareChooserTitle = stringResource(R.string.note_share)
 
     fun shareNote(format: ExportFormat) {
         val sendIntent = Intent(Intent.ACTION_SEND).apply {
@@ -171,7 +150,36 @@ fun NoteDetailScreen(
             putExtra(Intent.EXTRA_SUBJECT, current.title)
             putExtra(Intent.EXTRA_TEXT, current.toMarkdown(format = format))
         }
-        context.startActivity(Intent.createChooser(sendIntent, "Share note"))
+        context.startActivity(Intent.createChooser(sendIntent, shareChooserTitle))
+    }
+
+    fun enterEdit() {
+        titleDraft = current.title
+        if (structuredEditable && summary != null) {
+            val shaped = StructuredEdits.asSections(summary)
+            summaryBaseline = shaped
+            summaryDraft = shaped
+        } else {
+            bodyDraft = current.displayBody
+            flatEditing = true
+        }
+    }
+
+    fun leaveEdit() {
+        flatEditing = false
+        summaryDraft = null
+        summaryBaseline = null
+        showDiscard = false
+    }
+
+    val dirty = if (structureEditing) {
+        titleDraft != current.title || summaryDraft != summaryBaseline
+    } else {
+        titleDraft != current.title || bodyDraft != current.displayBody
+    }
+
+    fun requestLeaveEdit() {
+        if (dirty) showDiscard = true else leaveEdit()
     }
 
     if (showFormatPicker) {
@@ -202,15 +210,66 @@ fun NoteDetailScreen(
         )
     }
 
-    fun enterEdit() {
-        titleDraft = current.title
-        bodyDraft = current.displayBody
-        editing = true
+    if (showRebuild) {
+        RebuildSheet(
+            templates = templateOptions,
+            currentStored = current.template ?: "NONE",
+            edits = editCount,
+            onDismiss = { showRebuild = false },
+            onRebuild = { stored ->
+                showRebuild = false
+                viewModel.regenerate(stored)
+            },
+        )
     }
 
-    // While editing, Back cancels the edit rather than leaving the note.
-    BackHandler(enabled = editing) { editing = false }
+    if (showDelete) {
+        TmConfirmDialog(
+            title = stringResource(R.string.note_delete_title),
+            body = stringResource(R.string.note_delete_body),
+            confirmLabel = stringResource(R.string.note_delete_confirm),
+            destructive = true,
+            onConfirm = {
+                showDelete = false
+                viewModel.deleteNote(onDeleted = onBack)
+            },
+            onDismiss = { showDelete = false },
+        )
+    }
+
+    if (showDiscard) {
+        TmConfirmDialog(
+            title = stringResource(R.string.note_edit_discard_title),
+            body = stringResource(R.string.note_edit_discard_body),
+            confirmLabel = stringResource(R.string.note_edit_discard),
+            destructive = true,
+            onConfirm = ::leaveEdit,
+            onDismiss = { showDiscard = false },
+        )
+    }
+
+    sourceSheet?.let { data ->
+        SourceSheet(
+            data = data,
+            onCopy = {
+                clipboard.setText(AnnotatedString(data.text))
+                sourceSheet = null
+            },
+            onEdit = {
+                sourceSheet = null
+                if (!regenerating) enterEdit()
+            },
+            canEdit = !regenerating,
+            onDismiss = { sourceSheet = null },
+        )
+    }
+
+    // While editing, Back asks before dropping changes; otherwise it closes the raw-notes editor.
+    BackHandler(enabled = editing) { requestLeaveEdit() }
     BackHandler(enabled = editingRaw) { editingRaw = false }
+
+    val exportedMessage = stringResource(R.string.note_exported)
+    val exportFailedMessage = stringResource(R.string.note_export_failed)
 
     Column(
         modifier = Modifier
@@ -218,551 +277,513 @@ fun NoteDetailScreen(
             .background(c.background)
             .statusBarsPadding(),
     ) {
-        // Top bar: back / cancel on the left, actions on the right.
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (editing) {
-                Text(
-                    text = "Cancel",
-                    color = c.dim,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.clickable { editing = false }.padding(4.dp),
-                )
-                Text(
-                    text = "Save",
-                    color = c.amber,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier
-                        .clickable { viewModel.saveEdits(titleDraft, bodyDraft) { editing = false } }
-                        .padding(4.dp),
-                )
-            } else {
-                BackChevron(onBack)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Filled.Share,
-                        contentDescription = "Share note",
-                        tint = c.dim,
-                        modifier = Modifier
-                            .size(20.dp)
-                            .clickable { showFormatPicker = true },
-                    )
-                    Spacer(modifier = Modifier.size(12.dp))
-                    Text(
-                        text = "Resume",
-                        color = c.amber,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(100.dp))
-                            .border(1.dp, c.amber, RoundedCornerShape(100.dp))
-                            .clickable { onResume() }
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                    )
-                    Spacer(modifier = Modifier.size(8.dp))
-                    Text(
-                        text = "Edit",
-                        color = c.dim,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(100.dp))
-                            .border(1.dp, c.border, RoundedCornerShape(100.dp))
-                            .clickable(enabled = !regenerating) { enterEdit() }
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                    )
-                    // Provenance tinting only applies to an un-edited, merged body.
-                    if (current.bodyOverride == null) {
-                        Spacer(modifier = Modifier.size(8.dp))
-                        Text(
-                            text = if (current.showSources) "Sources shown" else "Show sources",
-                            color = c.dim,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(100.dp))
-                                .border(1.dp, c.border, RoundedCornerShape(100.dp))
-                                .clickable { viewModel.toggleShowSources() }
-                                .padding(horizontal = 12.dp, vertical = 6.dp),
-                        )
+        if (editing) {
+            EditBar(
+                onClose = ::requestLeaveEdit,
+                onSave = {
+                    val draft = summaryDraft
+                    if (draft != null) {
+                        viewModel.saveStructuredEdits(titleDraft, draft) { leaveEdit() }
+                    } else {
+                        viewModel.saveEdits(titleDraft, bodyDraft) { leaveEdit() }
                     }
-                }
-            }
+                },
+            )
+        } else {
+            NoteTopBar(
+                navigation = { TmBackButton(onBack) },
+                actions = {
+                    TmIconButton(
+                        imageVector = Icons.Filled.Share,
+                        contentDescription = stringResource(R.string.note_share),
+                        onClick = { showFormatPicker = true },
+                    )
+                    TmOverflowMenu(
+                        contentDescription = stringResource(R.string.note_more),
+                        items = buildList {
+                            add(TmMenuItem(stringResource(R.string.note_menu_continue), onResume, enabled = !regenerating))
+                            add(TmMenuItem(stringResource(R.string.note_menu_edit), ::enterEdit, enabled = !regenerating))
+                            add(TmMenuItem(stringResource(R.string.note_menu_rebuild), { showRebuild = true }, enabled = !regenerating))
+                            if (summary != null && summary.sections.size >= 2 && tab == 0) {
+                                add(
+                                    TmMenuItem(
+                                        stringResource(
+                                            if (reordering) R.string.note_reorder_done else R.string.note_menu_reorder,
+                                        ),
+                                        { reordering = !reordering },
+                                    ),
+                                )
+                            }
+                            add(
+                                TmMenuItem(
+                                    stringResource(R.string.note_menu_photos),
+                                    { showPhotoPicker = true },
+                                    badge = current.exportedPhotoUris.size.takeIf { it > 0 }?.toString(),
+                                ),
+                            )
+                            add(
+                                TmMenuItem(
+                                    stringResource(R.string.note_menu_export),
+                                    {
+                                        viewModel.exportNow { ok ->
+                                            viewModel.postMessage(if (ok) exportedMessage else exportFailedMessage)
+                                        }
+                                    },
+                                ),
+                            )
+                            add(TmMenuItem(stringResource(R.string.note_menu_delete), { showDelete = true }))
+                        },
+                    )
+                },
+            )
         }
 
-        // In-progress transcription chip (CAP-10, extended Part 3.2): a capture is live
-        // somewhere else in the app — surfaced here too so navigating into an unrelated
-        // note's detail screen never strands the user away from the running session.
-        // PERF-04 (2026-09-19): collects its own state (see the composable's doc) so its
-        // 1 Hz tick recomposes only this chip, not the whole note-detail screen.
+        // PERF-04: collects its own state so its 1 Hz tick recomposes only this chip.
         if (!editing) {
             ActiveCaptureChip(activeCapture = viewModel.activeCapture, onOpen = onOpenActiveCapture)
         }
 
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp),
-        ) {
-            if (editing) {
-                BasicTextField(
-                    value = titleDraft,
-                    onValueChange = { titleDraft = it },
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 12.dp),
-                    textStyle = TextStyle(color = c.text, fontSize = 20.sp, fontWeight = FontWeight.SemiBold),
-                    cursorBrush = SolidColor(c.amber),
-                )
-                Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(c.border))
-                BasicTextField(
-                    value = bodyDraft,
-                    onValueChange = { bodyDraft = it },
-                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 24.dp),
-                    textStyle = TextStyle(color = c.text, fontSize = 15.sp, lineHeight = 26.25.sp),
-                    cursorBrush = SolidColor(c.amber),
-                )
-            } else {
-                val meta = buildList {
-                    add(relativeDay(current.createdAtEpochMs))
-                    add(durationLabel(current.durationMs))
-                    current.meetingTitle?.let { add(it) }
-                    if (current.capturedInCall) add("in-call")
-                    if (current.bodyOverride != null) add("edited")
-                }.joinToString(" · ")
-                Text(text = meta, color = c.dim, fontSize = 12.sp)
-                Text(
-                    text = current.title,
-                    color = c.text,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(top = 4.dp, bottom = if (current.attendees.isEmpty()) 14.dp else 6.dp),
-                )
-                if (current.attendees.isNotEmpty()) {
-                    Text(
-                        text = "Attendees: " + current.attendees.joinToString(", "),
-                        color = c.dim,
-                        fontSize = 12.5.sp,
-                        modifier = Modifier.padding(bottom = 14.dp),
+        Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
+            Column(
+                modifier = Modifier
+                    .widthIn(max = ReadingWidth)
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = TmSpacing.l),
+            ) {
+                val draft = summaryDraft
+                when {
+                    draft != null -> StructureEditor(
+                        title = titleDraft,
+                        onTitleChange = { titleDraft = it },
+                        summary = draft,
+                        onSummaryChange = { summaryDraft = it },
+                        modifier = Modifier.padding(bottom = TmSpacing.xxl),
                     )
-                }
 
-                // Photo-export feature: attaches photos taken during this session to the
-                // export folder — a note-level setting, not part of the ad-hoc share sheet.
-                Text(
-                    text = if (current.exportedPhotoUris.isEmpty()) {
-                        "Add photos"
-                    } else {
-                        "${current.exportedPhotoUris.size} photo" +
-                            "${if (current.exportedPhotoUris.size == 1) "" else "s"} attached"
-                    },
-                    color = c.amber,
-                    fontSize = 12.5.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier
-                        .clickable { showPhotoPicker = true }
-                        .padding(bottom = 14.dp),
-                )
+                    flatEditing -> FlatEditor(
+                        title = titleDraft,
+                        onTitleChange = { titleDraft = it },
+                        body = bodyDraft,
+                        onBodyChange = { bodyDraft = it },
+                    )
 
-                // UX-40: Enhanced (today's view) vs My notes (the raw typed fragments).
-                NoteViewToggle(selected = tab, onSelect = { tab = it; editingRaw = false })
-                Spacer(modifier = Modifier.size(12.dp))
-
-                if (tab == 1) {
-                    MyNotesPane(
-                        raw = current.typedFragments,
-                        editing = editingRaw,
-                        draft = rawDraft,
-                        onDraftChange = { rawDraft = it },
-                        busy = regenerating,
-                        justSaved = rawJustSaved,
-                        onEdit = {
-                            rawDraft = current.typedFragments
-                            rawJustSaved = false
-                            editingRaw = true
+                    else -> ReadContent(
+                        note = current,
+                        summary = summary,
+                        editCount = editCount,
+                        tab = tab,
+                        onTab = {
+                            tab = it
+                            editingRaw = false
                         },
-                        onCancel = { editingRaw = false },
-                        onSave = {
+                        regenerating = regenerating,
+                        rebuildTitle = stringResource(
+                            R.string.note_rebuilding_title,
+                            templateOptions.firstOrNull { it.stored == rebuildTemplate }?.label.orEmpty(),
+                        ),
+                        mergeStatus = mergeStatus,
+                        reordering = reordering,
+                        editingRaw = editingRaw,
+                        rawDraft = rawDraft,
+                        onRawDraft = { rawDraft = it },
+                        rawJustSaved = rawJustSaved,
+                        onToggleSources = viewModel::toggleShowSources,
+                        onOpenTranscript = { onOpenTranscript(it) },
+                        onToggleStep = viewModel::setActionDone,
+                        onMoveSection = viewModel::moveSummarySection,
+                        onShowSource = { sourceSheet = it },
+                        onCancelRaw = { editingRaw = false },
+                        onSaveRaw = {
                             viewModel.saveRawNotes(rawDraft) {
                                 editingRaw = false
                                 rawJustSaved = true
                             }
                         },
-                        onReEnhance = { startRegenerate(current.template) },
+                        onRebuild = { showRebuild = true },
                     )
-                } else {
-                RegenerateRow(
-                    regenerating = regenerating,
-                    onRegenerate = { startRegenerate(current.template) },
-                    onPickTemplate = { showTemplatePicker = true },
-                )
-
-                val summary = current.structuredSummary
-                when {
-                    current.bodyOverride != null -> {
-                        // Hand-edited body: plain text, no provenance tinting.
-                        Text(
-                            text = current.bodyOverride!!,
-                            color = c.text,
-                            fontSize = 15.sp,
-                            lineHeight = 26.25.sp,
-                        )
-                    }
-                    summary != null -> StructuredSummaryBody(
-                        summary = summary,
-                        showSources = current.showSources,
-                        onMoveSection = viewModel::moveSummarySection,
-                    )
-                    else -> {
-                        val body = buildAnnotatedString {
-                            current.segments.forEachIndexed { i, segment ->
-                                if (i > 0) append(" ")
-                                if (current.showSources) {
-                                    withStyle(
-                                        SpanStyle(
-                                            background = when (segment.source) {
-                                                Provenance.FRAGMENT -> c.amberTint
-                                                Provenance.TRANSCRIPT -> c.tealTint
-                                            },
-                                            // Fixed dark text on pale tints in BOTH modes (design requirement)
-                                            color = c.spanText,
-                                        ),
-                                    ) { append(segment.text) }
-                                } else {
-                                    append(segment.text)
-                                }
-                            }
-                        }
-                        Text(
-                            text = body,
-                            color = c.text,
-                            fontSize = 15.sp,
-                            lineHeight = 26.25.sp, // 1.75
-                        )
-                    }
-                }
                 }
             }
         }
 
-        SnackbarHost(hostState = snackbarHostState) { data -> Snackbar(snackbarData = data) }
+        TmSnackbarHost(snackbarHostState)
 
-        // Bottom two-item nav row (hidden while editing)
         if (!editing) {
             Column(modifier = Modifier.navigationBarsPadding()) {
-                Box(
+                HorizontalDivider(color = c.border)
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(1.dp)
-                        .background(c.border),
-                )
-                Row(modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        text = "Transcript",
-                        color = c.dim,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                        modifier = Modifier
-                            .weight(1f)
-                            .clickable(onClick = onOpenTranscript)
-                            .padding(vertical = 14.dp),
-                    )
-                    Text(
-                        text = "Chat & Recipes",
-                        color = c.amber,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                        modifier = Modifier
-                            .weight(1f)
-                            .clickable(onClick = onOpenChat)
-                            .padding(vertical = 14.dp),
-                    )
+                        .padding(horizontal = TmSpacing.l, vertical = TmSpacing.m),
+                    horizontalArrangement = Arrangement.spacedBy(TmSpacing.m),
+                ) {
+                    if (tab == 1) {
+                        TmTonalButton(
+                            label = stringResource(R.string.note_edit),
+                            onClick = {
+                                rawDraft = current.typedFragments
+                                rawJustSaved = false
+                                editingRaw = true
+                            },
+                            icon = TmButtonIcon.Vector(Icons.Filled.Edit),
+                            enabled = !regenerating,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TmTonalButton(
+                            label = stringResource(R.string.note_mine_rebuild_button),
+                            onClick = { showRebuild = true },
+                            enabled = !regenerating,
+                            modifier = Modifier.weight(1f),
+                        )
+                    } else {
+                        TmTonalButton(
+                            label = stringResource(R.string.note_transcript),
+                            onClick = { onOpenTranscript(null) },
+                            icon = TmButtonIcon.Drawable(TmIcons.Subject),
+                            modifier = Modifier.weight(1f),
+                        )
+                        TmTonalButton(
+                            label = stringResource(R.string.note_chat),
+                            onClick = onOpenChat,
+                            icon = TmButtonIcon.Drawable(TmIcons.Chat),
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun NoteTopBar(
+    navigation: @Composable () -> Unit,
+    actions: @Composable RowScope.() -> Unit,
+) {
+    // Content first: the note's own title sits in the body, so the bar carries no title text.
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = TmSpacing.xs, end = TmSpacing.xs),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        navigation()
+        Box(modifier = Modifier.weight(1f))
+        Row(verticalAlignment = Alignment.CenterVertically, content = actions)
+    }
+}
+
+@Composable
+private fun EditBar(onClose: () -> Unit, onSave: () -> Unit) {
+    TmTopBar(
+        title = stringResource(R.string.note_edit_title),
+        navigation = { TmCloseButton(onClose, contentDescription = stringResource(R.string.note_edit_close)) },
+        actions = { TmTextButton(stringResource(R.string.note_save), onClick = onSave) },
+    )
+}
+
+/** The reading view: header, the Note / My notes switch, then the body for the chosen tab. */
+@Composable
+private fun ReadContent(
+    note: NoteEntity,
+    summary: StructuredSummary?,
+    editCount: Int,
+    tab: Int,
+    onTab: (Int) -> Unit,
+    regenerating: Boolean,
+    rebuildTitle: String,
+    mergeStatus: MergeStatus?,
+    reordering: Boolean,
+    editingRaw: Boolean,
+    rawDraft: String,
+    onRawDraft: (String) -> Unit,
+    rawJustSaved: Boolean,
+    onToggleSources: () -> Unit,
+    onOpenTranscript: (String) -> Unit,
+    onToggleStep: (Int, Boolean) -> Unit,
+    onMoveSection: (Int, Int) -> Unit,
+    onShowSource: (SourceSheetData) -> Unit,
+    onCancelRaw: () -> Unit,
+    onSaveRaw: () -> Unit,
+    onRebuild: () -> Unit,
+) {
+    val c = TrailMix.colors
+    val inCall = stringResource(R.string.note_meta_in_call)
+    val edited = stringResource(R.string.note_meta_edited)
+    val meta = buildList {
+        add(relativeDay(note.createdAtEpochMs))
+        add(durationLabel(note.durationMs))
+        note.meetingTitle?.let { add(it) }
+        if (note.capturedInCall) add(inCall)
+        if (editCount > 0) add(edited)
+    }.joinToString(" · ")
+
+    Text(text = meta, style = TrailMix.type.caption, color = c.dim)
+    Text(
+        text = note.title,
+        style = TrailMix.type.display,
+        color = c.text,
+        modifier = Modifier.padding(top = TmSpacing.xs),
+    )
+    if (note.attendees.isNotEmpty()) {
+        Text(
+            text = note.attendees.joinToString(", "),
+            style = TrailMix.type.bodySmall,
+            color = c.dim,
+            modifier = Modifier.padding(top = TmSpacing.xs),
+        )
+    }
+
+    Row(
+        modifier = Modifier.padding(top = TmSpacing.m),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(TmSpacing.m),
+    ) {
+        TmSegmented(
+            options = listOf(
+                0 to stringResource(R.string.note_tab_note),
+                1 to stringResource(R.string.note_tab_mine),
+            ),
+            selected = tab,
+            onSelect = onTab,
+        )
+        // Sources works on edited notes too: provenance survives structured edits.
+        if (tab == 0 && note.bodyOverride == null) {
+            TmFilterChip(
+                label = stringResource(R.string.note_sources),
+                selected = note.showSources,
+                onClick = onToggleSources,
+                leadingDrawable = if (note.showSources) null else TmIcons.Visibility,
+            )
+        }
+    }
+
+    if (tab == 0 && note.showSources && note.bodyOverride == null) {
+        SourcesLegend(modifier = Modifier.padding(top = TmSpacing.m))
+    }
+
+    Column(modifier = Modifier.padding(top = TmSpacing.m, bottom = TmSpacing.xxl)) {
+        if (tab == 1) {
+            MyNotesPane(
+                raw = note.typedFragments,
+                editing = editingRaw,
+                draft = rawDraft,
+                onDraftChange = onRawDraft,
+                busy = regenerating,
+                showRebuildBanner = rawJustSaved,
+                onRebuild = onRebuild,
+                onCancel = onCancelRaw,
+                onSave = onSaveRaw,
+            )
+            return@Column
+        }
+        if (regenerating) {
+            TmLongTaskProgress(
+                title = rebuildTitle,
+                detail = stringResource(R.string.note_rebuilding_detail),
+                progress = mergeStatus?.progress(),
+                counter = mergeStatus?.counter(),
+                reassurance = stringResource(R.string.note_rebuilding_safe),
+                modifier = Modifier.padding(bottom = TmSpacing.l),
+            )
+        }
+        // The old note stays readable while a rebuild runs, dimmed so it reads as not final.
+        Column(modifier = Modifier.alpha(if (regenerating) 0.5f else 1f)) {
+            when {
+                note.bodyOverride != null -> Text(
+                    text = note.bodyOverride!!,
+                    style = TrailMix.type.body,
+                    color = c.text,
+                )
+
+                summary != null -> StructuredNoteBody(
+                    summary = summary,
+                    showSources = note.showSources,
+                    enabled = !regenerating,
+                    reordering = reordering,
+                    onOpenTranscript = onOpenTranscript,
+                    onToggleStep = onToggleStep,
+                    onMoveSection = onMoveSection,
+                    onShowSource = onShowSource,
+                )
+
+                else -> FlatBody(note)
+            }
+        }
+    }
+}
+
+/** Notes made before structured summaries: the merged text, tinted by source when Sources is on. */
+@Composable
+private fun FlatBody(note: NoteEntity) {
+    val c = TrailMix.colors
+    val body = buildAnnotatedString {
+        note.segments.forEachIndexed { i, segment ->
+            if (i > 0) append(" ")
+            if (note.showSources) {
+                withStyle(
+                    SpanStyle(
+                        background = when (segment.source) {
+                            Provenance.FRAGMENT -> c.amberTint
+                            Provenance.TRANSCRIPT -> c.tealTint
+                        },
+                        // Fixed dark text on pale tints in BOTH modes (design requirement)
+                        color = c.spanText,
+                    ),
+                ) { append(segment.text) }
+            } else {
+                append(segment.text)
+            }
+        }
+    }
+    Text(text = body, style = TrailMix.type.body, color = c.text)
+}
+
+/** The old whole-body editor, kept for notes with no structure or with a hand-edited body. */
+@Composable
+private fun FlatEditor(
+    title: String,
+    onTitleChange: (String) -> Unit,
+    body: String,
+    onBodyChange: (String) -> Unit,
+) {
+    val c = TrailMix.colors
+    BasicTextField(
+        value = title,
+        onValueChange = onTitleChange,
+        modifier = Modifier.fillMaxWidth().padding(top = TmSpacing.xs, bottom = TmSpacing.m),
+        textStyle = TrailMix.type.title.copy(color = c.text),
+        cursorBrush = SolidColor(c.text),
+    )
+    HorizontalDivider(color = c.border)
+    BasicTextField(
+        value = body,
+        onValueChange = onBodyChange,
+        modifier = Modifier.fillMaxWidth().padding(top = TmSpacing.m, bottom = TmSpacing.xxl),
+        textStyle = TrailMix.type.body.copy(color = c.text),
+        cursorBrush = SolidColor(c.text),
+    )
 }
 
 /**
- * Structured summary body (UX-02): highlights, topic-grouped sections (tap the heading to
- * expand/collapse), and an isolated action-items checklist. Each bullet has a small "i"
- * affordance — tap it to reveal the source transcript/fragment excerpt it was attributed
- * from, the touch-friendly equivalent of a hover tooltip.
- *
- * UX-04: sections can be reordered via an explicit reorder mode (per-section ↑/↓ buttons)
- * rather than long-press drag — the sections are expandable/variable-height inside an
- * already-scrollable column, where drag reorder is jank-prone; the buttons deliver the
- * same user value deterministically. Each move persists immediately via [onMoveSection].
- *
- * AI-05: [showSources] now reaches this renderer. Before, the Sources pill was drawn on
- * structured notes but wired only to the flat-body branch, so tapping it did nothing — and
- * structured bullets carried no provenance signal at all. Each bullet's marker is now tinted
- * by source (amber = typed, teal = spoken, matching the flat body's highlight colors) and
- * transcript bullets lead with the `mm:ss` they were said at.
+ * The raw typed fragments, plain proportional text, editable. Saving persists only the
+ * `typedFragments` column; Rebuild then re-runs the merge with them.
  */
 @Composable
-private fun StructuredSummaryBody(
-    summary: com.trailmix.app.data.model.StructuredSummary,
-    showSources: Boolean,
-    onMoveSection: (Int, Int) -> Unit,
+private fun MyNotesPane(
+    raw: String,
+    editing: Boolean,
+    draft: String,
+    onDraftChange: (String) -> Unit,
+    busy: Boolean,
+    showRebuildBanner: Boolean,
+    onRebuild: () -> Unit,
+    onCancel: () -> Unit,
+    onSave: () -> Unit,
 ) {
     val c = TrailMix.colors
-    var reordering by remember { mutableStateOf(false) }
-    Column {
-        if (showSources) SourceLegend()
-
-        if (summary.highlights.isNotEmpty()) {
-            Text(
-                text = "HIGHLIGHTS",
-                color = c.dim,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = 0.4.sp,
-                modifier = Modifier.padding(bottom = 6.dp),
-            )
-            summary.highlights.forEach { SummaryBulletRow(it, showSources) }
-            Spacer(modifier = Modifier.size(16.dp))
+    if (editing) {
+        BasicTextField(
+            value = draft,
+            onValueChange = onDraftChange,
+            modifier = Modifier.fillMaxWidth().padding(bottom = TmSpacing.l),
+            textStyle = TrailMix.type.body.copy(color = c.text),
+            cursorBrush = SolidColor(c.text),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(TmSpacing.m)) {
+            TmTextButton(stringResource(R.string.note_cancel), onClick = onCancel)
+            TmTextButton(stringResource(R.string.note_save), onClick = onSave)
         }
-
-        if (summary.sections.size >= 2) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 2.dp),
-                horizontalArrangement = Arrangement.End,
-            ) {
-                Text(
-                    text = if (reordering) "Done" else "Reorder sections",
-                    color = if (reordering) c.amber else c.dim,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(100.dp))
-                        .border(1.dp, if (reordering) c.amber else c.border, RoundedCornerShape(100.dp))
-                        .clickable { reordering = !reordering }
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
-                )
-            }
-        }
-
-        summary.sections.forEachIndexed { index, section ->
-            var expanded by remember(section.heading) { mutableStateOf(true) }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(enabled = !reordering) { expanded = !expanded }
-                    .padding(vertical = 6.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = section.heading,
-                    color = c.text,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f),
-                )
-                if (reordering) {
-                    val canUp = index > 0
-                    val canDown = index < summary.sections.lastIndex
-                    Text(
-                        text = "↑",
-                        color = if (canUp) c.amber else c.border,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier
-                            .clickable(enabled = canUp) { onMoveSection(index, index - 1) }
-                            .padding(horizontal = 10.dp, vertical = 2.dp),
-                    )
-                    Text(
-                        text = "↓",
-                        color = if (canDown) c.amber else c.border,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier
-                            .clickable(enabled = canDown) { onMoveSection(index, index + 1) }
-                            .padding(horizontal = 10.dp, vertical = 2.dp),
-                    )
-                } else {
-                    Text(
-                        text = if (expanded) "▾" else "▸",
-                        color = c.dim,
-                        fontSize = 14.sp,
-                    )
-                }
-            }
-            if (expanded && !reordering) {
-                Column(modifier = Modifier.padding(bottom = 10.dp)) {
-                    section.bullets.forEach { SummaryBulletRow(it, showSources) }
-                }
-            }
-        }
-
-        if (summary.actionItems.isNotEmpty()) {
-            Spacer(modifier = Modifier.size(8.dp))
-            Text(
-                text = "NEXT STEPS",
-                color = c.dim,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = 0.4.sp,
-                modifier = Modifier.padding(bottom = 6.dp),
-            )
-            summary.actionItems.forEach { item ->
-                var showExcerpt by remember(item) { mutableStateOf(false) }
-                Column(modifier = Modifier.padding(bottom = 8.dp)) {
-                    Row(verticalAlignment = Alignment.Top) {
-                        Text(
-                            text = "☐",
-                            color = if (showSources) sourceColor(item.source) else c.amber,
-                            fontSize = 14.sp,
-                            modifier = Modifier.padding(end = 8.dp),
-                        )
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                // AI-18: "Owner: action (by deadline)" — same line as the export.
-                                text = withTimestamp(item.displayText(), item.timestampLabel, showSources),
-                                color = c.text,
-                                fontSize = 14.5.sp,
-                                lineHeight = 20.sp,
-                            )
-                        }
-                        if (item.sourceExcerpt != null) {
-                            Text(
-                                text = "ⓘ",
-                                color = c.dim,
-                                fontSize = 13.sp,
-                                modifier = Modifier
-                                    .clickable { showExcerpt = !showExcerpt }
-                                    .padding(start = 8.dp),
-                            )
-                        }
-                    }
-                    if (showExcerpt && item.sourceExcerpt != null) {
-                        Text(
-                            text = "“${item.sourceExcerpt}”",
-                            color = c.dim,
-                            fontSize = 12.5.sp,
-                            lineHeight = 18.sp,
-                            modifier = Modifier.padding(start = 22.dp, top = 4.dp),
-                        )
-                    }
-                }
-            }
-        }
+        return
     }
-}
-
-/** Amber = the user's own typed words, teal = spoken — the same pairing the flat body uses. */
-@Composable
-private fun sourceColor(source: Provenance): Color = when (source) {
-    Provenance.FRAGMENT -> TrailMix.colors.amber
-    Provenance.TRANSCRIPT -> TrailMix.colors.teal
-}
-
-/** Prefix a bullet with its dimmed `mm:ss` capture offset, when there is one to show. */
-@Composable
-private fun withTimestamp(text: String, label: String?, showSources: Boolean) =
-    if (!showSources || label == null) {
-        buildAnnotatedString { append(text) }
-    } else {
-        buildAnnotatedString {
-            withStyle(SpanStyle(color = TrailMix.colors.dim, fontWeight = FontWeight.Medium)) {
-                append("$label  ")
-            }
-            append(text)
-        }
-    }
-
-/** Key for the bullet-marker colors, so the tinting is decipherable without prior knowledge. */
-@Composable
-private fun SourceLegend() {
-    val c = TrailMix.colors
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(bottom = 12.dp),
-    ) {
-        listOf(c.amber to "Your notes", c.teal to "From the recording").forEachIndexed { i, (color, label) ->
-            if (i > 0) Spacer(modifier = Modifier.size(12.dp))
-            Box(
-                modifier = Modifier
-                    .size(7.dp)
-                    .clip(RoundedCornerShape(100.dp))
-                    .background(color),
-            )
+    if (showRebuildBanner && !busy) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = TmSpacing.l)
+                .background(c.card, TrailMix.shapes.medium)
+                .padding(TmSpacing.m),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(
-                text = label,
-                color = c.dim,
-                fontSize = 11.sp,
-                modifier = Modifier.padding(start = 5.dp),
-            )
-        }
-    }
-}
-
-@Composable
-private fun SummaryBulletRow(bullet: SummaryBullet, showSources: Boolean) {
-    val c = TrailMix.colors
-    var showExcerpt by remember(bullet) { mutableStateOf(false) }
-    Column(modifier = Modifier.padding(bottom = 8.dp)) {
-        Row(verticalAlignment = Alignment.Top) {
-            Text(
-                text = "•",
-                color = if (showSources) sourceColor(bullet.source) else c.dim,
-                fontSize = 14.sp,
-                modifier = Modifier.padding(end = 8.dp),
-            )
-            Text(
-                text = withTimestamp(bullet.text, bullet.timestampLabel, showSources),
+                stringResource(R.string.note_mine_banner),
+                style = TrailMix.type.bodySmall,
                 color = c.text,
-                fontSize = 14.5.sp,
-                lineHeight = 20.sp,
                 modifier = Modifier.weight(1f),
             )
-            if (bullet.sourceExcerpt != null) {
-                Text(
-                    text = "ⓘ",
-                    color = c.dim,
-                    fontSize = 13.sp,
-                    modifier = Modifier
-                        .clickable { showExcerpt = !showExcerpt }
-                        .padding(start = 8.dp),
-                )
-            }
+            TmTextButton(stringResource(R.string.note_mine_rebuild), onClick = onRebuild)
         }
-        // AI-18: optional one-level sub-bullets, indented under the main point.
-        bullet.details.forEach { detail ->
-            Row(modifier = Modifier.padding(start = 22.dp, top = 3.dp), verticalAlignment = Alignment.Top) {
-                Text(
-                    text = "–",
-                    color = c.dim,
-                    fontSize = 13.sp,
-                    modifier = Modifier.padding(end = 6.dp),
-                )
-                Text(
-                    text = detail,
-                    color = c.text,
-                    fontSize = 13.5.sp,
-                    lineHeight = 19.sp,
-                    modifier = Modifier.weight(1f),
-                )
-            }
+    }
+    if (raw.isBlank()) {
+        Text(
+            text = stringResource(R.string.note_mine_empty),
+            style = TrailMix.type.bodySmall,
+            color = c.dim,
+        )
+        return
+    }
+    val lines = raw.lines()
+    Text(
+        text = stringResource(R.string.note_mine_heading, lines.count { it.isNotBlank() }),
+        style = TrailMix.type.overline,
+        color = c.dim,
+        modifier = Modifier.padding(bottom = TmSpacing.s),
+    )
+    lines.forEach { line ->
+        when {
+            line.isBlank() -> Unit
+            line.startsWith("# ") -> Text(
+                text = line.removePrefix("# "),
+                style = TrailMix.type.heading,
+                color = c.text,
+                modifier = Modifier.padding(top = TmSpacing.m),
+            )
+
+            else -> Text(text = line, style = TrailMix.type.body, color = c.text)
         }
-        if (showExcerpt && bullet.sourceExcerpt != null) {
+    }
+}
+
+/** Long-press sheet: where a point came from, plus Copy and Edit. */
+@Composable
+private fun SourceSheet(
+    data: SourceSheetData,
+    canEdit: Boolean,
+    onCopy: () -> Unit,
+    onEdit: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val c = TrailMix.colors
+    TmSheet(onDismiss = onDismiss, title = stringResource(R.string.note_sheet_title)) {
+        Column(
+            modifier = Modifier.padding(horizontal = TmSpacing.l),
+            verticalArrangement = Arrangement.spacedBy(TmSpacing.s),
+        ) {
+            Text(data.text, style = TrailMix.type.body, color = c.text)
+            val caption = when {
+                data.source == Provenance.FRAGMENT -> stringResource(R.string.note_sheet_typed)
+                data.timestampLabel != null -> stringResource(
+                    if (data.edited) R.string.note_sheet_recording_edited else R.string.note_sheet_recording,
+                    data.timestampLabel,
+                )
+
+                else -> null
+            }
+            if (caption != null) {
+                Text(caption, style = TrailMix.type.caption, color = sourceColor(data.source))
+            }
             Text(
-                text = "“${bullet.sourceExcerpt}”",
+                text = data.excerpt?.let { "“$it”" } ?: stringResource(R.string.note_sheet_no_quote),
+                style = TrailMix.type.bodySmall,
                 color = c.dim,
-                fontSize = 12.5.sp,
-                lineHeight = 18.sp,
-                modifier = Modifier.padding(start = 22.dp, top = 4.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(c.card, TrailMix.shapes.medium)
+                    .padding(TmSpacing.m),
             )
         }
+        TmSheetAction(stringResource(R.string.note_copy), onClick = onCopy)
+        TmSheetAction(stringResource(R.string.note_edit), onClick = onEdit, enabled = canEdit)
     }
 }
 
@@ -780,167 +801,4 @@ private fun relativeDay(epochMs: Long): String {
 private fun durationLabel(durationMs: Long): String {
     val min = (durationMs / 60_000).coerceAtLeast(0)
     return if (min < 1) "<1 min" else "$min min"
-}
-
-/** Template (stored value) awaiting the "replace your edits?" confirm; null = keep the note's own. */
-private data class PendingRegen(val template: String?)
-
-/** UX-40: two-segment Enhanced / My notes switch. */
-@Composable
-private fun NoteViewToggle(selected: Int, onSelect: (Int) -> Unit) {
-    val c = TrailMix.colors
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(100.dp))
-            .border(1.dp, c.border, RoundedCornerShape(100.dp)),
-    ) {
-        listOf("Enhanced", "My notes").forEachIndexed { i, label ->
-            val on = i == selected
-            Text(
-                text = label,
-                color = if (on) Color.White else c.dim,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(100.dp))
-                    .background(if (on) c.amber else Color.Transparent)
-                    .clickable { onSelect(i) }
-                    .padding(horizontal = 16.dp, vertical = 7.dp),
-            )
-        }
-    }
-}
-
-/** UX-39: Regenerate (same template) and a template picker; a spinner while one is running. */
-@Composable
-private fun RegenerateRow(regenerating: Boolean, onRegenerate: () -> Unit, onPickTemplate: () -> Unit) {
-    val c = TrailMix.colors
-    Row(
-        modifier = Modifier.padding(bottom = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (regenerating) {
-            CircularProgressIndicator(
-                color = c.amber,
-                strokeWidth = 2.dp,
-                modifier = Modifier.size(16.dp),
-            )
-            Text(
-                text = "Regenerating on-device…",
-                color = c.dim,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(start = 8.dp),
-            )
-        } else {
-            listOf("Regenerate" to onRegenerate, "Change template" to onPickTemplate)
-                .forEachIndexed { i, (label, action) ->
-                    if (i > 0) Spacer(modifier = Modifier.size(8.dp))
-                    Text(
-                        text = label,
-                        color = c.amber,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(100.dp))
-                            .border(1.dp, c.amber, RoundedCornerShape(100.dp))
-                            .clickable(onClick = action)
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                    )
-                }
-        }
-    }
-}
-
-/**
- * UX-40: the raw typed fragments, plain proportional text (not monospace), editable. Saving
- * persists only the `typedFragments` column; Re-enhance then re-runs the merge with them.
- */
-@Composable
-private fun MyNotesPane(
-    raw: String,
-    editing: Boolean,
-    draft: String,
-    onDraftChange: (String) -> Unit,
-    busy: Boolean,
-    justSaved: Boolean,
-    onEdit: () -> Unit,
-    onCancel: () -> Unit,
-    onSave: () -> Unit,
-    onReEnhance: () -> Unit,
-) {
-    val c = TrailMix.colors
-    if (editing) {
-        BasicTextField(
-            value = draft,
-            onValueChange = onDraftChange,
-            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-            textStyle = TextStyle(color = c.text, fontSize = 15.sp, lineHeight = 26.25.sp),
-            cursorBrush = SolidColor(c.amber),
-        )
-        Row {
-            Text(
-                text = "Cancel",
-                color = c.dim,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.clickable(onClick = onCancel).padding(end = 20.dp, top = 4.dp, bottom = 4.dp),
-            )
-            Text(
-                text = "Save",
-                color = c.amber,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.clickable(onClick = onSave).padding(vertical = 4.dp),
-            )
-        }
-        return
-    }
-    if (raw.isBlank()) {
-        Text(
-            text = "No raw notes on this note. Tap Edit to add some, then Re-enhance.",
-            color = c.dim,
-            fontSize = 13.sp,
-            modifier = Modifier.padding(bottom = 16.dp),
-        )
-    } else {
-        Text(text = raw, color = c.text, fontSize = 15.sp, lineHeight = 26.25.sp)
-        Spacer(modifier = Modifier.size(16.dp))
-    }
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = "Edit",
-            color = c.dim,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier
-                .clip(RoundedCornerShape(100.dp))
-                .border(1.dp, c.border, RoundedCornerShape(100.dp))
-                .clickable(enabled = !busy, onClick = onEdit)
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-        )
-        Spacer(modifier = Modifier.size(8.dp))
-        if (busy) {
-            CircularProgressIndicator(color = c.amber, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
-        } else {
-            Text(
-                text = "Re-enhance",
-                color = c.amber,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(100.dp))
-                    .border(1.dp, c.amber, RoundedCornerShape(100.dp))
-                    .clickable(onClick = onReEnhance)
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-            )
-        }
-    }
-    if (justSaved && !busy) {
-        Text(
-            text = "Saved. Re-enhance to rebuild the note from your updated notes.",
-            color = c.dim,
-            fontSize = 12.sp,
-            modifier = Modifier.padding(top = 8.dp),
-        )
-    }
 }

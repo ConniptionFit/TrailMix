@@ -33,6 +33,7 @@ object TmIcons {
     @DrawableRes val DragIndicator = R.drawable.ic_tm_drag_indicator
     @DrawableRes val Devices = R.drawable.ic_tm_devices
     @DrawableRes val ArrowUp = R.drawable.ic_tm_keyboard_arrow_up
+    @DrawableRes val ArrowDown = R.drawable.ic_tm_keyboard_arrow_down
 }
 
 @Composable

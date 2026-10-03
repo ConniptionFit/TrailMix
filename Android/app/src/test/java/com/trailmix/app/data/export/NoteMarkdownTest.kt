@@ -138,6 +138,23 @@ class NoteMarkdownTest {
     }
 
     @Test
+    fun `a checked next step exports as a checked box`() {
+        val md = NoteMarkdown.buildNote(
+            source(
+                summary = summary.copy(
+                    actionItems = listOf(
+                        ActionItem("Send the deck.", done = true),
+                        ActionItem("Book the room."),
+                    ),
+                ),
+            ),
+        )
+        // The provenance tag may sit between the box and the text, so check each on its own line.
+        assertTrue(md.lines().any { it.startsWith("- [x] ") && it.endsWith("Send the deck.") })
+        assertTrue(md.lines().any { it.startsWith("- [ ] ") && it.endsWith("Book the room.") })
+    }
+
+    @Test
     fun `next steps render as Owner colon action by deadline`() {
         val md = NoteMarkdown.buildNote(
             source(

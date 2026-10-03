@@ -9,6 +9,7 @@ import com.trailmix.app.data.export.NoteMarkdownImporter
 import com.trailmix.app.data.model.NoteSegment
 import com.trailmix.app.data.model.SegmentsJson
 import com.trailmix.app.data.model.StringListJson
+import com.trailmix.app.data.model.StructuredEdits
 import com.trailmix.app.data.model.StructuredSummary
 import com.trailmix.app.data.model.StructuredSummaryJson
 import com.trailmix.app.data.model.TranscriptJson
@@ -264,6 +265,41 @@ class NotesRepository @Inject constructor(
         val moved = summary.moveSection(from, to)
         if (moved == summary) return
         val updated = existing.copy(summaryJson = StructuredSummaryJson.encode(moved))
+        noteDao.update(updated)
+        exportIfConfigured(updated)
+    }
+
+    /**
+     * UX redesign (N1/N5): checking a Next Step is a one-column write (REL-14: never write the
+     * whole row back from a snapshot), then a re-export so the `- [x]` reaches the file.
+     */
+    suspend fun setActionDone(id: Long, index: Int, done: Boolean) {
+        val existing = noteDao.getById(id) ?: return
+        val summary = existing.structuredSummary ?: return
+        if (index !in summary.actionItems.indices || summary.actionItems[index].done == done) return
+        val items = summary.actionItems.toMutableList()
+        items[index] = items[index].copy(done = done)
+        saveSummary(existing, summary.copy(actionItems = items))
+    }
+
+    /**
+     * N5: save a structurally edited note (title and structured summary). The flat
+     * `bodyOverride` is cleared so the structured view stays the single source of truth.
+     */
+    suspend fun saveStructuredEdits(id: Long, title: String, summary: StructuredSummary) {
+        val existing = noteDao.getById(id) ?: return
+        val cleaned = StructuredEdits.cleaned(summary)
+        val updated = existing.copy(
+            title = title.trim().ifBlank { existing.title },
+            summaryJson = StructuredSummaryJson.encode(cleaned),
+            bodyOverride = null,
+        )
+        noteDao.update(updated)
+        exportIfConfigured(updated)
+    }
+
+    private suspend fun saveSummary(existing: NoteEntity, summary: StructuredSummary) {
+        val updated = existing.copy(summaryJson = StructuredSummaryJson.encode(summary))
         noteDao.update(updated)
         exportIfConfigured(updated)
     }
@@ -583,6 +619,18 @@ class NotesRepository @Inject constructor(
         } finally {
             repairingExports.set(false)
         }
+    }
+
+    /**
+     * N-menu "Export now": write this one note out and say whether it landed. False means no
+     * export location is set or the write failed; either way nothing else is touched.
+     */
+    suspend fun exportNow(id: Long): Boolean {
+        val note = noteDao.getById(id) ?: return false
+        val written = runCatching { exportSink.exportNote(note, latestRecipeOutputs(id)) }.getOrNull()
+            ?: return false
+        noteDao.setExportUris(id, written.note, written.transcript ?: note.transcriptFileUri)
+        return true
     }
 
     private suspend fun exportIfConfigured(note: NoteEntity) {
