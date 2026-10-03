@@ -32,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -57,7 +58,6 @@ import com.trailmix.app.ui.theme.TmSpacing
 import com.trailmix.app.ui.theme.TrailMix
 import java.text.SimpleDateFormat
 import java.util.Date
-import java.util.Locale
 
 /** H1: what a brand-new install sees. Explains the product, the privacy promise and the two colors. */
 @Composable
@@ -467,8 +467,9 @@ internal fun RecoverySheet(
 @Composable
 private fun recoverySummary(session: CaptureJournal.RecoveredSession): String {
     val parts = mutableListOf<String>()
+    val locale = LocalConfiguration.current.locales[0]
     if (session.startedAtEpochMs > 0) {
-        parts += SimpleDateFormat("MMM d", Locale.getDefault()).format(Date(session.startedAtEpochMs)) +
+        parts += SimpleDateFormat("MMM d", locale).format(Date(session.startedAtEpochMs)) +
             ", " + timeLabel(session.startedAtEpochMs)
     }
     if (session.durationMs > 0) {
