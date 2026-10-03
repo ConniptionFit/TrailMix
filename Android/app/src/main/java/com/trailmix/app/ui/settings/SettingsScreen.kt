@@ -71,6 +71,7 @@ import com.trailmix.app.data.model.SectionSpec
 import com.trailmix.app.data.model.SummaryTemplate
 import com.trailmix.app.data.model.TemplateOptions
 import com.trailmix.app.data.model.UserProfile
+import com.trailmix.app.data.settings.ThemeMode
 import com.trailmix.app.data.speech.AsrLocales
 import com.trailmix.app.ui.components.BackChevron
 import com.trailmix.app.ui.components.SectionLabel
@@ -84,7 +85,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
-    val darkOverride by viewModel.darkModeOverride.collectAsStateWithLifecycle()
+    val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
     val exportLocationName by viewModel.exportLocationName.collectAsStateWithLifecycle()
     val exportLocationUri by viewModel.exportLocationUri.collectAsStateWithLifecycle()
     val unexportedCount by viewModel.unexportedCount.collectAsStateWithLifecycle()
@@ -102,7 +103,7 @@ fun SettingsScreen(
     val c = TrailMix.colors
     val context = LocalContext.current
     val systemDark = isSystemInDarkTheme()
-    val darkOn = darkOverride ?: systemDark
+    val darkOn = themeMode.darkOverride ?: systemDark
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
@@ -295,13 +296,13 @@ fun SettingsScreen(
                     fontWeight = FontWeight.Medium,
                 )
                 Text(
-                    text = if (darkOverride == null) "Matches system setting" else "Manual override",
+                    text = if (themeMode == ThemeMode.SYSTEM) "Matches system setting" else "Manual override",
                     color = c.dim,
                     fontSize = 12.5.sp,
                     modifier = Modifier.padding(top = 2.dp),
                 )
             }
-            TrackSwitch(on = darkOn, onToggle = { viewModel.setDarkMode(!darkOn) })
+            TrackSwitch(on = darkOn, onToggle = { viewModel.setThemeMode(if (darkOn) ThemeMode.LIGHT else ThemeMode.DARK) })
         }
         Hairline()
 
