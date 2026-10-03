@@ -35,6 +35,7 @@ object TmIcons {
     @DrawableRes val ArrowUp = R.drawable.ic_tm_keyboard_arrow_up
     @DrawableRes val ArrowDown = R.drawable.ic_tm_keyboard_arrow_down
     @DrawableRes val Calendar = R.drawable.ic_tm_calendar
+    @DrawableRes val Delete = R.drawable.ic_tm_delete
 }
 
 @Composable

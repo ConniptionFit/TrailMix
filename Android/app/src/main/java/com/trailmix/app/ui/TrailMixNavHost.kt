@@ -76,6 +76,7 @@ fun TrailMixNavHost(navController: NavHostController = rememberNavController()) 
                         popUpTo(Routes.HOME)
                     }
                 },
+                onOpenNote = { id -> navController.navigate(Routes.note(id)) },
             )
         }
         composable(
