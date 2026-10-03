@@ -99,6 +99,19 @@ object NoteSearch {
         }
     }
 
+    /**
+     * H4: the first line of the user's own typed notes containing any of [tokens], trimmed. Null
+     * on an empty token list, empty notes or no match. Unlike the transcript this is a plain
+     * string, so it costs no JSON decode.
+     */
+    fun firstMatchingTypedLine(tokens: List<String>, typedFragments: String): String? {
+        if (tokens.isEmpty() || typedFragments.isBlank()) return null
+        return typedFragments.lineSequence().map { it.trim() }.firstOrNull { line ->
+            val lower = line.lowercase(Locale.getDefault())
+            line.isNotEmpty() && tokens.any { it in lower }
+        }
+    }
+
     private val DATE_PATTERNS = listOf("MMM d", "MMMM d", "MMM d yyyy", "M/d", "M/d/yyyy", "yyyy-MM-dd", "h:mm a")
 
     /**

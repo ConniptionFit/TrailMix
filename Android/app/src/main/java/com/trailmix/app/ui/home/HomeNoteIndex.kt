@@ -24,6 +24,15 @@ data class HomeNote(
      * useful answer than "this note matched somewhere".
      */
     val matchedMoment: TranscriptLine? = null,
+    /**
+     * H4: a typed line that matched the search, shown as an amber "You" strip. Only set when no
+     * transcript moment matched, so a result never carries two strips.
+     */
+    val matchedTyped: String? = null,
+    /** H2: "10:02 · 45 min · Weekly Team Meeting", the one meta line under the title. */
+    val meta: String = "",
+    /** H3: the same line with the day in front, for search results that span many days. */
+    val metaWithDay: String = "",
 ) {
     val id: Long get() = note.id
 }
@@ -76,6 +85,8 @@ class HomeNoteIndex {
                 preview = source.preview,
                 createdLabel = SimpleDateFormat("MMM d, yyyy · h:mm a", Locale.getDefault())
                     .format(Date(source.createdAtEpochMs)),
+                meta = metaLine(source, withDay = false),
+                metaWithDay = metaLine(source, withDay = true),
             )
         }
     }
@@ -98,6 +109,13 @@ class HomeNoteIndex {
 
     /** How many notes the cache is currently holding entries for. */
     @VisibleForTesting internal val cachedNotes: Int get() = entries.size
+
+    private fun metaLine(note: NoteEntity, withDay: Boolean): String = buildList {
+        if (withDay) add(dayLabel(note.createdAtEpochMs))
+        add(timeLabel(note.createdAtEpochMs))
+        add(durationShort(note.durationMs))
+        templateName(note.template)?.let { add(it) }
+    }.joinToString(" · ")
 
     private fun entryFor(note: NoteEntity, formatting: String): Entry {
         val cached = entries[note.id]
@@ -132,7 +150,12 @@ class HomeNoteIndex {
             )
             if (!matched) continue
             val moment = unmatchedBySummary?.let { NoteSearch.firstMatchingLine(it, entry.transcriptLines) }
-            result += if (moment != null) entry.homeNote.copy(matchedMoment = moment) else entry.homeNote
+            val typed = if (moment == null) NoteSearch.firstMatchingTypedLine(tokens, note.typedFragments) else null
+            result += when {
+                moment != null -> entry.homeNote.copy(matchedMoment = moment)
+                typed != null -> entry.homeNote.copy(matchedTyped = typed)
+                else -> entry.homeNote
+            }
         }
 
         // Drop entries for notes that are gone (deleted, or purged) so the cache tracks the

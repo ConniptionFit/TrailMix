@@ -185,4 +185,18 @@ class NoteSearchTest {
         assertNull(NoteSearch.firstMatchingLine(emptyList(), lines))
         assertNull(NoteSearch.firstMatchingLine(listOf("kubernetes"), lines))
     }
+
+    @Test
+    fun `firstMatchingTypedLine returns the first typed line holding a token`() {
+        val typed = "# Pricing\n  deck to board fri?  \nPricing cap too short"
+        assertEquals("# Pricing", NoteSearch.firstMatchingTypedLine(listOf("pricing"), typed))
+        assertEquals("deck to board fri?", NoteSearch.firstMatchingTypedLine(listOf("deck"), typed))
+    }
+
+    @Test
+    fun `firstMatchingTypedLine is null for no tokens, no notes or no match`() {
+        assertNull(NoteSearch.firstMatchingTypedLine(emptyList(), "pricing"))
+        assertNull(NoteSearch.firstMatchingTypedLine(listOf("pricing"), "  "))
+        assertNull(NoteSearch.firstMatchingTypedLine(listOf("kubernetes"), "pricing"))
+    }
 }
