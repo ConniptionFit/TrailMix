@@ -52,7 +52,7 @@ import com.trailmix.app.data.model.Provenance
 import com.trailmix.app.data.model.StructuredEdits
 import com.trailmix.app.data.model.StructuredSummary
 import com.trailmix.app.data.speech.MergeStatus
-import com.trailmix.app.ui.components.ActiveCaptureChip
+import com.trailmix.app.ui.components.ActiveCaptureCard
 import com.trailmix.app.ui.components.TmBackButton
 import com.trailmix.app.ui.components.TmButtonIcon
 import com.trailmix.app.ui.components.TmCloseButton
@@ -94,7 +94,7 @@ fun NoteDetailScreen(
     viewModel: NoteDetailViewModel = hiltViewModel(),
 ) {
     val note by viewModel.note.collectAsStateWithLifecycle()
-    // PERF-04: activeCapture is no longer collected here — see ActiveCaptureChip's doc for why.
+    // PERF-04: activeCapture is not collected here; ActiveCaptureCard collects its own flows.
     val defaultExportFormat by viewModel.exportFormat.collectAsStateWithLifecycle()
     val photoPermissionGranted by viewModel.photoPermissionGranted.collectAsStateWithLifecycle()
     val matchedPhotos by viewModel.matchedPhotos.collectAsStateWithLifecycle()
@@ -338,9 +338,16 @@ fun NoteDetailScreen(
             )
         }
 
-        // PERF-04: collects its own state so its 1 Hz tick recomposes only this chip.
+        // PERF-04: collects its own state so its 1 Hz tick recomposes only this card.
         if (!editing) {
-            ActiveCaptureChip(activeCapture = viewModel.activeCapture, onOpen = onOpenActiveCapture)
+            ActiveCaptureCard(
+                activeCapture = viewModel.activeCapture,
+                level = viewModel.level,
+                mergeStatus = viewModel.mergeStatus,
+                onOpen = onOpenActiveCapture,
+                showBuilding = !regenerating,
+                modifier = Modifier.padding(horizontal = TmSpacing.l, vertical = TmSpacing.xs),
+            )
         }
 
         Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {

@@ -45,54 +45,38 @@ class HomeDayGroupingTest {
         createdLabel = "",
     )
 
+    private val now = epoch(14, 20)
+
     @Test
-    fun `a day with three sessions gets one header naming the count`() {
-        // Newest-first, matching Home's real order.
+    fun `every day gets a header with its note count`() {
+        val notes = listOf(
+            homeNote(4, epoch(16, 10)),
+            homeNote(3, epoch(14, 16)),
+            homeNote(2, epoch(14, 9)),
+            homeNote(1, epoch(10, 9)),
+        )
+
+        val items = groupByDay(notes, nowMs = epoch(20, 12))
+
+        assertEquals(7, items.size) // 3 headers + 4 rows
+        assertEquals(listOf(1, 2, 1), items.filterIsInstance<HomeListItem.DayHeader>().map { it.noteCount })
+        // Newest-first order must survive grouping.
+        assertEquals(listOf(4L, 3L, 2L, 1L), items.filterIsInstance<HomeListItem.NoteRow>().map { it.note.id })
+    }
+
+    @Test
+    fun `headers read Today, Yesterday, then the weekday and date`() {
         val notes = listOf(
             homeNote(3, epoch(14, 16)),
-            homeNote(2, epoch(14, 11)),
-            homeNote(1, epoch(14, 9)),
+            homeNote(2, epoch(13, 9)),
+            homeNote(1, epoch(10, 9)),
         )
 
-        val items = groupByConferenceDay(notes)
+        val labels = groupByDay(notes, nowMs = now).filterIsInstance<HomeListItem.DayHeader>().map { it.label }
 
-        assertEquals(4, items.size) // 1 header + 3 rows
-        val header = items[0] as HomeListItem.DayHeader
-        assertEquals(3, header.sessionCount)
-        assertTrue("expected an Aug 14 label, got '${header.label}'", header.label.contains("Aug 14"))
-        // Newest-first order must survive grouping — the header doesn't reorder anything.
-        assertEquals(listOf(3L, 2L, 1L), items.drop(1).map { (it as HomeListItem.NoteRow).note.id })
-    }
-
-    @Test
-    fun `a day with exactly one note gets no header at all`() {
-        val notes = listOf(homeNote(1, epoch(14, 9)))
-
-        val items = groupByConferenceDay(notes)
-
-        assertEquals(1, items.size)
-        assertTrue(items[0] is HomeListItem.NoteRow)
-    }
-
-    @Test
-    fun `separate single-note days stay flat, only the multi-session day gets a header`() {
-        val notes = listOf(
-            homeNote(4, epoch(16, 10)), // alone on the 16th
-            homeNote(3, epoch(14, 16)), // 2 sessions on the 14th
-            homeNote(2, epoch(14, 9)),
-            homeNote(1, epoch(10, 9)), // alone on the 10th
-        )
-
-        val items = groupByConferenceDay(notes)
-
-        // 1 row for the 16th + (1 header + 2 rows) for the 14th + 1 row for the 10th.
-        assertEquals(5, items.size)
-        assertTrue(items[0] is HomeListItem.NoteRow)
-        assertTrue(items[1] is HomeListItem.DayHeader)
-        assertEquals(2, (items[1] as HomeListItem.DayHeader).sessionCount)
-        assertTrue(items[2] is HomeListItem.NoteRow)
-        assertTrue(items[3] is HomeListItem.NoteRow)
-        assertTrue(items[4] is HomeListItem.NoteRow)
+        assertEquals("Today", labels[0])
+        assertEquals("Yesterday", labels[1])
+        assertTrue("expected a weekday and date, got '${labels[2]}'", labels[2].contains("Aug 10"))
     }
 
     @Test
@@ -102,14 +86,30 @@ class HomeDayGroupingTest {
             homeNote(1, epoch(14, 23)), // 11:00 PM on the 14th
         )
 
-        val items = groupByConferenceDay(notes)
+        val headers = groupByDay(notes, nowMs = now).filterIsInstance<HomeListItem.DayHeader>()
 
-        assertEquals("two different calendar days, neither has a second session", 2, items.size)
-        assertTrue(items.all { it is HomeListItem.NoteRow })
+        assertEquals(2, headers.size)
+        assertTrue(headers.all { it.noteCount == 1 })
     }
 
     @Test
     fun `an empty list produces nothing`() {
-        assertEquals(emptyList<HomeListItem>(), groupByConferenceDay(emptyList()))
+        assertEquals(emptyList<HomeListItem>(), groupByDay(emptyList()))
+    }
+
+    @Test
+    fun `durations read in minutes, then hours from ninety minutes`() {
+        assertEquals("<1 min", durationShort(30_000))
+        assertEquals("45 min", durationShort(45 * 60_000L))
+        assertEquals("1 h 30 min", durationShort(90 * 60_000L))
+        assertEquals("2 h", durationShort(120 * 60_000L))
+    }
+
+    @Test
+    fun `template names come from built-ins and custom templates, never AUTO`() {
+        assertEquals(null, templateName(null))
+        assertEquals(null, templateName("AUTO"))
+        assertEquals("Pitch review", templateName("custom:Pitch review"))
+        assertEquals(com.trailmix.app.data.model.SummaryTemplate.NONE.label, templateName("NONE"))
     }
 }

@@ -5,39 +5,29 @@ import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Snackbar
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -49,30 +39,37 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.trailmix.app.R
 import com.trailmix.app.data.calendar.UpcomingMeeting
-import com.trailmix.app.data.db.NoteEntity
-import com.trailmix.app.data.db.toMarkdown
-import com.trailmix.app.ui.components.ActiveCaptureChip
-import com.trailmix.app.ui.components.SectionLabel
+import com.trailmix.app.ui.components.ActiveCaptureCard
+import com.trailmix.app.ui.components.TmButtonIcon
+import com.trailmix.app.ui.components.TmCloseButton
+import com.trailmix.app.ui.components.TmConfirmDialog
+import com.trailmix.app.ui.components.TmFilterChip
+import com.trailmix.app.ui.components.TmIcon
+import com.trailmix.app.ui.components.TmIcons
+import com.trailmix.app.ui.components.TmMenuItem
+import com.trailmix.app.ui.components.TmOutlinedButton
+import com.trailmix.app.ui.components.TmOverflowMenu
+import com.trailmix.app.ui.components.TmSnackbarHost
+import com.trailmix.app.ui.components.TmTextButton
+import com.trailmix.app.ui.components.TmTopBar
+import com.trailmix.app.ui.components.showUndo
 import com.trailmix.app.ui.export.ExportFormatPickerDialog
+import com.trailmix.app.ui.theme.TmSpacing
 import com.trailmix.app.ui.theme.TrailMix
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+
+/** Cap on the list column so rows don't stretch across a tablet or an unfolded phone. */
+private val ListMaxWidth = 640.dp
 
 @Composable
 fun HomeScreen(
@@ -98,53 +95,59 @@ fun HomeScreen(
     val deletedCount by viewModel.deletedCount.collectAsStateWithLifecycle()
     val upcoming by viewModel.upcoming.collectAsStateWithLifecycle()
     val calendarGranted by viewModel.calendarGranted.collectAsStateWithLifecycle()
-    // PERF-04 (2026-09-19): activeCapture ticks once a second while a capture is running (it
-    // carries the live elapsedLabel) — collecting it here meant this whole screen's body,
-    // including the notes LazyColumn's content lambda, recomposed every second regardless of
-    // whether anything else changed. Hoisted down into ActiveCaptureChip below, which collects
-    // it itself, so only that small composable recomposes on each tick.
+    val unexported by viewModel.unexportedCount.collectAsStateWithLifecycle()
+    val repairing by viewModel.repairingExports.collectAsStateWithLifecycle()
+    val hasActiveCapture by viewModel.hasActiveCapture.collectAsStateWithLifecycle()
+    // PERF-04: the 1 Hz timer and 10 Hz level are collected inside ActiveCaptureCard, never here.
     // REL-09: a capture the app never got to finish, still on disk.
     val pendingRecovery by viewModel.pendingRecovery.collectAsStateWithLifecycle()
     val recovering by viewModel.recovering.collectAsStateWithLifecycle()
+    val defaultExportFormat by viewModel.exportFormat.collectAsStateWithLifecycle()
 
     // UX-10: non-null selectedIds = selection mode. Back exits it instead of the app.
     val selecting = selectedIds != null
+    val selectedCount = selectedIds.orEmpty().size
     BackHandler(enabled = selecting) { viewModel.exitSelectionMode() }
-    val scope = rememberCoroutineScope()
-    var confirmDeleteSelected by remember { mutableStateOf(false) }
 
-    // Export-format dropdown: a share action (single note or the bulk selection) waiting on
-    // the one-off format picker before its intent is actually sent.
-    val defaultExportFormat by viewModel.exportFormat.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val resources = LocalResources.current
+    val c = TrailMix.colors
+    val snackbarHostState = remember { SnackbarHostState() }
     var pendingShare by remember { mutableStateOf<PendingShare?>(null) }
+    var showCalendarRationale by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { viewModel.refreshUpcoming() }
 
-    val c = TrailMix.colors
-    val context = LocalContext.current
-    val snackbarHostState = remember { SnackbarHostState() }
-
     LaunchedEffect(Unit) {
-        viewModel.snackbarMessage.collect { message ->
-            snackbarHostState.showSnackbar(message)
-        }
+        viewModel.snackbarMessage.collect { message -> snackbarHostState.showSnackbar(message) }
     }
 
-    // REL-09: a recovered capture merged into a note — open it, same as End & Merge does.
+    // REL-09: a recovered capture merged into a note, so open it the way End & Merge does.
     LaunchedEffect(Unit) {
         viewModel.recoveredNoteId.collect { id -> onOpenNote(id) }
     }
 
-    // Long-press context menu state (CAP-05): which note's menu is open. Since v1.7.0
-    // (INT-02/UX-08) the menu is just Delete + Share — per-note Move was replaced by the
-    // global Export location + auto-migration, and "Open file location" by the Settings
-    // "Open folder" button.
-    var contextMenuNote by remember { mutableStateOf<NoteEntity?>(null) }
+    // B3: delete is soft, so there is no confirm dialog; the snackbar offers Undo for 8 s.
+    LaunchedEffect(Unit) {
+        viewModel.undoableDeletes.collect { deleted ->
+            val res = context.resources
+            val message = res.getQuantityString(R.plurals.home_deleted, deleted.ids.size, deleted.ids.size) +
+                if (deleted.fileFailures > 0) {
+                    res.getQuantityString(R.plurals.home_deleted_files_failed, deleted.fileFailures, deleted.fileFailures)
+                } else {
+                    ""
+                }
+            if (snackbarHostState.showUndo(message, res.getString(R.string.action_undo))) {
+                viewModel.restore(deleted.ids)
+            }
+        }
+    }
 
-    // Tapping the next meeting: imminent (≤5 min) or ongoing starts capture
-    // immediately; further out asks first.
+    // Tapping the next meeting: imminent (5 min or less) or ongoing starts capture at once;
+    // further out asks first.
     var pendingStart by remember { mutableStateOf<UpcomingMeeting?>(null) }
     pendingStart?.let { meeting ->
         StartCaptureDialog(
@@ -156,6 +159,21 @@ fun HomeScreen(
             onDismiss = { pendingStart = null },
         )
     }
+    if (showCalendarRationale) {
+        TmConfirmDialog(
+            title = stringResource(R.string.home_calendar_title),
+            body = stringResource(R.string.home_calendar_body),
+            confirmLabel = stringResource(R.string.home_calendar_continue),
+            onConfirm = {
+                showCalendarRationale = false
+                permissionLauncher.launch(Manifest.permission.READ_CALENDAR)
+            },
+            onDismiss = { showCalendarRationale = false },
+        )
+    }
+
+    val searching = query.isNotBlank()
+    val firstRun = notes.isEmpty() && deletedCount == 0 && !searching && !meetingsOnly
 
     Box(
         modifier = Modifier
@@ -163,439 +181,272 @@ fun HomeScreen(
             .background(c.background)
             .statusBarsPadding(),
     ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            // Wordmark + avatar-slot (opens Settings — no accounts in a local-only app).
-            // UX-10: in selection mode this row becomes "N selected" + Cancel instead.
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (selecting) {
-                    Text(
-                        text = "${selectedIds.orEmpty().size} selected",
-                        color = c.text,
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(
-                        text = "Cancel",
-                        color = c.dim,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(100.dp))
-                            .clickable { viewModel.exitSelectionMode() }
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                    )
-                } else {
-                    Text(
-                        text = "TrailMix",
-                        color = c.text,
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    // UX-09 (revised): bare hamburger menu button — theme-adaptive tint,
-                    // no circle background (user request); CircleShape clip keeps the
-                    // ripple round over the 34dp touch target.
-                    Box(
-                        modifier = Modifier
-                            .size(34.dp)
-                            .clip(CircleShape)
-                            .clickable(onClick = onOpenSettings),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Menu,
-                            contentDescription = "Settings",
-                            tint = c.text,
-                            modifier = Modifier.size(19.dp),
+        Column(modifier = Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+            if (selecting) {
+                TmTopBar(
+                    title = pluralStringResource(R.plurals.home_selected, selectedCount, selectedCount),
+                    navigation = {
+                        TmCloseButton(
+                            onClick = viewModel::exitSelectionMode,
+                            contentDescription = stringResource(R.string.home_selection_cancel),
                         )
-                    }
-                }
-            }
-
-            // In-progress transcription chip (CAP-10) — recording continues in the
-            // background even after leaving Capture; tap to jump straight back in.
-            // PERF-04: collects its own state so its 1 Hz tick can't recompose HomeScreen.
-            ActiveCaptureChip(activeCapture = viewModel.activeCapture, onOpen = onOpenActiveCapture)
-
-            val searching = query.isNotBlank()
-
-            // Upcoming meeting sits above the search bar (user request); it still gives
-            // way to results while a search is active.
-            if (!searching) {
-                SectionLabel(
-                    text = "Upcoming — from calendar",
-                    modifier = Modifier
-                        .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 10.dp)
-                        .clickable {
-                            if (calendarGranted) {
-                                onOpenMeetings()
-                            } else {
-                                permissionLauncher.launch(Manifest.permission.READ_CALENDAR)
-                            }
-                        },
+                    },
+                    actions = { TmTextButton(stringResource(R.string.home_select_all), onClick = viewModel::selectAll) },
                 )
-                UpcomingCard(
-                    granted = calendarGranted,
-                    title = upcoming?.title,
-                    time = upcoming?.timeLabel,
-                    onEnable = { permissionLauncher.launch(Manifest.permission.READ_CALENDAR) },
-                    onTapMeeting = upcoming?.let { meeting ->
-                        {
-                            if (meeting.minutesUntilStart > 5) {
-                                pendingStart = meeting
-                            } else {
-                                onCaptureMeeting(meeting.title)
-                            }
-                        }
+            } else {
+                TmTopBar(
+                    title = stringResource(R.string.home_title),
+                    actions = {
+                        TmOverflowMenu(
+                            contentDescription = stringResource(R.string.home_more),
+                            items = listOf(
+                                TmMenuItem(stringResource(R.string.home_menu_meetings), onOpenMeetings),
+                                TmMenuItem(
+                                    label = stringResource(R.string.home_menu_deleted),
+                                    onClick = onOpenRecentlyDeleted,
+                                    badge = deletedCount.takeIf { it > 0 }?.toString(),
+                                ),
+                                TmMenuItem(stringResource(R.string.home_menu_settings), onOpenSettings),
+                            ),
+                        )
                     },
                 )
             }
 
-            // Search (UX-13): live keyword + date filter over the notes list. Dates match
-            // in common spellings ("jul 18", "7/18/2026", "2026-07-18") via NoteSearch.
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 6.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(c.card)
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Search,
-                    contentDescription = null,
-                    tint = c.dim,
-                    modifier = Modifier.size(18.dp),
-                )
-                BasicTextField(
-                    value = query,
-                    onValueChange = { viewModel.searchQuery.value = it },
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(horizontal = 10.dp),
-                    textStyle = TextStyle(color = c.text, fontSize = 14.sp),
-                    cursorBrush = SolidColor(c.amber),
-                    singleLine = true,
-                    decorationBox = { inner ->
-                        if (query.isEmpty()) {
-                            Text(
-                                text = "Search notes — keywords or dates",
-                                color = c.dim,
-                                fontSize = 14.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        inner()
-                    },
-                )
-                if (query.isNotEmpty()) {
-                    Icon(
-                        imageVector = Icons.Filled.Close,
-                        contentDescription = "Clear search",
-                        tint = c.dim,
-                        modifier = Modifier
-                            .size(18.dp)
-                            .clickable { viewModel.searchQuery.value = "" },
-                    )
-                }
-            }
-
-            // Notes header + "Meetings" filter chip (CAL-05) on one line — the chip
-            // narrows the list to notes linked to a calendar meeting, composing with search.
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                SectionLabel(text = if (searching) "Results" else "Notes")
-                Text(
-                    text = "Meetings",
-                    color = if (meetingsOnly) Color.White else c.dim,
-                    fontSize = 11.5.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(100.dp))
-                        .background(if (meetingsOnly) c.amber else c.card)
-                        .clickable { viewModel.setMeetingsOnly(!meetingsOnly) }
-                        .padding(horizontal = 10.dp, vertical = 5.dp),
-                )
-            }
-
-            // CAL-06 (conference scale): a multi-session day gets a header naming how many
-            // sessions it holds — a flat list gives no sense that three notes are today's
-            // conference track versus three unrelated notes from three weeks.
-            val listItems = remember(notes) { groupByConferenceDay(notes) }
             val listState = rememberLazyListState()
-            // UX-21: LazyColumn anchors scroll to the previously-first visible item by key, so
-            // a newly inserted (newer) note lands *above* that anchor and renders just off the
-            // top of the viewport — it reads exactly like a missing note. Only correct this
-            // when the user was already at/near the top (index <= 1: the previously-first item
-            // shifting to index 1 is exactly the symptom), so this never yanks the list out
-            // from under someone deliberately scrolled down further to browse.
+            // UX-21: LazyColumn anchors scroll to the previously-first visible item by key, so a
+            // newly inserted (newer) note lands above that anchor and reads like a missing note.
+            // Only correct it when the user was already at or near the top.
             val newestNoteId = notes.firstOrNull()?.note?.id
             LaunchedEffect(newestNoteId) {
                 if (newestNoteId != null && listState.firstVisibleItemIndex <= 1) {
                     listState.animateScrollToItem(0)
                 }
             }
-            LazyColumn(state = listState, modifier = Modifier.weight(1f)) {
-                if (notes.isEmpty()) {
-                    item {
-                        Text(
-                            text = when {
-                                searching -> "No notes match your search."
-                                meetingsOnly -> "No notes are linked to a calendar meeting yet."
-                                else -> "No notes yet — tap + to start a capture."
-                            },
-                            color = c.dim,
-                            fontSize = 13.sp,
-                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+            val listItems = remember(notes, searching) {
+                if (searching) notes.map { HomeListItem.NoteRow(it) } else groupByDay(notes, System.currentTimeMillis())
+            }
+            val requestCalendar = { showCalendarRationale = true }
+
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.widthIn(max = ListMaxWidth).fillMaxWidth().weight(1f),
+            ) {
+                if (!selecting) {
+                    item(key = "active") {
+                        ActiveCaptureCard(
+                            activeCapture = viewModel.activeCapture,
+                            level = viewModel.level,
+                            mergeStatus = viewModel.mergeStatus,
+                            onOpen = onOpenActiveCapture,
+                            modifier = Modifier.padding(horizontal = TmSpacing.l, vertical = TmSpacing.xs),
                         )
                     }
                 }
-                items(
-                    listItems,
-                    key = { item ->
-                        when (item) {
-                            is HomeListItem.DayHeader -> "day:${item.label}"
-                            is HomeListItem.NoteRow -> item.note.id
+                if (firstRun) {
+                    item(key = "first-run") {
+                        FirstRunContent(
+                            calendarGranted = calendarGranted,
+                            onStart = onNewCapture,
+                            onShowMeeting = requestCalendar,
+                        )
+                    }
+                } else {
+                    if (!searching && !selecting) {
+                        item(key = "upcoming") {
+                            val meeting = upcoming
+                            when {
+                                calendarGranted && meeting != null -> UpcomingMeetingCard(
+                                    meeting = meeting,
+                                    onStart = {
+                                        if (meeting.minutesUntilStart > 5) pendingStart = meeting else onCaptureMeeting(meeting.title)
+                                    },
+                                    onSeeAll = onOpenMeetings,
+                                    modifier = Modifier.padding(horizontal = TmSpacing.l, vertical = TmSpacing.xs),
+                                )
+
+                                !calendarGranted -> TmOutlinedButton(
+                                    label = stringResource(R.string.home_show_next_meeting),
+                                    onClick = requestCalendar,
+                                    icon = TmButtonIcon.Drawable(TmIcons.Calendar),
+                                    modifier = Modifier.padding(horizontal = TmSpacing.l, vertical = TmSpacing.xs),
+                                )
+                            }
                         }
-                    },
-                ) { item ->
-                    when (item) {
-                        is HomeListItem.DayHeader -> DayHeaderRow(item)
-                        is HomeListItem.NoteRow -> {
-                            val row = item.note
-                            NoteRow(
-                                row = row,
-                                // UX-10: null when not in selection mode; row shows an
-                                // indicator and taps toggle instead of opening while selecting.
-                                selected = selectedIds?.contains(row.id),
-                                onClick = {
-                                    if (selecting) viewModel.toggleSelected(row.id) else onOpenNote(row.id)
-                                },
-                                onLongClick = {
-                                    if (selecting) {
-                                        viewModel.toggleSelected(row.id)
-                                    } else {
-                                        contextMenuNote = row.note
-                                    }
-                                },
-                                onMomentClick = { label -> onOpenTranscriptMoment(row.id, label) },
+                    }
+                    item(key = "search") {
+                        SearchField(
+                            query = query,
+                            onQueryChange = { viewModel.searchQuery.value = it },
+                            modifier = Modifier.padding(horizontal = TmSpacing.l, vertical = TmSpacing.xs),
+                        )
+                    }
+                    item(key = "filters") {
+                        Row(
+                            modifier = Modifier.padding(horizontal = TmSpacing.l),
+                            horizontalArrangement = Arrangement.spacedBy(TmSpacing.s),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TmFilterChip(
+                                label = stringResource(R.string.home_filter_all),
+                                selected = !meetingsOnly,
+                                onClick = { viewModel.setMeetingsOnly(false) },
+                            )
+                            TmFilterChip(
+                                label = stringResource(R.string.home_filter_meetings),
+                                selected = meetingsOnly,
+                                onClick = { viewModel.setMeetingsOnly(true) },
+                                leadingDrawable = TmIcons.Calendar,
                             )
                         }
                     }
-                }
-                // REL-06: entry to the recovery screen, only when something is in it.
-                if (deletedCount > 0 && !searching && !selecting) {
-                    item {
-                        Text(
-                            text = "Recently deleted ($deletedCount)",
-                            color = c.dim,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable(onClick = onOpenRecentlyDeleted)
-                                .padding(horizontal = 20.dp, vertical = 14.dp),
-                        )
+                    if (unexported > 0 && !searching && !selecting) {
+                        item(key = "export-health") {
+                            ExportHealthLine(
+                                count = unexported,
+                                repairing = repairing,
+                                onExport = viewModel::exportMissing,
+                                modifier = Modifier.padding(horizontal = TmSpacing.l),
+                            )
+                        }
+                    }
+                    if (searching && notes.isNotEmpty()) {
+                        item(key = "search-count") {
+                            Text(
+                                text = pluralStringResource(R.plurals.home_search_count, notes.size, notes.size).uppercase(),
+                                style = TrailMix.type.overline,
+                                color = c.dim,
+                                modifier = Modifier.padding(horizontal = TmSpacing.l, vertical = TmSpacing.m),
+                            )
+                        }
+                    }
+                    if (notes.isEmpty()) {
+                        item(key = "empty") {
+                            Text(
+                                text = stringResource(
+                                    when {
+                                        searching -> R.string.home_empty_search
+                                        meetingsOnly -> R.string.home_empty_meetings
+                                        else -> R.string.home_empty
+                                    },
+                                ),
+                                style = TrailMix.type.body,
+                                color = c.dim,
+                                modifier = Modifier.padding(horizontal = TmSpacing.l, vertical = TmSpacing.xl),
+                            )
+                        }
+                    }
+                    items(
+                        listItems,
+                        key = { item ->
+                            when (item) {
+                                is HomeListItem.DayHeader -> "day:${item.label}"
+                                is HomeListItem.NoteRow -> item.note.id
+                            }
+                        },
+                    ) { item ->
+                        when (item) {
+                            is HomeListItem.DayHeader -> {
+                                DayHeaderRow(item)
+                            }
+
+                            is HomeListItem.NoteRow -> {
+                                val row = item.note
+                                NoteListRow(
+                                    row = row,
+                                    searching = searching,
+                                    // UX-10: null outside selection mode; taps toggle while selecting.
+                                    selected = selectedIds?.contains(row.id),
+                                    onClick = {
+                                        if (selecting) viewModel.toggleSelected(row.id) else onOpenNote(row.id)
+                                    },
+                                    onLongClick = {
+                                        if (selecting) viewModel.toggleSelected(row.id) else viewModel.enterSelectionMode(row.id)
+                                    },
+                                    onMomentClick = { label -> onOpenTranscriptMoment(row.id, label) },
+                                )
+                            }
+                        }
                     }
                 }
-                item { Spacer(Modifier.height(96.dp)) }
+                item(key = "end-space") { Spacer(Modifier.height(96.dp)) }
             }
         }
 
-        // FAB — 56dp, 16dp radius, amber, pinned 24dp from bottom-right.
-        // Hidden in selection mode (UX-10): the bottom action bar takes its place.
-        if (!selecting) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(24.dp)
-                    .size(56.dp)
-                    .shadow(8.dp, RoundedCornerShape(16.dp))
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(c.amber)
-                    .clickable(onClick = onNewCapture),
-                contentAlignment = Alignment.Center,
+        // One capture at a time, and the snackbar owns the corner while it is up.
+        val snackbarUp = snackbarHostState.currentSnackbarData != null
+        if (!selecting && !hasActiveCapture && !snackbarUp && !firstRun) {
+            ExtendedFloatingActionButton(
+                onClick = onNewCapture,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(TmSpacing.l),
+                shape = TrailMix.shapes.large,
+                containerColor = c.text,
+                contentColor = c.background,
             ) {
-                Icon(
-                    imageVector = Icons.Filled.Add,
-                    contentDescription = "New note",
-                    tint = Color.White,
-                    modifier = Modifier.size(26.dp),
+                TmIcon(TmIcons.Mic, contentDescription = null, tint = c.background)
+                Text(
+                    stringResource(R.string.home_new_note),
+                    style = TrailMix.type.label,
+                    modifier = Modifier.padding(start = TmSpacing.s),
                 )
             }
         }
 
-        // UX-10: bottom Delete / Share bar while selecting. Delete confirms first and is
-        // a soft delete (each note recoverable via Recently deleted, REL-06); Share sends
-        // the selected notes' combined Markdown through the system sheet.
+        // UX-10: Share / Chat / Delete with an icon and label at equal weight.
         if (selecting) {
-            val count = selectedIds.orEmpty().size
             Row(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
+                    .widthIn(max = ListMaxWidth)
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 20.dp)
-                    .shadow(8.dp, RoundedCornerShape(14.dp))
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(c.card),
+                    .padding(TmSpacing.m)
+                    .background(c.card, TrailMix.shapes.large),
             ) {
-                Text(
-                    text = "Delete",
-                    color = if (count > 0) c.recordingRed else c.dim.copy(alpha = 0.5f),
-                    fontSize = 14.5.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable(enabled = count > 0) { confirmDeleteSelected = true }
-                        .padding(vertical = 15.dp),
-                )
-                Box(
-                    modifier = Modifier
-                        .width(1.dp)
-                        .height(48.dp)
-                        .background(c.border),
-                )
-                Text(
-                    text = "Share",
-                    color = if (count > 0) c.amber else c.dim.copy(alpha = 0.5f),
-                    fontSize = 14.5.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable(enabled = count > 0) { pendingShare = PendingShare.Bulk(count) }
-                        .padding(vertical = 15.dp),
-                )
-                Box(
-                    modifier = Modifier
-                        .width(1.dp)
-                        .height(48.dp)
-                        .background(c.border),
-                )
-                // AI-10: cross-note chat needs at least 2 notes — a single note already has
-                // its own chat via the note detail screen.
-                Text(
-                    text = "Chat",
-                    color = if (count >= 2) c.amber else c.dim.copy(alpha = 0.5f),
-                    fontSize = 14.5.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable(enabled = count >= 2) {
-                            val ids = selectedIds.orEmpty()
-                            viewModel.exitSelectionMode()
-                            onOpenCrossNoteChat(ids)
-                        }
-                        .padding(vertical = 15.dp),
-                )
+                SelectionAction(
+                    label = stringResource(R.string.home_share),
+                    enabled = selectedCount > 0,
+                    onClick = { pendingShare = PendingShare(selectedCount) },
+                ) { tint -> Icon(Icons.Filled.Share, contentDescription = null, tint = tint) }
+                SelectionAction(
+                    label = if (selectedCount >= 2) {
+                        stringResource(R.string.home_chat_across, selectedCount)
+                    } else {
+                        stringResource(R.string.home_chat_select_two)
+                    },
+                    enabled = selectedCount >= 2,
+                    onClick = {
+                        val ids = selectedIds.orEmpty()
+                        viewModel.exitSelectionMode()
+                        onOpenCrossNoteChat(ids)
+                    },
+                ) { tint -> TmIcon(TmIcons.Chat, contentDescription = null, tint = tint) }
+                SelectionAction(
+                    label = stringResource(R.string.home_delete),
+                    enabled = selectedCount > 0,
+                    destructive = true,
+                    onClick = viewModel::deleteSelected,
+                ) { tint -> Icon(Icons.Filled.Delete, contentDescription = null, tint = tint) }
             }
         }
 
-        if (confirmDeleteSelected) {
-            val count = selectedIds.orEmpty().size
-            AlertDialog(
-                onDismissRequest = { confirmDeleteSelected = false },
-                containerColor = c.card,
-                title = {
-                    Text(
-                        text = "Delete $count note${if (count == 1) "" else "s"}?",
-                        color = c.text,
-                        fontSize = 17.sp,
-                    )
-                },
-                text = {
-                    Text(
-                        text = "They'll move to Recently deleted and stay recoverable " +
-                            "for 1 day. Exported copies are removed now.",
-                        color = c.dim,
-                        fontSize = 13.5.sp,
-                        lineHeight = 19.sp,
-                    )
-                },
-                confirmButton = {
-                    Text(
-                        text = "Delete",
-                        color = c.recordingRed,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier
-                            .clickable {
-                                confirmDeleteSelected = false
-                                viewModel.deleteSelected()
-                            }
-                            .padding(8.dp),
-                    )
-                },
-                dismissButton = {
-                    Text(
-                        text = "Cancel",
-                        color = c.dim,
-                        fontSize = 14.sp,
-                        modifier = Modifier
-                            .clickable { confirmDeleteSelected = false }
-                            .padding(8.dp),
-                    )
-                },
-            )
-        }
-
-        SnackbarHost(
-            hostState = snackbarHostState,
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 96.dp),
-        ) { data -> Snackbar(snackbarData = data) }
-    }
-
-    // REL-09: offer back a capture that died with the process. Suppressed while a recovery
-    // merge is already running so the two dialogs can't stack.
-    pendingRecovery?.takeIf { !recovering }?.let { pending ->
-        CrashRecoveryDialog(
-            pending = pending,
-            onContinue = {
-                viewModel.continueRecovered()
-                onOpenActiveCapture()
-            },
-            onComplete = { viewModel.completeRecovered() },
-            onDiscard = { viewModel.discardRecovered() },
-            onLater = { viewModel.dismissRecovery() },
+        TmSnackbarHost(
+            state = snackbarHostState,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = if (selecting) 72.dp else 0.dp),
         )
     }
 
-    if (recovering) {
-        RecoveryProgressDialog()
-    }
-
-    // Long-press context menu (CAP-05, slimmed by INT-02/UX-08 in v1.7.0): Delete / Share.
-    // UX-10 adds Select multiple, which enters selection mode seeded with this note.
-    contextMenuNote?.let { note ->
-        NoteContextMenu(
-            note = note,
-            onDismiss = { contextMenuNote = null },
-            onSelectMultiple = {
-                contextMenuNote = null
-                viewModel.enterSelectionMode(note.id)
+    // REL-09: offer back a capture that died with the process. While the rebuild runs, the
+    // Building card on Home is the progress, so the sheet stays away.
+    pendingRecovery?.takeIf { !recovering }?.let { pending ->
+        RecoverySheet(
+            pending = pending,
+            onBuild = { viewModel.completeRecovered() },
+            onKeep = {
+                viewModel.continueRecovered()
+                onOpenActiveCapture()
             },
-            onDelete = {
-                contextMenuNote = null
-                viewModel.deleteNote(note.id)
-            },
-            onShare = {
-                contextMenuNote = null
-                pendingShare = PendingShare.Single(note)
-            },
+            onDiscard = { viewModel.discardRecovered() },
+            onLater = { viewModel.dismissRecovery() },
         )
     }
 
@@ -604,27 +455,16 @@ fun HomeScreen(
             initialFormat = defaultExportFormat,
             onConfirm = { format ->
                 pendingShare = null
-                when (share) {
-                    is PendingShare.Single -> {
-                        val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(Intent.EXTRA_SUBJECT, share.note.title)
-                            putExtra(Intent.EXTRA_TEXT, share.note.toMarkdown(format = format))
-                        }
-                        context.startActivity(Intent.createChooser(sendIntent, "Share note"))
+                scope.launch {
+                    val markdown = viewModel.selectedMarkdown(format)
+                    viewModel.exitSelectionMode()
+                    val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_SUBJECT, resources.getString(R.string.home_share_notes_subject, share.count))
+                        putExtra(Intent.EXTRA_TEXT, markdown)
                     }
-                    is PendingShare.Bulk -> {
-                        scope.launch {
-                            val markdown = viewModel.selectedMarkdown(format)
-                            viewModel.exitSelectionMode()
-                            val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                type = "text/plain"
-                                putExtra(Intent.EXTRA_SUBJECT, "${share.count} notes from TrailMix")
-                                putExtra(Intent.EXTRA_TEXT, markdown)
-                            }
-                            context.startActivity(Intent.createChooser(sendIntent, "Share notes"))
-                        }
-                    }
+                    val chooser = if (share.count == 1) R.string.home_share_chooser_note else R.string.home_share_chooser_notes
+                    context.startActivity(Intent.createChooser(sendIntent, resources.getString(chooser)))
                 }
             },
             onDismiss = { pendingShare = null },
@@ -632,547 +472,33 @@ fun HomeScreen(
     }
 }
 
-/** A share action queued behind the export-format dropdown's one-off picker. */
-private sealed class PendingShare {
-    data class Single(val note: NoteEntity) : PendingShare()
-    data class Bulk(val count: Int) : PendingShare()
-}
-
-/**
- * REL-09: the first thing you see after TrailMix died mid-capture.
- *
- * The tone is deliberate. A crash during a recording is alarming precisely because the user
- * has no way to know whether their hour of notes still exists, so the dialog leads with the
- * answer — it was saved as it ran — before offering anything. The two real choices are the
- * ones the situation actually poses: the meeting is still going (Continue), or it isn't
- * (Save as note).
- *
- * Discard is present but last and destructive-coloured, behind its own confirm. Dismissing
- * the dialog is **Later**, not a decision: it keeps the journal and re-offers it next launch,
- * because an accidental tap outside must never be how someone loses a transcript.
- */
-@Composable
-private fun CrashRecoveryDialog(
-    pending: com.trailmix.app.data.speech.PendingJournal,
-    onContinue: () -> Unit,
-    onComplete: () -> Unit,
-    onDiscard: () -> Unit,
-    onLater: () -> Unit,
-) {
-    val c = TrailMix.colors
-    var confirmDiscard by remember { mutableStateOf(false) }
-    val session = pending.session
-
-    if (confirmDiscard) {
-        AlertDialog(
-            onDismissRequest = { confirmDiscard = false },
-            containerColor = c.card,
-            title = { Text("Discard this capture?", color = c.text, fontSize = 17.sp) },
-            text = {
-                Text(
-                    // No Recently deleted safety net here: this transcript was never a note,
-                    // so there is nothing to restore it from. Say so plainly.
-                    "The recovered transcript will be deleted permanently. It was never " +
-                        "saved as a note, so this can't be undone.",
-                    color = c.dim,
-                    fontSize = 13.5.sp,
-                    lineHeight = 19.sp,
-                )
-            },
-            confirmButton = {
-                Text(
-                    text = "Discard",
-                    color = c.recordingRed,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.clickable { confirmDiscard = false; onDiscard() }.padding(8.dp),
-                )
-            },
-            dismissButton = {
-                Text(
-                    text = "Keep it",
-                    color = c.dim,
-                    fontSize = 14.sp,
-                    modifier = Modifier.clickable { confirmDiscard = false }.padding(8.dp),
-                )
-            },
-        )
-        return
-    }
-
-    Dialog(onDismissRequest = onLater) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .background(c.card)
-                .padding(vertical = 8.dp),
-        ) {
-            Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
-                Text(
-                    text = "Unfinished capture recovered",
-                    color = c.text,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    text = recoverySummary(session),
-                    color = c.amber,
-                    fontSize = 12.5.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(top = 6.dp),
-                )
-                Text(
-                    text = "TrailMix closed before this capture was saved. The transcript " +
-                        "was written as it ran, so it's all still here.",
-                    color = c.dim,
-                    fontSize = 13.5.sp,
-                    lineHeight = 19.sp,
-                    modifier = Modifier.padding(top = 8.dp),
-                )
-            }
-            Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(c.border))
-            ContextMenuRow(
-                label = "Continue capture",
-                hint = "Pick up recording where it left off",
-            ) { onContinue() }
-            ContextMenuRow(
-                label = "Save as note",
-                hint = "Merge what was captured and finish now",
-            ) { onComplete() }
-            ContextMenuRow(label = "Later", hint = "Ask again next time you open TrailMix") { onLater() }
-            ContextMenuRow(label = "Discard", destructive = true) { confirmDiscard = true }
-        }
-    }
-}
-
-/** e.g. "Jul 31, 3:04 PM · 42:15 · 318 lines" — enough to recognise which session this was. */
-private fun recoverySummary(session: com.trailmix.app.data.speech.CaptureJournal.RecoveredSession): String {
-    val parts = mutableListOf<String>()
-    if (session.startedAtEpochMs > 0) {
-        parts += SimpleDateFormat("MMM d, h:mm a", Locale.getDefault())
-            .format(Date(session.startedAtEpochMs))
-    }
-    if (session.durationMs > 0) {
-        parts += com.trailmix.app.data.ai.TranscriptCoverage.formatSeconds(
-            (session.durationMs / 1000).toInt(),
-        )
-    }
-    val lines = session.transcript.size
-    if (lines > 0) parts += "$lines line${if (lines == 1) "" else "s"}"
-    if (session.typedFragments.isNotBlank()) parts += "typed notes"
-    return parts.joinToString(" · ")
-}
-
-/**
- * REL-09: shown while a recovered capture is merging. Deliberately not dismissable — the
- * merge is a chunked on-device model pass that can run for minutes on a long session, and
- * letting the dialog close would leave no sign that anything was happening.
- */
-@Composable
-private fun RecoveryProgressDialog() {
-    val c = TrailMix.colors
-    Dialog(onDismissRequest = {}) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .background(c.card)
-                .padding(24.dp),
-        ) {
-            Text(
-                text = "Rebuilding your note…",
-                color = c.text,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                text = "Summarizing on-device. A long capture can take a few minutes.",
-                color = c.dim,
-                fontSize = 13.sp,
-                lineHeight = 18.sp,
-                modifier = Modifier.padding(top = 8.dp),
-            )
-        }
-    }
-}
-
-/**
- * Long-press context menu on a Home note row (CAP-05 Part 1): Delete (with confirm, cascades
- * to the tracked export file) and Share (reuses the UX-03 ACTION_SEND flow). v1.7.0 removed
- * the other two actions by user request: "Move" (INT-02 — the single global Export location
- * with auto-migration replaces per-note re-export) and "Open file location" (UX-08 — replaced
- * by the "Open folder" button next to the Export location in Settings).
- */
-@Composable
-private fun NoteContextMenu(
-    note: NoteEntity,
-    onDismiss: () -> Unit,
-    onSelectMultiple: () -> Unit,
-    onDelete: () -> Unit,
-    onShare: () -> Unit,
-) {
-    val c = TrailMix.colors
-    var confirmDelete by remember { mutableStateOf(false) }
-
-    if (!confirmDelete) {
-        Dialog(onDismissRequest = onDismiss) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(c.card)
-                    .padding(vertical = 8.dp),
-            ) {
-                Text(
-                    text = note.title,
-                    color = c.dim,
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
-                )
-                Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(c.border))
-                ContextMenuRow(label = "Select multiple") { onSelectMultiple() }
-                ContextMenuRow(label = "Delete", destructive = true) { confirmDelete = true }
-                ContextMenuRow(label = "Share") { onShare() }
-            }
-        }
-    }
-
-    if (confirmDelete) {
-        AlertDialog(
-            onDismissRequest = onDismiss,
-            containerColor = c.card,
-            title = { Text("Delete this note?", color = c.text, fontSize = 17.sp) },
-            text = {
-                Text(
-                    // UX-16: this said "This can't be undone", which stopped being true at
-                    // REL-06 (v1.8.0) when delete became a *soft* delete with a 1-day
-                    // recovery window. The multi-select dialog above was updated then and
-                    // this single-note one was missed, so the same action was described two
-                    // contradictory ways. Wording deliberately mirrors that dialog — the
-                    // scary-but-wrong version risks talking someone out of a reversible
-                    // action, and would be far worse if it ever made them trust it.
-                    "It'll move to Recently deleted and stay recoverable for 1 day. " +
-                        "Exported copies are removed now.",
-                    color = c.dim,
-                    fontSize = 13.5.sp,
-                    lineHeight = 19.sp,
-                )
-            },
-            confirmButton = {
-                Text(
-                    text = "Delete",
-                    color = c.recordingRed,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.clickable { onDelete() }.padding(8.dp),
-                )
-            },
-            dismissButton = {
-                Text(
-                    text = "Cancel",
-                    color = c.dim,
-                    fontSize = 14.sp,
-                    modifier = Modifier.clickable { onDismiss() }.padding(8.dp),
-                )
-            },
-        )
-    }
-}
+/** A share waiting on the export-format picker; [count] is only for the email subject. */
+private data class PendingShare(val count: Int)
 
 @Composable
-private fun ContextMenuRow(
+private fun RowScope.SelectionAction(
     label: String,
-    enabled: Boolean = true,
+    enabled: Boolean,
+    onClick: () -> Unit,
     destructive: Boolean = false,
-    hint: String? = null,
-    onClick: () -> Unit,
+    icon: @Composable (tint: Color) -> Unit,
 ) {
     val c = TrailMix.colors
+    val tint = when {
+        !enabled -> c.dim
+        destructive -> c.recordingRed
+        else -> c.text
+    }
     Column(
         modifier = Modifier
-            .fillMaxWidth()
+            .weight(1f)
+            .heightIn(min = 56.dp)
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 13.dp),
+            .padding(vertical = TmSpacing.s),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
     ) {
-        Text(
-            text = label,
-            color = when {
-                !enabled -> c.dim.copy(alpha = 0.5f)
-                destructive -> c.recordingRed
-                else -> c.text
-            },
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Medium,
-        )
-        if (hint != null) {
-            Text(text = hint, color = c.dim, fontSize = 11.5.sp, modifier = Modifier.padding(top = 2.dp))
-        }
-    }
-}
-
-/**
- * Confirmation for starting a capture ahead of a not-yet-imminent meeting
- * (>5 minutes out). Shared by Home and the meetings list.
- */
-@Composable
-fun StartCaptureDialog(
-    meeting: UpcomingMeeting,
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val c = TrailMix.colors
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = c.card,
-        title = { Text(meeting.title, color = c.text, fontSize = 17.sp) },
-        text = {
-            Text(
-                text = "This meeting doesn't start for another " +
-                    "${meeting.minutesUntilStart} minutes (${meeting.timeLabel}). " +
-                    "Start capturing now anyway?",
-                color = c.dim,
-                fontSize = 13.5.sp,
-                lineHeight = 19.sp,
-            )
-        },
-        confirmButton = {
-            Text(
-                text = "Start now",
-                color = c.amber,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier
-                    .clickable(onClick = onConfirm)
-                    .padding(8.dp),
-            )
-        },
-        dismissButton = {
-            Text(
-                text = "Wait",
-                color = c.dim,
-                fontSize = 14.sp,
-                modifier = Modifier
-                    .clickable(onClick = onDismiss)
-                    .padding(8.dp),
-            )
-        },
-    )
-}
-
-@Composable
-private fun UpcomingCard(
-    granted: Boolean,
-    title: String?,
-    time: String?,
-    onEnable: () -> Unit,
-    onTapMeeting: (() -> Unit)?,
-) {
-    val c = TrailMix.colors
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(c.card)
-            .let {
-                when {
-                    !granted -> it.clickable(onClick = onEnable)
-                    onTapMeeting != null -> it.clickable(onClick = onTapMeeting)
-                    else -> it
-                }
-            }
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        when {
-            !granted -> Text(
-                text = "Tap to show your next meeting (read-only calendar access)",
-                color = c.dim,
-                fontSize = 13.sp,
-            )
-            title == null -> Text(
-                text = "Nothing in the next 24 hours",
-                color = c.dim,
-                fontSize = 13.sp,
-            )
-            else -> {
-                Text(
-                    text = title,
-                    color = c.text,
-                    fontSize = 14.5.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                Text(
-                    text = time.orEmpty(),
-                    color = c.dim,
-                    fontSize = 12.5.sp,
-                    modifier = Modifier.padding(start = 12.dp),
-                )
-            }
-        }
-    }
-}
-
-/** CAL-06: the "N sessions" label above a multi-session conference day's notes. */
-@Composable
-private fun DayHeaderRow(header: HomeListItem.DayHeader) {
-    val c = TrailMix.colors
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = header.label,
-            color = c.text,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Text(
-            text = "${header.sessionCount} sessions",
-            color = c.amber,
-            fontSize = 11.5.sp,
-            fontWeight = FontWeight.Medium,
-        )
-    }
-}
-
-/** [selected] is null outside selection mode; a Boolean shows the UX-10 indicator circle. */
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun NoteRow(
-    row: HomeNote,
-    selected: Boolean?,
-    onClick: () -> Unit,
-    onLongClick: () -> Unit,
-    onMomentClick: (label: String) -> Unit,
-) {
-    val note = row.note
-    val c = TrailMix.colors
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-            .padding(horizontal = 20.dp),
-    ) {
-        Row(
-            modifier = Modifier.padding(vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            // UX-10: selection indicator — filled amber check when selected, hollow
-            // circle otherwise. Only present in selection mode.
-            if (selected != null) {
-                Box(
-                    modifier = Modifier
-                        .padding(end = 14.dp)
-                        .size(22.dp)
-                        .clip(CircleShape)
-                        .let {
-                            if (selected) {
-                                it.background(c.amber)
-                            } else {
-                                it.border(1.5.dp, c.dim, CircleShape)
-                            }
-                        },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (selected) {
-                        Icon(
-                            imageVector = Icons.Filled.Check,
-                            contentDescription = "Selected",
-                            tint = Color.White,
-                            modifier = Modifier.size(14.dp),
-                        )
-                    }
-                }
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = note.title,
-                    color = c.text,
-                    fontSize = 15.5.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = row.preview,
-                    color = c.dim,
-                    fontSize = 13.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 3.dp),
-                )
-                // UX-12: creation date & time on every row; CAL-05 adds a meeting tag
-                // on notes linked to a calendar event. UX-18: the label is formatted once
-                // per note off the main thread, not per composition.
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = row.createdLabel,
-                        color = c.dim.copy(alpha = 0.75f),
-                        fontSize = 11.5.sp,
-                        modifier = Modifier.padding(top = 3.dp),
-                    )
-                    if (note.meetingTitle != null) {
-                        Text(
-                            text = "Meeting",
-                            color = c.amber,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier
-                                .padding(start = 8.dp, top = 3.dp)
-                                .clip(RoundedCornerShape(100.dp))
-                                .background(c.amber.copy(alpha = 0.14f))
-                                .padding(horizontal = 7.dp, vertical = 2.dp),
-                        )
-                    }
-                }
-                // UX-19/UX-20 (conference scale): the search matched inside the transcript,
-                // not the summary — a 90-minute keynote makes "which minute" a far more
-                // useful answer than "this note matched somewhere". Tapping jumps straight
-                // into the transcript at that line instead of the note's summary.
-                row.matchedMoment?.let { moment ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .padding(top = 6.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(c.amber.copy(alpha = 0.10f))
-                            .clickable { onMomentClick(moment.label) }
-                            .padding(horizontal = 8.dp, vertical = 6.dp),
-                    ) {
-                        Text(
-                            text = moment.label,
-                            color = c.amber,
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Text(
-                            text = "  " + moment.text,
-                            color = c.text,
-                            fontSize = 12.5.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
-                }
-            }
-        }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(1.dp)
-                .background(c.border),
-        )
+        icon(tint)
+        Text(label, style = TrailMix.type.caption, color = tint, maxLines = 1)
     }
 }

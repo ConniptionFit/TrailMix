@@ -60,6 +60,9 @@ class NoteDetailViewModel @Inject constructor(
     /** True while a regeneration started from this screen is running (drives the disabled state). */
     val regenerating: StateFlow<Boolean> = _regenerating.asStateFlow()
 
+    /** Live input level for the in-progress card (kept out of any screen-wide state). */
+    val level: StateFlow<Float> = captureSessionManager.level
+
     /** Progress of the rebuild that is running (N6); null when nothing is merging. */
     val mergeStatus: StateFlow<MergeStatus?> = captureSessionManager.mergeStatus
 
@@ -152,7 +155,7 @@ class NoteDetailViewModel @Inject constructor(
      */
     val activeCapture: StateFlow<ActiveCaptureUi?> =
         combine(captureSessionManager.hasActiveSession, captureSessionManager.state) { active, state ->
-            if (active) ActiveCaptureUi(state.elapsedLabel, state.meetingTitle, state.paused) else null
+            if (active) ActiveCaptureUi(state.elapsedLabel, state.meetingTitle, state.paused, state.merging) else null
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     fun toggleShowSources() {

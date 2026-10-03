@@ -9,6 +9,7 @@ import com.trailmix.app.data.db.toMarkdown
 import com.trailmix.app.data.export.ExportFormat
 import com.trailmix.app.data.settings.SettingsRepository
 import com.trailmix.app.data.speech.CaptureSessionManager
+import com.trailmix.app.data.speech.MergeStatus
 import com.trailmix.app.data.speech.PendingJournal
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
@@ -27,7 +28,16 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /** What the Home in-progress-transcription chip needs to render (CAP-10). */
-data class ActiveCaptureUi(val elapsedLabel: String, val meetingTitle: String?, val paused: Boolean = false)
+data class ActiveCaptureUi(
+    val elapsedLabel: String,
+    val meetingTitle: String?,
+    val paused: Boolean = false,
+    /** True while the capture is being merged (or a note rebuilt), so Home shows "Building", not "Recording". */
+    val merging: Boolean = false,
+)
+
+/** A delete the user can still take back: the ids to restore and how many files failed to go. */
+data class UndoableDelete(val ids: List<Long>, val fileFailures: Int)
 
 @HiltViewModel
 class HomeViewModel @Inject constructor(
@@ -86,20 +96,58 @@ class HomeViewModel @Inject constructor(
         _selectedIds.value = null
     }
 
-    /** Soft-delete every selected note (each recoverable via Recently deleted for 1 day). */
+    /** Selects every note currently in the list (the ones the filter and search leave visible). */
+    fun selectAll() {
+        if (_selectedIds.value == null) return
+        _selectedIds.value = notes.value.mapTo(LinkedHashSet()) { it.id }
+    }
+
+    private val _undoableDeletes = MutableSharedFlow<UndoableDelete>(extraBufferCapacity = 1)
+
+    /** Emits after each delete so the screen can offer Undo (B3: no confirm dialog, delete is soft). */
+    val undoableDeletes: SharedFlow<UndoableDelete> = _undoableDeletes
+
+    /** Soft-delete every selected note at once (each recoverable via Recently deleted for 1 day). */
     fun deleteSelected() {
-        val ids = _selectedIds.value.orEmpty()
+        val ids = _selectedIds.value.orEmpty().toList()
         _selectedIds.value = null
+        if (ids.isEmpty()) return
         viewModelScope.launch {
             var fileFailures = 0
             ids.forEach { if (!notesRepository.delete(it).filesDeleted) fileFailures++ }
-            val n = ids.size
-            _snackbarMessage.tryEmit(
-                buildString {
-                    append("Moved $n note${if (n == 1) "" else "s"} to Recently deleted")
-                    if (fileFailures > 0) append(" ($fileFailures exported cop${if (fileFailures == 1) "y" else "ies"} couldn't be removed)")
-                },
-            )
+            _undoableDeletes.tryEmit(UndoableDelete(ids, fileFailures))
+        }
+    }
+
+    /** Undo for [deleteSelected]: each note comes back and is re-exported fresh. */
+    fun restore(ids: List<Long>) {
+        viewModelScope.launch { ids.forEach { notesRepository.restore(it) } }
+    }
+
+    // ── Export health (B8) ──────────────────────────────────────────────────
+
+    /**
+     * Notes with no exported file behind them. Zero while no export location is set, since with
+     * nothing configured nothing is expected to be exported (same rule as the Settings row).
+     */
+    val unexportedCount: StateFlow<Int> =
+        combine(notesRepository.observeUnexportedCount(), settingsRepository.exportLocationUri) { count, location ->
+            if (location == null) 0 else count
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    private val _repairingExports = MutableStateFlow(false)
+    val repairingExports: StateFlow<Boolean> = _repairingExports.asStateFlow()
+
+    /** Retry every note that has no exported file and say honestly how it went. */
+    fun exportMissing() {
+        if (_repairingExports.value) return
+        viewModelScope.launch {
+            _repairingExports.value = true
+            try {
+                _snackbarMessage.tryEmit(notesRepository.exportMissing().summary())
+            } finally {
+                _repairingExports.value = false
+            }
         }
     }
 
@@ -119,8 +167,19 @@ class HomeViewModel @Inject constructor(
     /** Non-null while a capture is recording/merging anywhere in the app — the chip source. */
     val activeCapture: StateFlow<ActiveCaptureUi?> =
         combine(captureSessionManager.hasActiveSession, captureSessionManager.state) { active, state ->
-            if (active) ActiveCaptureUi(state.elapsedLabel, state.meetingTitle, state.paused) else null
+            if (active) ActiveCaptureUi(state.elapsedLabel, state.meetingTitle, state.paused, state.merging) else null
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** True while any capture or merge exists; the screen uses it to hide the New note button (one capture at a time). */
+    val hasActiveCapture: StateFlow<Boolean> = activeCapture
+        .map { it != null }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    /** Live input level for the recording card (a separate flow so the list never recomposes at 10 Hz). */
+    val level: StateFlow<Float> = captureSessionManager.level
+
+    /** Progress of the merge or rebuild that is running, for the Building card; null otherwise. */
+    val mergeStatus: StateFlow<MergeStatus?> = captureSessionManager.mergeStatus
 
     private val _snackbarMessage = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val snackbarMessage: SharedFlow<String> = _snackbarMessage
@@ -164,20 +223,5 @@ class HomeViewModel @Inject constructor(
     fun refreshUpcoming() {
         _calendarGranted.value = meetingSource.hasPermission()
         viewModelScope.launch { _upcoming.value = meetingSource.nextMeeting() }
-    }
-
-    /** Soft delete (REL-06) + remove the tracked export file (CAP-05). Fail-soft: a file
-     * delete failure never blocks the local delete, just surfaces a Snackbar hint. */
-    fun deleteNote(id: Long) {
-        viewModelScope.launch {
-            val result = notesRepository.delete(id)
-            _snackbarMessage.tryEmit(
-                if (result.filesDeleted) {
-                    "Moved to Recently deleted"
-                } else {
-                    "Moved to Recently deleted; couldn't remove the exported copy"
-                },
-            )
-        }
     }
 }

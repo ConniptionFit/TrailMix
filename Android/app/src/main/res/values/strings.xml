@@ -194,4 +194,95 @@
     <string name="note_rebuilding_title">Rebuilding as %1$s</string>
     <string name="note_rebuilding_detail">Summarizing topics. The current note stays below until the new one is ready.</string>
     <string name="note_rebuilding_safe">Safe to leave. Your current note stays as it is until the new one is ready.</string>
+    <!-- Home -->
+    <string name="home_title">TrailMix</string>
+    <string name="home_more">More options</string>
+    <string name="home_menu_meetings">Upcoming meetings</string>
+    <string name="home_menu_deleted">Recently deleted</string>
+    <string name="home_menu_settings">Settings</string>
+    <string name="home_first_overline">Private meeting notes</string>
+    <string name="home_first_title">Your meetings, written up on this phone.</string>
+    <string name="home_first_step1_title">Record</string>
+    <string name="home_first_step1_body">TrailMix transcribes as people talk. Audio is never saved.</string>
+    <string name="home_first_step2_title">Type rough notes alongside</string>
+    <string name="home_first_step2_body">Every line remembers where it came from:</string>
+    <string name="home_first_legend_typed">You typed it</string>
+    <string name="home_first_legend_said">It was said</string>
+    <string name="home_first_step3_title">End &amp; merge</string>
+    <string name="home_first_step3_body">You get topic sections and next steps with owners.</string>
+    <string name="home_first_privacy">No account, no cloud. TrailMix doesn\'t have permission to use the internet.</string>
+    <string name="home_first_start">Start your first note</string>
+    <string name="home_show_next_meeting">Show my next meeting</string>
+    <string name="home_empty">No notes yet. Tap New note to start.</string>
+    <string name="home_empty_search">No notes match your search.</string>
+    <string name="home_empty_meetings">No notes are linked to a calendar meeting yet.</string>
+    <string name="home_next_label">Next meeting · %1$s · %2$s</string>
+    <string name="home_next_in">in %1$d min</string>
+    <string name="home_next_in_hours">in %1$d h</string>
+    <string name="home_next_now">now</string>
+    <string name="home_start_note">Start note</string>
+    <string name="home_see_meetings">See all meetings</string>
+    <string name="home_calendar_title">Show your next meeting</string>
+    <string name="home_calendar_body">TrailMix reads your calendar on this phone to show your next meeting and fill in its name and attendees. It is read-only, and nothing leaves the phone.</string>
+    <string name="home_calendar_continue">Continue</string>
+    <string name="home_search_hint">Search notes and transcripts</string>
+    <string name="home_search_clear">Clear search</string>
+    <plurals name="home_search_count">
+        <item quantity="one">%1$d note</item>
+        <item quantity="other">%1$d notes</item>
+    </plurals>
+    <string name="home_filter_all">All</string>
+    <string name="home_filter_meetings">Meetings</string>
+    <plurals name="home_export_behind">
+        <item quantity="one">%1$d note isn\'t in your export folder</item>
+        <item quantity="other">%1$d notes aren\'t in your export folder</item>
+    </plurals>
+    <string name="home_export_action">Export</string>
+    <string name="home_exporting">Exporting…</string>
+    <string name="home_row_calendar">Linked to a calendar meeting</string>
+    <string name="home_match_you">You</string>
+    <plurals name="home_selected">
+        <item quantity="one">%1$d selected</item>
+        <item quantity="other">%1$d selected</item>
+    </plurals>
+    <string name="home_select_all">Select all</string>
+    <string name="home_selection_cancel">Cancel selection</string>
+    <string name="home_share">Share</string>
+    <string name="home_chat_across">Chat across %1$d</string>
+    <string name="home_chat_select_two">Chat · select 2+</string>
+    <string name="home_delete">Delete</string>
+    <plurals name="home_deleted">
+        <item quantity="one">%1$d note moved to Recently deleted</item>
+        <item quantity="other">%1$d notes moved to Recently deleted</item>
+    </plurals>
+    <plurals name="home_deleted_files_failed">
+        <item quantity="one"> (%1$d exported copy couldn\'t be removed)</item>
+        <item quantity="other"> (%1$d exported copies couldn\'t be removed)</item>
+    </plurals>
+    <string name="home_share_chooser_note">Share note</string>
+    <string name="home_share_chooser_notes">Share notes</string>
+    <string name="home_share_notes_subject">%1$d notes from TrailMix</string>
+    <string name="home_new_note">New note</string>
+    <string name="home_open">Open</string>
+    <string name="home_building_title">Building \"%1$s\"</string>
+    <string name="home_building_title_untitled">Building your note</string>
+    <string name="home_building_detail">On this phone · safe to leave</string>
+    <string name="home_recovery_title">We saved an unfinished recording</string>
+    <string name="home_recovery_body">TrailMix closed while recording. Everything up to that moment is safe.</string>
+    <string name="home_recovery_build">Build the note</string>
+    <string name="home_recovery_keep">Keep recording</string>
+    <string name="home_recovery_discard">Discard…</string>
+    <string name="home_recovery_later">Decide later</string>
+    <string name="home_recovery_typed">your typed notes</string>
+    <plurals name="home_recovery_lines">
+        <item quantity="one">%1$d transcript line</item>
+        <item quantity="other">%1$d transcript lines</item>
+    </plurals>
+    <string name="home_recovery_discard_title">Discard this recording?</string>
+    <string name="home_recovery_discard_body">The recovered transcript will be deleted permanently. It was never saved as a note, so this can\'t be undone.</string>
+    <string name="home_recovery_discard_confirm">Discard</string>
+    <string name="home_recovery_discard_keep">Keep it</string>
+    <string name="home_start_now_body">This meeting doesn\'t start for another %1$d minutes (%2$s). Start capturing now anyway?</string>
+    <string name="home_start_now">Start now</string>
+    <string name="home_start_wait">Wait</string>
 </resources>
