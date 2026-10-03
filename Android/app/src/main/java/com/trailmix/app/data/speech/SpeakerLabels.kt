@@ -38,8 +38,14 @@ object SpeakerLabels {
     /** Fewest Me-lane lines that can name a cluster Me; one stray line proves nothing. */
     private const val ME_CLUSTER_MIN_LINES = 2
 
-    fun apply(lines: List<TranscriptLine>, segments: List<SpeakerSegment>): List<TranscriptLine> {
-        if (segments.isEmpty()) return lines
+    fun apply(lines: List<TranscriptLine>, segments: List<SpeakerSegment>): List<TranscriptLine> =
+        applyDetailed(lines, segments).lines
+
+    /** [lines] labelled, plus which label each raw speaker tag ended up with. */
+    class Labelled(val lines: List<TranscriptLine>, val labelByTag: Map<Int, String>)
+
+    fun applyDetailed(lines: List<TranscriptLine>, segments: List<SpeakerSegment>): Labelled {
+        if (segments.isEmpty()) return Labelled(lines, emptyMap())
         val tags = clusterTags(lines, segments)
         val meTag = meCluster(lines, tags)
 
@@ -47,10 +53,11 @@ object SpeakerLabels {
         fun labelFor(tag: Int): String =
             if (tag == meTag) ME_LABEL else "Speaker ${displayNumberByTag.getOrPut(tag) { displayNumberByTag.size + 1 }}"
 
-        return lines.mapIndexed { i, line ->
+        val labelled = lines.mapIndexed { i, line ->
             val tag = tags[i] ?: return@mapIndexed line
             line.copy(speakerLabel = labelFor(tag))
         }
+        return Labelled(labelled, tags.filterNotNull().distinct().associateWith { labelFor(it) })
     }
 
     /** Segments moved [offsetSeconds] later, for audio that started after the timeline's zero. */

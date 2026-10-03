@@ -41,8 +41,13 @@ object SpeakerFusion {
         val display: String get() = if (confident) name else "$label ($name?)"
     }
 
-    fun apply(lines: List<TranscriptLine>, rosterEntries: List<String>, userName: String?): List<TranscriptLine> {
-        val assignments = assign(lines, rosterEntries, userName)
+    fun apply(
+        lines: List<TranscriptLine>,
+        rosterEntries: List<String>,
+        userName: String?,
+        voice: Map<String, VoiceMatch> = emptyMap(),
+    ): List<TranscriptLine> {
+        val assignments = assign(lines, rosterEntries, userName, voice)
         if (assignments.isEmpty()) return lines
         return lines.map { line ->
             val label = TranscriptLabels.speakerOf(line)
@@ -51,9 +56,20 @@ object SpeakerFusion {
         }
     }
 
-    fun assign(lines: List<TranscriptLine>, rosterEntries: List<String>, userName: String?): Map<String, Assignment> {
+    /**
+     * [voice] holds voiceprint matches (SPK-04) keyed by the speaker label they were measured
+     * for ("Speaker 2"); a voice match for a name on the roster adds to that name's score, and
+     * one for somebody not on the roster (a guest the user enrolled earlier) names the speaker
+     * on its own strength.
+     */
+    fun assign(
+        lines: List<TranscriptLine>,
+        rosterEntries: List<String>,
+        userName: String?,
+        voice: Map<String, VoiceMatch> = emptyMap(),
+    ): Map<String, Assignment> {
         val roster = Roster.parse(rosterEntries, userName)
-        if (roster.isEmpty) return emptyMap()
+        if (roster.isEmpty && voice.isEmpty()) return emptyMap()
         val labels = lines.map { TranscriptLabels.speakerOf(it) }
         val clusters = labels.filterNotNull().filter { it != ME && (it == THEM || ANONYMOUS.matches(it)) }.distinct()
         if (clusters.isEmpty()) return emptyMap()
@@ -73,6 +89,16 @@ object SpeakerFusion {
             }
             vote(target, cue.personIndex, cue.kind.weight)
         }
+        // A voice is not "Them" (the whole far end) and never the note-taker's own cluster.
+        val offRoster = HashMap<String, VoiceMatch>()
+        for ((label, match) in voice) {
+            if (label !in clusters || label == THEM || match.isMe) continue
+            val person = roster.indexOfName(match.name)
+            when {
+                person == null -> offRoster[label] = match
+                person != roster.meIndex -> vote(label, person, match.tierScore)
+            }
+        }
 
         // "Them" is the whole far end: one name fits only when there is exactly one other person.
         val pool = roster.people.indices.filter { it != roster.meIndex }
@@ -88,6 +114,22 @@ object SpeakerFusion {
             if (value - runnerUp < MARGIN) continue
             result[label] = Assignment(label, roster.people[person].display, value)
             taken += person
+        }
+
+        // The note-taker recognised by voice in a capture the lane could not label (speakerphone).
+        if (!labels.contains(ME)) {
+            for ((label, match) in voice) {
+                if (match.isMe && label in clusters && label != THEM && label !in result) {
+                    result[label] = Assignment(label, ME, match.tierScore)
+                    break
+                }
+            }
+        }
+
+        // An enrolled guest who is not on the calendar: the voice alone has to carry the name.
+        for ((label, match) in offRoster) {
+            if (label in result || result.values.any { it.name.equals(match.name, ignoreCase = true) }) continue
+            result[label] = Assignment(label, match.name, match.tierScore)
         }
 
         // A two-person meeting with a known note-taker: whoever is left is the other person.

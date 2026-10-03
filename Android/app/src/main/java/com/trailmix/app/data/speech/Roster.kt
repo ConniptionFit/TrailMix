@@ -23,6 +23,13 @@ class Roster private constructor(
 
     val isEmpty: Boolean get() = people.isEmpty()
 
+    /** The attendee that [name] (an enrolled person's name) refers to, or null if none or several do. */
+    fun indexOfName(name: String): Int? {
+        val tokens = nameTokens(name) ?: return null
+        people.indices.singleOrNull { people[it].tokens == tokens }?.let { return it }
+        return people.indices.singleOrNull { i -> people[i].aliases.any { it == tokens } }
+    }
+
     companion object {
         val EMPTY = Roster(emptyList(), null)
 
