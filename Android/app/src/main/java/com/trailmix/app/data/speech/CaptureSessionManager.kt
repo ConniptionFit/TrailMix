@@ -72,6 +72,7 @@ class CaptureSessionManager @Inject constructor(
     private val meetingSource: UpcomingMeetingSource,
     private val journal: CaptureJournalStore,
     private val speakerDiarizer: SpeakerDiarizer,
+    private val speakerRecognition: SpeakerRecognition,
 ) {
     private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
@@ -237,6 +238,15 @@ class CaptureSessionManager @Inject constructor(
     @Volatile
     private var diarizationConfiguredForSession = false
 
+    /**
+     * SPK-01: where on the transcript's timeline [audioRetention]'s first sample sits. A new
+     * session starts it at 0, but a resumed note or a recovered journal already has minutes of
+     * transcript before the first retained sample (audio is never persisted), so diarization
+     * segments (relative to the buffer) must be shifted by this before they meet the transcript
+     * labels (relative to the whole capture).
+     */
+    private var retentionBaseMs = 0L
+
     /** REL-09: last values written to the journal, so each flush only records what moved. */
     @Volatile
     private var journaled = JournalSnapshot()
@@ -397,6 +407,7 @@ class CaptureSessionManager @Inject constructor(
             } else {
                 null
             }
+            retentionBaseMs = priorDurationMs
             engine.setAudioSink(audioRetention)
             laneActivity = LaneActivity(clock = { currentDurationMs() }).also { engine.setLaneActivity(it) }
         }
@@ -809,6 +820,23 @@ class CaptureSessionManager @Inject constructor(
      * this that drifted would mean recovered notes were quietly second-class.
      */
     /**
+     * SPK-03: replace "Speaker N"/"Them" with a calendar attendee's name where the evidence is
+     * strong enough (see [SpeakerFusion]). Pure and fail-soft: any problem leaves the labels as
+     * they were. Skipped on a regeneration, whose stored transcript already carries its names.
+     */
+    private suspend fun nameSpeakers(
+        transcript: List<TranscriptLine>,
+        attendees: List<String>,
+        voice: Map<String, VoiceMatch>,
+    ): List<TranscriptLine> {
+        if (attendees.isEmpty() && voice.isEmpty()) return transcript
+        val userName = settingsRepository.userProfile.first().name.takeIf { it.isNotBlank() }
+        return runCatching { SpeakerFusion.apply(transcript, attendees, userName, voice) }
+            .onFailure { Log.w(TAG, "speaker naming failed, keeping anonymous labels: ${it.javaClass.simpleName}") }
+            .getOrDefault(transcript)
+    }
+
+    /**
      * AI-01: attach "Speaker N" labels via [speakerDiarizer] if this session actually retained
      * audio for it — which by itself already means the user had diarization on when the
      * session's mic last started (see [runListenSession]). Fully on-device, no account/key of
@@ -816,16 +844,23 @@ class CaptureSessionManager @Inject constructor(
      * unchanged on any problem: the buffer is empty, the model finds nothing, or the SDK throws.
      * This is a pure enhancement and must never block a note from saving.
      */
-    private suspend fun diarizeIfEnabled(transcript: List<TranscriptLine>): List<TranscriptLine> {
-        val buffer = audioRetention ?: return transcript
+    private suspend fun diarizeIfEnabled(transcript: List<TranscriptLine>): DiarizedTranscript {
+        val none = DiarizedTranscript(transcript, emptyMap())
+        val buffer = audioRetention ?: return none
         // One-shot: whether this succeeds or not, this buffer's job is done and it should not
         // be readable from any later, unrelated call into mergeAndSave.
         audioRetention = null
         val pcm = buffer.toShortArray()
-        if (pcm.isEmpty()) return transcript
-        val segments = speakerDiarizer.diarize(pcm)
-        return SpeakerLabels.apply(transcript, segments)
+        if (pcm.isEmpty()) return none
+        val result = speakerDiarizer.diarizeWithVoices(pcm)
+        val labelled = SpeakerLabels.applyDetailed(transcript, SpeakerLabels.shift(result.segments, retentionBaseMs / 1000f))
+        // SPK-04: each speaker's voice, keyed by the label the speaker carries in the transcript.
+        val voices = result.voices.mapNotNull { (tag, v) -> labelled.labelByTag[tag]?.let { it to v } }.toMap()
+        return DiarizedTranscript(labelled.lines, voices)
     }
+
+    /** SPK-04: a transcript with raw diarization labels, plus each labelled speaker's voice embedding. */
+    private class DiarizedTranscript(val lines: List<TranscriptLine>, val voices: Map<String, FloatArray>)
 
     @Suppress("LongParameterList")
     private suspend fun mergeAndSave(
@@ -852,7 +887,10 @@ class CaptureSessionManager @Inject constructor(
         if (MergePolicy.nothingToSave(typed, transcript)) return -1L
         // AI-01: attach "Speaker N" labels before anything downstream reads the transcript —
         // the structured-summary attribution and the saved note should both see them.
-        val diarizedTranscript = if (rediarize) diarizeIfEnabled(transcript) else transcript
+        val diarized = if (rediarize) diarizeIfEnabled(transcript) else DiarizedTranscript(transcript, emptyMap())
+        // SPK-04: who the enrolled voices say each speaker is (empty unless recognition is on).
+        val voiceMatches = if (rediarize) speakerRecognition.identify(diarized.voices) else emptyMap()
+        val diarizedTranscript = if (rediarize) nameSpeakers(diarized.lines, attendees, voiceMatches) else transcript
         val customTemplates = settingsRepository.customSummaryTemplates.first()
         // AI-20: "Auto" is resolved to a concrete template here, per merge; the note keeps
         // storing "AUTO" (the `template` param below is what gets saved) so a regenerate
@@ -882,7 +920,7 @@ class CaptureSessionManager @Inject constructor(
             // through to the foreground notification so the wait reads as work, not a hang.
             onProgress = ::publishMergeProgress,
         )
-        if (noteId > 0) {
+        val savedId = if (noteId > 0) {
             notesRepository.updateMergedNote(
                 id = noteId,
                 title = keepTitle ?: result.title,
@@ -899,23 +937,41 @@ class CaptureSessionManager @Inject constructor(
                 template = template,
                 flags = flags,
             )
-            return noteId
+            noteId
+        } else {
+            notesRepository.saveMergedNote(
+                title = result.title,
+                segments = result.segments,
+                transcript = diarizedTranscript,
+                typedFragments = typed,
+                durationMs = durationMs,
+                createdAtEpochMs = createdAtEpochMs,
+                mergedWithAi = result.usedOnDeviceAi,
+                meetingTitle = meetingTitle,
+                capturedInCall = capturedInCall,
+                attendees = attendees,
+                structuredSummary = result.structuredSummary,
+                template = template,
+                flags = flags,
+            )
         }
-        return notesRepository.saveMergedNote(
-            title = result.title,
-            segments = result.segments,
-            transcript = diarizedTranscript,
-            typedFragments = typed,
-            durationMs = durationMs,
-            createdAtEpochMs = createdAtEpochMs,
-            mergedWithAi = result.usedOnDeviceAi,
-            meetingTitle = meetingTitle,
-            capturedInCall = capturedInCall,
-            attendees = attendees,
-            structuredSummary = result.structuredSummary,
-            template = template,
-            flags = flags,
-        )
+        // SPK-04: keep each speaker's voice with the note so "remember this voice" works later,
+        // and learn the note-taker's own voice when the lanes were unambiguous. Fail-soft.
+        if (rediarize && savedId > 0 && diarized.voices.isNotEmpty()) {
+            runCatching {
+                speakerRecognition.learn(
+                    noteId = savedId,
+                    voices = diarized.voices,
+                    finalLabels = VoicePeople.finalLabels(diarized.lines, diarizedTranscript),
+                    labelled = diarized.lines,
+                    userName = settingsRepository.userProfile.first().name,
+                )
+            }.onFailure {
+                if (it is CancellationException) throw it
+                Log.w(TAG, "keeping speaker voices failed: ${it.javaClass.simpleName}")
+            }
+        }
+        return savedId
     }
 
     /**
