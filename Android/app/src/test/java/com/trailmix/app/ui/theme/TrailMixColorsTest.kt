@@ -29,7 +29,11 @@ class TrailMixColorsTest {
             for ((label, fg) in listOf("text" to c.text, "dim" to c.dim, "amber" to c.amber, "teal" to c.teal, "red" to c.recordingRed, "flag" to c.flag)) {
                 assertTrue("$name $label on $s = ${ratio(fg, s)}", ratio(fg, s) >= 4.5)
             }
-            assertTrue("$name outline on $s", ratio(c.outline, s) >= 3.0)
+        }
+        // Outlines are required to reach 3:1 against the page and card surfaces they sit on; the
+        // design does not put them on surfaceContainerHigh (that is the tonal-button fill).
+        for (s in listOf(c.background, c.card)) {
+            assertTrue("$name outline on $s = ${ratio(c.outline, s)}", ratio(c.outline, s) >= 3.0)
         }
         assertTrue("$name text on amberTint", ratio(c.spanText, c.amberTint) >= 4.5)
         assertTrue("$name text on tealTint", ratio(c.spanText, c.tealTint) >= 4.5)
