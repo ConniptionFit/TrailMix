@@ -9,10 +9,12 @@ import com.trailmix.app.data.db.NotesRepository
 import com.trailmix.app.data.export.ExportFormat
 import com.trailmix.app.data.media.MatchedPhoto
 import com.trailmix.app.data.media.PhotoSource
+import com.trailmix.app.data.model.StructuredSummary
 import com.trailmix.app.data.model.TemplateOption
 import com.trailmix.app.data.model.TemplateOptions
 import com.trailmix.app.data.settings.SettingsRepository
 import com.trailmix.app.data.speech.CaptureSessionManager
+import com.trailmix.app.data.speech.MergeStatus
 import com.trailmix.app.ui.home.ActiveCaptureUi
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -58,6 +60,14 @@ class NoteDetailViewModel @Inject constructor(
     /** True while a regeneration started from this screen is running (drives the disabled state). */
     val regenerating: StateFlow<Boolean> = _regenerating.asStateFlow()
 
+    /** Progress of the rebuild that is running (N6); null when nothing is merging. */
+    val mergeStatus: StateFlow<MergeStatus?> = captureSessionManager.mergeStatus
+
+    private val _rebuildTemplate = MutableStateFlow<String?>(null)
+
+    /** Stored template value the running rebuild uses, for the "Rebuilding as …" title. */
+    val rebuildTemplate: StateFlow<String?> = _rebuildTemplate.asStateFlow()
+
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 1)
 
     /** One-shot snackbar lines (refusal / failure). */
@@ -85,8 +95,10 @@ class NoteDetailViewModel @Inject constructor(
             return
         }
         _regenerating.value = true
+        _rebuildTemplate.value = template ?: current.template
         captureSessionManager.regenerateNote(noteId, template) { ok ->
             _regenerating.value = false
+            _rebuildTemplate.value = null
             if (!ok) _messages.tryEmit(RegeneratePolicy.failureMessage(null))
         }
     }
@@ -156,6 +168,29 @@ class NoteDetailViewModel @Inject constructor(
             notesRepository.updateNoteContent(noteId, title.trim(), body)
             onDone()
         }
+    }
+
+    /** Lets the screen put a one-off line (for example an export result) on the snackbar. */
+    fun postMessage(text: String) {
+        _messages.tryEmit(text)
+    }
+
+    /** N1: tick or untick a Next Step; the step stays where it is. */
+    fun setActionDone(index: Int, done: Boolean) {
+        viewModelScope.launch { notesRepository.setActionDone(noteId, index, done) }
+    }
+
+    /** N5: save the structure editor's result (title plus the edited summary). */
+    fun saveStructuredEdits(title: String, summary: StructuredSummary, onDone: () -> Unit) {
+        viewModelScope.launch {
+            notesRepository.saveStructuredEdits(noteId, title, summary)
+            onDone()
+        }
+    }
+
+    /** Overflow "Export now": reports whether the note reached the export folder. */
+    fun exportNow(onResult: (Boolean) -> Unit) {
+        viewModelScope.launch { onResult(notesRepository.exportNow(noteId)) }
     }
 
     /** UX-22: correct one transcript line in place, re-exporting so the file on disk picks it up. */

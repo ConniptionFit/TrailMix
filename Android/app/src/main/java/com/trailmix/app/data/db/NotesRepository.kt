@@ -621,6 +621,18 @@ class NotesRepository @Inject constructor(
         }
     }
 
+    /**
+     * N-menu "Export now": write this one note out and say whether it landed. False means no
+     * export location is set or the write failed; either way nothing else is touched.
+     */
+    suspend fun exportNow(id: Long): Boolean {
+        val note = noteDao.getById(id) ?: return false
+        val written = runCatching { exportSink.exportNote(note, latestRecipeOutputs(id)) }.getOrNull()
+            ?: return false
+        noteDao.setExportUris(id, written.note, written.transcript ?: note.transcriptFileUri)
+        return true
+    }
+
     private suspend fun exportIfConfigured(note: NoteEntity) {
         val outputs = latestRecipeOutputs(note.id)
         val written = runCatching { exportSink.exportNote(note, outputs) }.getOrNull() ?: return

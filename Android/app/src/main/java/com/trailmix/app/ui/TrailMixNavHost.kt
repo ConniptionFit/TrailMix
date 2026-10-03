@@ -119,7 +119,7 @@ fun TrailMixNavHost(navController: NavHostController = rememberNavController()) 
             val noteId = entry.arguments?.getLong("noteId") ?: return@composable
             NoteDetailScreen(
                 onBack = { navController.popBackStack() },
-                onOpenTranscript = { navController.navigate(Routes.transcript(noteId)) },
+                onOpenTranscript = { label -> navController.navigate(Routes.transcript(noteId, label)) },
                 onOpenChat = { navController.navigate(Routes.chat(noteId)) },
                 onResume = {
                     navController.navigate(Routes.resumeCapture(noteId)) {
