@@ -42,6 +42,13 @@ object RegeneratePolicy {
     /** Regenerating discards a hand-edited body (`bodyOverride`), so that needs a confirm. */
     fun needsOverwriteConfirm(bodyOverride: String?): Boolean = bodyOverride != null
 
+    /**
+     * N5: how many hand edits a rebuild would replace. A flat hand-edited body counts as one;
+     * structured edits count each changed heading, point and step. Zero means a plain "Rebuild".
+     */
+    fun editsToReplace(bodyOverride: String?, structuredEdits: Int): Int =
+        structuredEdits + if (bodyOverride != null) 1 else 0
+
     /** True when the raw-notes draft differs from what is stored (ignoring trailing blanks). */
     fun fragmentsChanged(stored: String, draft: String): Boolean = stored.trimEnd() != draft.trimEnd()
 

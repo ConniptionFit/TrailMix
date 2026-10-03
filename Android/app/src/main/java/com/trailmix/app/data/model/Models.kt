@@ -436,12 +436,20 @@ data class SummaryBullet(
      * every pre-AI-18 note and for deterministic bullets; stored under the additive `"d"` key.
      */
     val details: List<String> = emptyList(),
+    /**
+     * UX redesign (N5): true once the user has changed the wording by hand. Provenance
+     * ([source]) is kept, so an edited spoken line stays teal and is labelled "edited by you".
+     * Stored under the additive `"ed"` key; old notes decode false.
+     */
+    val edited: Boolean = false,
 )
 
 /** A topic-grouped block of bullets in the structured summary body. */
 data class SummarySection(
     val heading: String,
     val bullets: List<SummaryBullet>,
+    /** True once the user renamed the heading (counts toward the rebuild warning). */
+    val edited: Boolean = false,
 )
 
 /** An action item isolated from the rest of the summary — owner/deadline only when statable. */
@@ -453,6 +461,10 @@ data class ActionItem(
     val sourceExcerpt: String? = null,
     /** `mm:ss` capture offset of the originating transcript line, if any (AI-05). */
     val timestampLabel: String? = null,
+    /** UX redesign (N1): the Next Steps checkbox. Stored under the additive `"x"` key. */
+    val done: Boolean = false,
+    /** True once the user changed this step by hand (counts toward the rebuild warning). */
+    val edited: Boolean = false,
 )
 
 /**
@@ -516,6 +528,7 @@ object StructuredSummaryJson {
             b.sourceExcerpt?.let { put("e", it) }
             b.timestampLabel?.let { put("ts", it) }
             if (b.details.isNotEmpty()) put("d", JSONArray().apply { b.details.forEach { put(it) } })
+            if (b.edited) put("ed", true)
         }
 
     private fun bulletFromJson(o: JSONObject) = SummaryBullet(
@@ -526,6 +539,7 @@ object StructuredSummaryJson {
         details = o.optJSONArray("d")?.let { arr ->
             (0 until arr.length()).map { arr.optString(it) }.filter { it.isNotBlank() }
         }.orEmpty(),
+        edited = o.optBoolean("ed", false),
     )
 
     fun encode(summary: StructuredSummary): String {
@@ -538,7 +552,10 @@ object StructuredSummaryJson {
         summary.sections.forEach { section ->
             val bullets = JSONArray()
             section.bullets.forEach { bullets.put(bulletToJson(it)) }
-            sections.put(JSONObject().put("heading", section.heading).put("bullets", bullets))
+            sections.put(
+                JSONObject().put("heading", section.heading).put("bullets", bullets)
+                    .apply { if (section.edited) put("ed", true) },
+            )
         }
         root.put("sections", sections)
 
@@ -553,6 +570,8 @@ object StructuredSummaryJson {
                         item.deadline?.let { put("deadline", it) }
                         item.sourceExcerpt?.let { put("e", it) }
                         item.timestampLabel?.let { put("ts", it) }
+                        if (item.done) put("x", true)
+                        if (item.edited) put("ed", true)
                     },
             )
         }
@@ -574,7 +593,11 @@ object StructuredSummaryJson {
                     val bullets = o.optJSONArray("bullets")?.let { barr ->
                         (0 until barr.length()).map { bulletFromJson(barr.getJSONObject(it)) }
                     }.orEmpty()
-                    SummarySection(heading = o.getString("heading"), bullets = bullets)
+                    SummarySection(
+                        heading = o.getString("heading"),
+                        bullets = bullets,
+                        edited = o.optBoolean("ed", false),
+                    )
                 }
             }.orEmpty()
 
@@ -589,6 +612,8 @@ object StructuredSummaryJson {
                             .getOrDefault(Provenance.TRANSCRIPT),
                         sourceExcerpt = o.optString("e").takeIf { it.isNotBlank() },
                         timestampLabel = o.optString("ts").takeIf { it.isNotBlank() },
+                        done = o.optBoolean("x", false),
+                        edited = o.optBoolean("ed", false),
                     )
                 }
             }.orEmpty()

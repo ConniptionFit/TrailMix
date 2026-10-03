@@ -368,7 +368,9 @@ object NoteMarkdown {
     private fun actionItem(item: ActionItem, annotate: Boolean, format: ExportFormat): String {
         val plain = format == ExportFormat.PLAIN_TEXT
         // AI-18: "Owner: action (by deadline)" (shared with the screen via displayText()).
-        val box = if (plain) "[ ] " else "- [ ] "
+        // Obsidian round-trip: a checked Next Step exports as `- [x]`.
+        val mark = if (item.done) "x" else " "
+        val box = if (plain) "[$mark] " else "- [$mark] "
         return "$box${tag(item.source, item.timestampLabel, annotate)}${item.displayText()}"
     }
 

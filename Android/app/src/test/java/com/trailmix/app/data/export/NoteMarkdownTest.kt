@@ -138,6 +138,22 @@ class NoteMarkdownTest {
     }
 
     @Test
+    fun `a checked next step exports as a checked box`() {
+        val md = NoteMarkdown.buildNote(
+            source(
+                summary = summary.copy(
+                    actionItems = listOf(
+                        ActionItem("Send the deck.", done = true),
+                        ActionItem("Book the room."),
+                    ),
+                ),
+            ),
+        )
+        assertTrue(md.contains("- [x] Send the deck."))
+        assertTrue(md.contains("- [ ] Book the room."))
+    }
+
+    @Test
     fun `next steps render as Owner colon action by deadline`() {
         val md = NoteMarkdown.buildNote(
             source(

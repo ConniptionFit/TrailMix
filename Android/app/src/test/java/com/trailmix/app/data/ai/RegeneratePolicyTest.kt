@@ -45,6 +45,14 @@ class RegeneratePolicyTest {
     }
 
     @Test
+    fun `edits to replace combine a flat body and structured edits`() {
+        assertEquals(0, RegeneratePolicy.editsToReplace(null, 0))
+        assertEquals(1, RegeneratePolicy.editsToReplace("edited", 0))
+        assertEquals(4, RegeneratePolicy.editsToReplace("edited", 3))
+        assertEquals(3, RegeneratePolicy.editsToReplace(null, 3))
+    }
+
+    @Test
     fun `hand edits need a confirm, a clean note does not`() {
         assertTrue(RegeneratePolicy.needsOverwriteConfirm("edited"))
         assertTrue(RegeneratePolicy.needsOverwriteConfirm(""))
