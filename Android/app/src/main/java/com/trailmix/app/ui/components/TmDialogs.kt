@@ -13,6 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarDuration
@@ -26,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
@@ -99,6 +101,7 @@ fun TmSheetAction(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     drawable: Int? = null,
+    icon: ImageVector? = null,
     destructive: Boolean = false,
     enabled: Boolean = true,
 ) {
@@ -117,6 +120,7 @@ fun TmSheetAction(
         horizontalArrangement = Arrangement.spacedBy(TmSpacing.l),
     ) {
         if (drawable != null) TmIcon(drawable, null, tint = tint)
+        if (icon != null) Icon(icon, contentDescription = null, tint = tint)
         Text(label, style = TrailMix.type.body, color = tint)
     }
 }

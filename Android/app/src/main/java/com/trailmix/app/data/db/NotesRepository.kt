@@ -198,7 +198,9 @@ class NotesRepository @Inject constructor(
         val lines = existing.transcript
         if (lineIndex !in lines.indices) return
         val updatedLines = lines.toMutableList().apply {
-            this[lineIndex] = this[lineIndex].copy(text = newText)
+            val old = this[lineIndex]
+            // "edited" marks a real correction; re-saving the same text leaves the flag as it was.
+            this[lineIndex] = old.copy(text = newText, edited = old.edited || newText != old.text)
         }
         val updated = existing.copy(transcriptJson = TranscriptJson.encode(updatedLines))
         noteDao.update(updated)
