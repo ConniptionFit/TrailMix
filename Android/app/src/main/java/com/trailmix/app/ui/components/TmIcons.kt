@@ -37,6 +37,8 @@ object TmIcons {
     @DrawableRes val Calendar = R.drawable.ic_tm_calendar
     @DrawableRes val Delete = R.drawable.ic_tm_delete
     @DrawableRes val ContentCopy = R.drawable.ic_tm_content_copy
+    @DrawableRes val Send = R.drawable.ic_tm_send
+    @DrawableRes val Stop = R.drawable.ic_tm_stop
 }
 
 @Composable

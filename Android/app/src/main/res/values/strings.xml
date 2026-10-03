@@ -491,4 +491,32 @@
     <string name="home_start_now_body">This meeting doesn\'t start for another %1$d minutes (%2$s). Start capturing now anyway?</string>
     <string name="home_start_now">Start now</string>
     <string name="home_start_wait">Wait</string>
+
+    <!-- Chat (K1-K4) -->
+    <string name="chat_title">Chat</string>
+    <string name="chat_title_across">Chat across %1$d notes</string>
+    <string name="chat_input_hint">Ask about this note</string>
+    <string name="chat_input_hint_across">Ask across these notes</string>
+    <string name="chat_send">Send</string>
+    <string name="chat_stop">Stop</string>
+    <string name="chat_thinking">Thinking on this phone · %1$s</string>
+    <string name="chat_empty_title">Ask anything about this note</string>
+    <string name="chat_empty_title_across">Ask across these notes</string>
+    <string name="chat_empty_body">Answers come from the note and transcript, on this phone. Nothing is sent anywhere.</string>
+    <string name="chat_starters_label">Try asking</string>
+    <string name="chat_starter_decisions">What were the key decisions?</string>
+    <string name="chat_starter_commitments">What did I commit to?</string>
+    <string name="chat_starter_open">What is still open?</string>
+    <string name="chat_starter_across_agree">What do these notes agree on?</string>
+    <string name="chat_starter_across_changed">What changed between them?</string>
+    <string name="chat_starter_across_repeat">Which action items repeat?</string>
+    <string name="chat_no_ai_banner">SIMPLE VERSION · NO AI</string>
+    <string name="chat_no_ai_body">The on-device model isn\'t available, so chat can\'t answer yet. Your note and transcript are safe.</string>
+    <string name="chat_action_copy">Copy</string>
+    <string name="chat_action_copied">Copied</string>
+    <string name="chat_action_share">Share</string>
+    <string name="chat_action_add">Add to note</string>
+    <string name="chat_added_to_note">Added to the note under \"From chat\"</string>
+    <string name="chat_share_chooser">Share reply</string>
+    <string name="chat_recipe_label">Recipe · %1$s</string>
 </resources>

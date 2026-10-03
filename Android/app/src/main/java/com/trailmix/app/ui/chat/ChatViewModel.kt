@@ -3,6 +3,7 @@ package com.trailmix.app.ui.chat
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.trailmix.app.data.ai.AiAvailability
 import com.trailmix.app.data.ai.DEFAULT_RECIPES
 import com.trailmix.app.data.ai.OnDeviceAiProcessor
 import com.trailmix.app.data.ai.Recipe
@@ -12,7 +13,10 @@ import com.trailmix.app.data.db.NotesRepository
 import com.trailmix.app.data.settings.SettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -44,6 +48,46 @@ class ChatViewModel @Inject constructor(
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
 
+    private var inFlight: Job? = null
+
+    /** Null until the first check finishes; false shows the "simple version, no AI" banner. */
+    private val _aiAvailable = MutableStateFlow<Boolean?>(null)
+    val aiAvailable: StateFlow<Boolean?> = _aiAvailable.asStateFlow()
+
+    /** The note's title for the top bar; null until loaded. */
+    val noteTitle: StateFlow<String?> = notesRepository.observeNote(noteId)
+        .map { it?.title }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** "Add to note" needs a structured summary to append a section to; flat notes do not offer it. */
+    val canAddToNote: StateFlow<Boolean> = notesRepository.observeNote(noteId)
+        .map { it?.structuredSummary != null }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+
+    private val _addedToNote = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val addedToNote: SharedFlow<Unit> = _addedToNote
+
+    init {
+        viewModelScope.launch { _aiAvailable.value = aiProcessor.checkAvailability() is AiAvailability.Available }
+    }
+
+    /** K4: cancel the reply in flight. The question stays in the history; no answer is stored. */
+    fun stop() {
+        inFlight?.cancel()
+    }
+
+    /** K3: keep an answer by appending it to the note as a "From chat" section of typed points. */
+    fun addToNote(reply: String) {
+        viewModelScope.launch {
+            val note = notesRepository.observeNote(noteId).first() ?: return@launch
+            val summary = note.structuredSummary ?: return@launch
+            val updated = ChatToNote.append(summary, reply)
+            if (updated == summary) return@launch
+            notesRepository.saveStructuredEdits(noteId, note.title, updated)
+            _addedToNote.tryEmit(Unit)
+        }
+    }
+
     /**
      * AI-14 (2026-09-19): [com.trailmix.app.data.db.NoteEntity.segments]/`.transcript` are
      * getters that re-decode their JSON columns on every access — cheap for a short note, real
@@ -60,7 +104,7 @@ class ChatViewModel @Inject constructor(
     fun send(text: String) {
         val trimmed = text.trim()
         if (trimmed.isEmpty() || _busy.value) return
-        viewModelScope.launch {
+        inFlight = viewModelScope.launch {
             _busy.value = true
             try {
                 notesRepository.addChatMessage(noteId, "user", trimmed)
@@ -83,7 +127,7 @@ class ChatViewModel @Inject constructor(
 
     fun runRecipe(recipe: Recipe) {
         if (_busy.value) return
-        viewModelScope.launch {
+        inFlight = viewModelScope.launch {
             _busy.value = true
             try {
                 notesRepository.addChatMessage(noteId, "user", recipe.displayMessage())
