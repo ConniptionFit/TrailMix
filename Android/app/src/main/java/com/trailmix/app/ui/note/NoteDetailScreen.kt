@@ -142,13 +142,15 @@ fun NoteDetailScreen(
         structuredEdits = summary?.let(StructuredEdits::editCount) ?: 0,
     )
 
+    val shareChooserTitle = stringResource(R.string.note_share)
+
     fun shareNote(format: ExportFormat) {
         val sendIntent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_SUBJECT, current.title)
             putExtra(Intent.EXTRA_TEXT, current.toMarkdown(format = format))
         }
-        context.startActivity(Intent.createChooser(sendIntent, context.getString(R.string.note_share)))
+        context.startActivity(Intent.createChooser(sendIntent, shareChooserTitle))
     }
 
     fun enterEdit() {
