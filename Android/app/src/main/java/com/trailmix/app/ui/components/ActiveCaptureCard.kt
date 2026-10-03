@@ -16,8 +16,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.trailmix.app.R
-import com.trailmix.app.data.speech.CaptureUiState
 import com.trailmix.app.data.speech.MergeStatus
+import com.trailmix.app.ui.capture.CaptureUiState
 import com.trailmix.app.ui.home.ActiveCaptureUi
 import com.trailmix.app.ui.theme.TmSpacing
 import com.trailmix.app.ui.theme.TrailMix
