@@ -3,6 +3,7 @@ package com.trailmix.app.ui.chat
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.trailmix.app.data.ai.AiAvailability
 import com.trailmix.app.data.ai.CrossNoteRetrieval
 import com.trailmix.app.data.ai.OnDeviceAiProcessor
 import com.trailmix.app.data.db.ConversationKey
@@ -10,6 +11,7 @@ import com.trailmix.app.data.db.ConversationMessageEntity
 import com.trailmix.app.data.db.NotesRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -48,14 +50,25 @@ class CrossNoteChatViewModel @Inject constructor(
     private val _noteTitles = MutableStateFlow<List<String>>(emptyList())
     val noteTitles: StateFlow<List<String>> = _noteTitles.asStateFlow()
 
+    private var inFlight: Job? = null
+
+    private val _aiAvailable = MutableStateFlow<Boolean?>(null)
+    val aiAvailable: StateFlow<Boolean?> = _aiAvailable.asStateFlow()
+
+    /** K4: cancel the reply in flight. The question stays in the history; no answer is stored. */
+    fun stop() {
+        inFlight?.cancel()
+    }
+
     init {
+        viewModelScope.launch { _aiAvailable.value = aiProcessor.checkAvailability() is AiAvailability.Available }
         viewModelScope.launch { _noteTitles.value = notesRepository.getNotesByIds(noteIds).map { it.title } }
     }
 
     fun send(text: String) {
         val trimmed = text.trim()
         if (trimmed.isEmpty() || _busy.value) return
-        viewModelScope.launch {
+        inFlight = viewModelScope.launch {
             _busy.value = true
             try {
                 notesRepository.addConversationMessage(conversationKey, "user", trimmed)
