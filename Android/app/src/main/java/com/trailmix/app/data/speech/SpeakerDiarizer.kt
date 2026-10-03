@@ -19,4 +19,15 @@ interface SpeakerDiarizer {
      * diarization is a pure enhancement and must never block a merge/save.
      */
     suspend fun diarize(pcm: ShortArray): List<SpeakerSegment>
+
+    /**
+     * SPK-04: [diarize] plus one voice embedding per speaker tag (a unit vector summarising how
+     * that speaker sounds across the whole session). Backends that cannot produce embeddings
+     * keep this default, which returns the segments with no voices, and everything downstream
+     * simply has no voiceprint evidence.
+     */
+    suspend fun diarizeWithVoices(pcm: ShortArray): DiarizationResult = DiarizationResult(diarize(pcm), emptyMap())
 }
+
+/** [segments] with, per [SpeakerSegment.speakerTag], that speaker's session-wide [voices] embedding. */
+class DiarizationResult(val segments: List<SpeakerSegment>, val voices: Map<Int, FloatArray>)
