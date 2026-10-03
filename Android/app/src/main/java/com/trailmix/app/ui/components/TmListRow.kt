@@ -85,6 +85,7 @@ fun TmNavRow(
     modifier: Modifier = Modifier,
     subtitle: String? = null,
     leading: (@Composable () -> Unit)? = null,
+    enabled: Boolean = true,
 ) {
     TmListRow(
         title = title,
@@ -92,6 +93,7 @@ fun TmNavRow(
         leading = leading,
         modifier = modifier,
         onClick = onClick,
+        enabled = enabled,
         trailing = {
             Icon(
                 Icons.AutoMirrored.Filled.KeyboardArrowRight,
