@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -78,6 +79,7 @@ fun TranscriptScreen(
     val defaultExportFormat by viewModel.exportFormat.collectAsStateWithLifecycle()
     val c = TrailMix.colors
     val context = LocalContext.current
+    val resources = LocalResources.current
     val clipboard = LocalClipboardManager.current
 
     var showFormatPicker by remember { mutableStateOf(false) }
@@ -135,7 +137,7 @@ fun TranscriptScreen(
                     putExtra(Intent.EXTRA_SUBJECT, title)
                     putExtra(Intent.EXTRA_TEXT, text)
                 },
-                context.getString(R.string.transcript_share_quote_chooser),
+                resources.getString(R.string.transcript_share_quote_chooser),
             ),
         )
     }
@@ -153,7 +155,7 @@ fun TranscriptScreen(
                     putExtra(Intent.EXTRA_SUBJECT, title)
                     putExtra(Intent.EXTRA_TEXT, body)
                 },
-                context.getString(R.string.transcript_share_chooser),
+                resources.getString(R.string.transcript_share_chooser),
             ),
         )
     }
