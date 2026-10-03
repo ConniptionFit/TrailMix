@@ -106,6 +106,9 @@ class CaptureJournalStore internal constructor(private val dir: File) {
     /** CAP-24: one flagged moment, same single-threaded write path as [line]. */
     fun flag(label: String) = write(CaptureJournal.flagRecord(label))
 
+    /** C10: the user undid a flag; append-only, so this is a new record, not an edit. */
+    fun unflag(label: String) = write(CaptureJournal.unflagRecord(label))
+
     /** [CaptureJournal.deltaRecord] returns null when nothing changed — then there is nothing to write. */
     fun delta(record: String?) {
         if (record != null) write(record)

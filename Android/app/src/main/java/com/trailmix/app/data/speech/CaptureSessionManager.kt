@@ -115,6 +115,15 @@ class CaptureSessionManager @Inject constructor(
 
     private val scope = CoroutineScope(SupervisorJob() + crashGuard)
 
+    /**
+     * C1: live input level 0..1 at ~10 Hz for the recording indicator. Deliberately its own
+     * flow rather than a [CaptureUiState] field: that state is collected by whole screens, and
+     * copying it ten times a second would recompose all of them for a purely local animation
+     * (the same lesson as PERF-04's 1 Hz chip tick).
+     */
+    private val _level = MutableStateFlow(0f)
+    val level: StateFlow<Float> = _level.asStateFlow()
+
     /** The user's own typed fragments — a live textarea buffer. */
     val fragments = MutableStateFlow("")
 
@@ -491,6 +500,13 @@ class CaptureSessionManager @Inject constructor(
             }
         }
         tickerJob = scope.launch {
+            // C1: child of the ticker job, so pause/stop cancel it with the ticker.
+            launch {
+                while (isActive) {
+                    _level.value = laneActivity?.recentLevel() ?: 0f
+                    delay(LEVEL_POLL_MS)
+                }
+            }
             while (isActive) {
                 val peak = engine.readAndResetPlaybackPeak()
                 silentSeconds = when {
@@ -523,6 +539,7 @@ class CaptureSessionManager @Inject constructor(
                         elapsedBaseMs = elapsedBaseMs(),
                         deviceAudioActive = engine.deviceAudioActive.value,
                         deviceAudioSilent = silentSeconds >= SILENT_HINT_AFTER_S,
+                        flagCount = transcriptLog.flagCount(),
                     )
                 }
                 delay(1_000)
@@ -593,6 +610,7 @@ class CaptureSessionManager @Inject constructor(
         val note = notesRepository.getNote(resumeNoteId) ?: return
         _liveLines.value = transcriptLog.replaceLines(note.transcript)
         transcriptLog.replaceFlags(note.flaggedLabels)
+        _state.update { it.copy(flagCount = transcriptLog.flagCount()) }
         // AI-11: baseline at the resumed length, not 0 — only newly-spoken content after the
         // resume should trigger a (re-)summarization pass, not the whole pre-existing transcript.
         _rollingSummary.value = null
@@ -1102,7 +1120,16 @@ class CaptureSessionManager @Inject constructor(
         val label = elapsedLabel()
         transcriptLog.appendFlag(label)
         journal.flag(label)
+        _state.update { it.copy(flagCount = transcriptLog.flagCount()) }
         return label
+    }
+
+    /** C10: Undo for a just-added flag. Returns whether a flag was actually removed. */
+    fun unflagMoment(label: String): Boolean {
+        if (!transcriptLog.removeFlag(label)) return false
+        journal.unflag(label)
+        _state.update { it.copy(flagCount = transcriptLog.flagCount()) }
+        return true
     }
 
     /** CAP-12: (re)starts the "still recording?" countdown. Called every time recording
@@ -1245,6 +1272,7 @@ class CaptureSessionManager @Inject constructor(
         fragments.value = recovered.typedFragments
         _liveLines.value = transcriptLog.replaceLines(recovered.transcript)
         transcriptLog.replaceFlags(recovered.flags.map { it.label })
+        _state.update { it.copy(flagCount = transcriptLog.flagCount()) }
         // AI-11: same reasoning as applyResume() — only content recognized after the recovery
         // continues should trigger a fresh pass, not the whole journal-recovered transcript.
         _rollingSummary.value = null
@@ -1380,7 +1408,7 @@ class CaptureSessionManager @Inject constructor(
         scope.launch { refreshRecovery() }
     }
 
-    private companion object {
+    internal companion object {
         const val TAG = "TrailMixSession"
 
         /**
@@ -1400,6 +1428,9 @@ class CaptureSessionManager @Inject constructor(
 
         const val SILENCE_PEAK = 64
         const val SILENT_HINT_AFTER_S = 5
+
+        /** C1: how often the level flow samples [LaneActivity.recentLevel]. */
+        const val LEVEL_POLL_MS = 100L
 
         /**
          * REL-09: how often the session's metadata (elapsed duration, typed fragments,

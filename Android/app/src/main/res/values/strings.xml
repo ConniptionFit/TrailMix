@@ -1,4 +1,112 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">TrailMix</string>
+
+    <!-- Shared -->
+    <string name="action_cancel">Cancel</string>
+    <string name="action_close">Close</string>
+    <string name="action_back">Back</string>
+    <string name="action_got_it">Got it</string>
+    <string name="action_try_again">Try again</string>
+    <string name="action_undo">Undo</string>
+    <string name="action_more_options">More options</string>
+
+    <!-- Capture: top bar and status -->
+    <string name="capture_minimise">Back to Home. Recording continues.</string>
+    <string name="capture_from_calendar">From calendar · %1$s</string>
+    <string name="capture_status_mic">Mic</string>
+    <string name="capture_status_mic_and_phone">Mic + phone audio</string>
+    <string name="capture_state_recording">Recording</string>
+    <string name="capture_state_paused">Paused</string>
+    <string name="capture_silence_hint">Not hearing anything yet. Check the mic in ⋮.</string>
+    <string name="capture_device_audio_silent">No phone audio detected. The app playing it may not allow capture (calls never do). The mic is still listening.</string>
+    <string name="capture_paused_title">Not listening</string>
+    <string name="capture_paused_body">Nothing is transcribed while paused. Typed notes still save.</string>
+
+    <!-- Capture: transcript -->
+    <string name="capture_transcript_header">LIVE TRANSCRIPT</string>
+    <string name="capture_transcript_title">Live transcript</string>
+    <string name="capture_transcript_expand">Show the full transcript</string>
+    <string name="capture_transcript_empty">Listening…</string>
+    <string name="capture_transcript_latest">Latest</string>
+
+    <!-- Capture: notes -->
+    <string name="capture_notes_header">YOUR NOTES</string>
+    <string name="capture_notes_placeholder">Type rough notes. They\'ll be merged with what was said. Start a line with # for a topic, or end it with ? for an open question.</string>
+    <string name="capture_chip_heading">Heading</string>
+    <string name="capture_chip_question">Question</string>
+    <string name="capture_so_far">SO FAR</string>
+
+    <!-- Capture: dock -->
+    <string name="capture_pause">Pause</string>
+    <string name="capture_resume">Resume</string>
+    <string name="capture_flag">Flag this moment</string>
+    <string name="capture_flag_with_count">Flag this moment. %1$d flagged so far.</string>
+    <string name="capture_flagged">Flagged %1$s</string>
+    <string name="capture_end_and_merge">End &amp; merge</string>
+    <string name="capture_save_notes">Save notes</string>
+
+    <!-- Capture: failures -->
+    <string name="capture_error_mic_title">Can\'t use the microphone</string>
+    <string name="capture_error_mic_body">Another app or a call may be using it. Your typed notes still save.</string>
+    <string name="capture_error_recognizer_title">Transcription stopped</string>
+    <string name="capture_error_recognizer_body">The mic is fine. Tap Try again; your typed notes still save.</string>
+    <string name="capture_error_no_recognizer_title">This phone can\'t transcribe on its own</string>
+    <string name="capture_error_no_recognizer_body">You can still type notes and build them into a note.</string>
+    <string name="capture_error_denied_title">TrailMix can\'t hear anything yet</string>
+    <string name="capture_error_denied_body">Microphone access is off. Turn it on in Android settings to record.</string>
+    <string name="capture_open_android_settings">Open Android settings</string>
+
+    <!-- Capture: first-run permissions -->
+    <string name="capture_perm_title">Two permissions, then you\'re recording</string>
+    <string name="capture_perm_mic_title">Microphone</string>
+    <string name="capture_perm_mic_body">To transcribe on this phone. The audio itself is never saved.</string>
+    <string name="capture_perm_notif_title">Notifications</string>
+    <string name="capture_perm_notif_body">So you can pause or stop from anywhere, and hear when a note is ready. Optional.</string>
+    <string name="capture_perm_note">If you say no to the microphone you can still type notes. You can turn it on later in Android settings.</string>
+    <string name="capture_perm_continue">Continue</string>
+
+    <!-- Capture: options sheet -->
+    <string name="capture_options_title">Recording options</string>
+    <string name="capture_options_listen_to">LISTEN TO</string>
+    <string name="capture_options_phone_audio">Also hear what the phone plays</string>
+    <string name="capture_options_phone_audio_body">For calls and video. Audio only, never the screen.</string>
+    <string name="capture_options_phone_audio_unsupported">Needs the on-device recognizer</string>
+    <string name="capture_options_template">Template · %1$s</string>
+    <string name="capture_options_template_body">Optional. You can change it after the note is built.</string>
+    <string name="capture_options_hear">What can TrailMix hear?</string>
+    <string name="capture_options_output">Output device…</string>
+    <string name="capture_options_discard">Discard recording…</string>
+    <string name="capture_recognizer_mlkit">Speech: on-device recognizer</string>
+    <string name="capture_recognizer_legacy">Speech: system recognizer (mic only)</string>
+    <string name="capture_recognizer_none">No speech recognizer available</string>
+    <string name="capture_template_title">Template</string>
+
+    <!-- Capture: dialogs -->
+    <string name="capture_discard_title_recording">Discard this recording?</string>
+    <string name="capture_discard_title_paused">Discard this paused recording?</string>
+    <string name="capture_discard_body">The transcript and your typed notes from this session will be deleted. This can\'t be undone.</string>
+    <string name="capture_discard_keep">Keep recording</string>
+    <string name="capture_discard_confirm">Discard</string>
+    <string name="capture_hear_title">What can TrailMix hear?</string>
+    <string name="capture_hear_body">Microphone: always works. In-person conversation, speakerphone, anything the mic can hear.\n\nPhone audio (opt-in in Recording options): works for most apps, such as browsers, podcasts, games and most video players.\n\nWhat can\'t be captured:\n• YouTube and DRM or streaming apps. They opt out of capture, and Android enforces it.\n• The other side of phone and VoIP calls. Android never shares call audio with any app.\n\nFor those, put the call or video on speakerphone and let the mic pick it up.\n\nTrailMix can\'t tell up front whether an app allows capture. If phone audio stays silent, a hint appears on this screen.</string>
+    <string name="capture_projection_title">Hear what your phone plays</string>
+    <string name="capture_projection_body">To transcribe meetings and videos, TrailMix can listen to the audio other apps play.\n\nAndroid only grants that through its screen-share permission, so the next dialog will mention your screen. TrailMix only receives the audio stream. It never records, stores or sees your screen.\n\nAndroid blocks every app from hearing protected voice-call audio, and some apps opt out of capture entirely.</string>
+    <string name="capture_projection_continue">Continue</string>
+    <string name="capture_projection_not_now">Not now</string>
+    <string name="capture_call_ended_title">Call ended</string>
+    <string name="capture_call_ended_body">The call this note was tracking just ended. Finish and save it now, or keep it running. You can pause and come back to it later.</string>
+    <string name="capture_call_ended_now">Finish now</string>
+    <string name="capture_call_ended_later">Finish later</string>
+
+    <!-- Capture: merging -->
+    <string name="capture_merge_title">Building your note</string>
+    <string name="capture_merge_detail">%1$s of conversation, on this phone. This can take a few minutes.</string>
+    <string name="capture_merge_step_transcript">Transcript finished · %1$d lines</string>
+    <string name="capture_merge_step_notes">Your notes lined up · %1$d lines</string>
+    <string name="capture_merge_step_summarizing">Summarizing topics</string>
+    <string name="capture_merge_step_summarizing_count">Summarizing topics · %1$s</string>
+    <string name="capture_merge_step_writing">Writing the note</string>
+    <string name="capture_merge_back_home">Back to Home</string>
+    <string name="capture_merge_safe">Safe to leave. It keeps working in the background and the notification tells you when it\'s ready. Your transcript and notes are already saved.</string>
 </resources>

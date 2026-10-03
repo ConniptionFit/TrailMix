@@ -31,6 +31,11 @@ class LaneActivity(
     private val themRms = FloatArray(capacity)
     private val themLive = BooleanArray(capacity) // playback lane attached for this bucket
 
+    // C1: the most recent chunk's loudest-lane RMS and when it arrived, for the live level meter.
+    // Two independent volatiles: a torn read just shows one stale frame of a 10 Hz meter.
+    @Volatile private var lastRms = 0f
+    @Volatile private var lastRmsAtNanos = 0L
+
     /**
      * Record one chunk, *before* playback is mixed into [mic]. [playbackAttached] is whether the
      * device-audio lane is currently running at all (distinct from it being silent): it is what
@@ -52,6 +57,8 @@ class LaneActivity(
 
     /** Core of [record] with the energies already computed — the seam tests drive directly. */
     fun recordAt(nowMs: Long, micRms: Float, playbackRms: Float, playbackAttached: Boolean) {
+        lastRms = maxOf(micRms, playbackRms)
+        lastRmsAtNanos = System.nanoTime()
         if (nowMs < 0) return
         val idx = nowMs / BUCKET_MS
         val slot = (idx % capacity).toInt()
@@ -77,6 +84,17 @@ class LaneActivity(
     fun sourceForLine(prevLineMs: Long, nowMs: Long): SpeechSource? {
         val from = if (prevLineMs < 0) nowMs - MAX_UTTERANCE_MS else maxOf(prevLineMs, nowMs - MAX_UTTERANCE_MS)
         return dominantLane(from, nowMs)
+    }
+
+    /**
+     * C1: current input level for the recording indicator, 0..1. Returns 0 once no chunk has
+     * arrived for [LEVEL_STALE_MS] (a stalled or released pump must read as silence, not freeze
+     * on the last loud frame). Nothing is stored beyond the single latest value, and no audio is
+     * retained.
+     */
+    fun recentLevel(): Float {
+        val age = (System.nanoTime() - lastRmsAtNanos) / 1_000_000L
+        return if (lastRmsAtNanos == 0L || age > LEVEL_STALE_MS) 0f else levelOf(lastRms)
     }
 
     /** Drop everything — a new session must not inherit the previous one's timeline. */
@@ -141,6 +159,19 @@ class LaneActivity(
 
         /** Mean per-bucket RMS (16-bit scale) below which the span is treated as silence. */
         const val QUIET_RMS = 150.0
+
+        /** A level older than this reads as silence. */
+        const val LEVEL_STALE_MS = 400L
+
+        /** RMS (16-bit scale) that fills the whole meter; ordinary speech sits well below it. */
+        const val LEVEL_FULL_SCALE_RMS = 6_000f
+
+        /**
+         * Maps RMS to 0..1 with a square-root curve: perceived loudness is roughly logarithmic,
+         * and a linear map leaves conversational speech (RMS in the low hundreds to ~2,000)
+         * flickering in the bottom tenth of the meter.
+         */
+        fun levelOf(rms: Float): Float = sqrt((rms / LEVEL_FULL_SCALE_RMS).coerceIn(0f, 1f))
 
         /** Root-mean-square of the first [count] samples. */
         fun rms(samples: ShortArray, count: Int): Float {

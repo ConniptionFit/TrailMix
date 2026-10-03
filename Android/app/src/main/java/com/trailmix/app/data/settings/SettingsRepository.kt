@@ -48,6 +48,7 @@ class SettingsRepository @Inject constructor(
     private val vocabularyKey = stringPreferencesKey("vocabulary_terms")
     private val userProfileKey = stringPreferencesKey("user_profile")
     private val speakerDiarizationEnabledKey = booleanPreferencesKey("speaker_diarization_enabled")
+    private val prePermissionShownKey = booleanPreferencesKey("pre_permission_shown")
     private val speakerRecognitionEnabledKey = booleanPreferencesKey("speaker_recognition_enabled")
 
     // Retired keys, deliberately no longer read or written:
@@ -59,6 +60,14 @@ class SettingsRepository @Inject constructor(
     /** G2: System / Light / Dark. A legacy boolean override migrates on read (see [ThemeMode.resolve]). */
     val themeMode: Flow<ThemeMode> = context.dataStore.data.map {
         ThemeMode.resolve(it[themeModeKey], it[darkModeOverrideKey])
+    }
+
+    /** C5: whether the "two permissions, then you're recording" screen has been shown once. */
+    val prePermissionShown: Flow<Boolean> =
+        context.dataStore.data.map { it[prePermissionShownKey] ?: false }
+
+    suspend fun markPrePermissionShown() {
+        context.dataStore.edit { it[prePermissionShownKey] = true }
     }
 
     /** Whether the one-time "audio only, not your screen" explainer has been shown. */

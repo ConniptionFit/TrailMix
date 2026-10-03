@@ -37,6 +37,15 @@ class TranscriptLog {
         flagLabels += label
     }
 
+    /** Removes the **last** flag with [label] (the Undo on a just-added flag). Returns whether one was removed. */
+    fun removeFlag(label: String): Boolean = synchronized(lock) {
+        val at = flagLabels.lastIndexOf(label)
+        if (at >= 0) flagLabels.removeAt(at)
+        at >= 0
+    }
+
+    fun flagCount(): Int = synchronized(lock) { flagLabels.size }
+
     fun lineSnapshot(): List<TranscriptLine> = synchronized(lock) { lines.toList() }
 
     fun flagSnapshot(): List<String> = synchronized(lock) { flagLabels.toList() }

@@ -71,4 +71,28 @@ class MergeStatusTest {
         val progressed = started.copy(chunksDone = 2, chunksTotal = 5)
         assertEquals("Front of House Architecture", progressed.title)
     }
+
+    @Test
+    fun `progress and counter are null while indeterminate`() {
+        val status = MergeStatus("Standup", chunksDone = 0, chunksTotal = 1)
+        assertEquals(null, status.progress())
+        assertEquals(null, status.counter())
+        assertEquals(MergeStage.WORKING, status.stage())
+    }
+
+    @Test
+    fun `counter counts the chunk being worked on and progress the chunks finished`() {
+        val status = MergeStatus("Keynote", chunksDone = 2, chunksTotal = 6)
+        assertEquals("3 of 6", status.counter())
+        assertEquals(2f / 6f, status.progress()!!, 1e-6f)
+        assertEquals(MergeStage.SUMMARIZING, status.stage())
+    }
+
+    @Test
+    fun `when every chunk is done the counter stops at the total and the stage is writing`() {
+        val status = MergeStatus("Keynote", chunksDone = 6, chunksTotal = 6)
+        assertEquals("6 of 6", status.counter())
+        assertEquals(1f, status.progress()!!, 1e-6f)
+        assertEquals(MergeStage.WRITING, status.stage())
+    }
 }
