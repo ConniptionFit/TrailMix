@@ -149,8 +149,9 @@ class NoteMarkdownTest {
                 ),
             ),
         )
-        assertTrue(md.contains("- [x] Send the deck."))
-        assertTrue(md.contains("- [ ] Book the room."))
+        // The provenance tag may sit between the box and the text, so check each on its own line.
+        assertTrue(md.lines().any { it.startsWith("- [x] ") && it.endsWith("Send the deck.") })
+        assertTrue(md.lines().any { it.startsWith("- [ ] ") && it.endsWith("Book the room.") })
     }
 
     @Test
