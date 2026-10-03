@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /** A selectable input in the capture menu; null device = automatic routing. */
@@ -81,6 +82,8 @@ data class CaptureUiState(
      * (AudioManager left call/communication mode) while still recording. Screen shows a
      * "finish now or later?" dialog; [CaptureSessionManager.consumeCallEndedPrompt] clears it. */
     val callEndedPrompt: Boolean = false,
+    /** C10: flags added so far, for the dock's badge. Flag times themselves live in the session. */
+    val flagCount: Int = 0,
 ) {
     companion object {
         /**
@@ -106,7 +109,7 @@ data class CaptureUiState(
 class CaptureViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val manager: CaptureSessionManager,
-    settingsRepository: SettingsRepository,
+    private val settingsRepository: SettingsRepository,
 ) : ViewModel() {
 
     private val requestedResumeNoteId: Long =
@@ -151,6 +154,21 @@ class CaptureViewModel @Inject constructor(
         manager.beginSession(requestedResumeNoteId, requestedTitle)
     }
 
+    /** C5: null until the preference has loaded, so the intro never flashes for a returning user. */
+    val prePermissionShown: StateFlow<Boolean?> = settingsRepository.prePermissionShown
+        .map<Boolean, Boolean?> { it }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    fun markPrePermissionShown() {
+        viewModelScope.launch { settingsRepository.markPrePermissionShown() }
+    }
+
+    /** C4: "Try again" after a mic/recognizer failure: release and re-acquire the listen session. */
+    fun retryListening() {
+        manager.pause()
+        manager.resume()
+    }
+
     fun setTemplate(stored: String) = manager.setTemplate(stored)
 
     fun requestDeviceAudio() = manager.requestDeviceAudio()
@@ -169,6 +187,12 @@ class CaptureViewModel @Inject constructor(
 
     /** CAP-24: flag the current moment; returns its `mm:ss` label for an on-screen confirmation, or null if there's nothing to flag right now (not recording/paused). */
     fun flagMoment(): String? = manager.flagMoment()
+
+    /** C10: Undo for the flag [flagMoment] just returned. */
+    fun unflagMoment(label: String): Boolean = manager.unflagMoment(label)
+
+    /** C1: live input level 0..1 at ~10 Hz. Separate from [state] on purpose; see the manager. */
+    val level: StateFlow<Float> = manager.level
 
     fun endAndMerge(onDone: (Long) -> Unit) = manager.endAndMerge(onDone)
 

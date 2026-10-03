@@ -119,4 +119,24 @@ class LaneActivityTest {
         }
         assertEquals(SpeechSource.THEM, a.dominantLane(0, 2_900))
     }
+
+    @Test
+    fun `levelOf is monotonic bounded and lifts quiet speech above a linear map`() {
+        assertEquals(0f, LaneActivity.levelOf(0f), 0f)
+        assertEquals(1f, LaneActivity.levelOf(LaneActivity.LEVEL_FULL_SCALE_RMS), 1e-6f)
+        assertEquals(1f, LaneActivity.levelOf(1e9f), 0f)
+        assertEquals(0f, LaneActivity.levelOf(-5f), 0f)
+        assertTrue(LaneActivity.levelOf(300f) > 300f / LaneActivity.LEVEL_FULL_SCALE_RMS)
+        assertTrue(LaneActivity.levelOf(900f) > LaneActivity.levelOf(300f))
+    }
+
+    @Test
+    fun `recentLevel is zero before any chunk and tracks the louder lane afterwards`() {
+        val a = activity()
+        assertEquals(0f, a.recentLevel(), 0f)
+        a.recordAt(0, 1_500f, 0f, false)
+        assertEquals(LaneActivity.levelOf(1_500f), a.recentLevel(), 1e-6f)
+        a.recordAt(100, 200f, 3_000f, true)
+        assertEquals(LaneActivity.levelOf(3_000f), a.recentLevel(), 1e-6f)
+    }
 }

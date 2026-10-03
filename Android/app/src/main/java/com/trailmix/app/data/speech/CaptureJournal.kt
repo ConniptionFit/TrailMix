@@ -52,6 +52,7 @@ object CaptureJournal {
     private const val KIND_DELTA = "d"
     private const val KIND_END = "e"
     private const val KIND_FLAG = "f"
+    private const val KIND_UNFLAG = "u"
 
     /** CAP-24: a user-flagged moment during capture — just the timestamp, nothing else. */
     data class CaptureFlag(val label: String)
@@ -163,6 +164,17 @@ object CaptureJournal {
             .put("l", label)
             .toString()
 
+    /**
+     * C10: the user tapped Undo on a flag. Replay removes the **last** flag with this [label];
+     * the journal stays append-only (the original flag record is never edited or deleted), so a
+     * crash between the two records still recovers a flag rather than losing one.
+     */
+    fun unflagRecord(label: String): String =
+        JSONObject()
+            .put(KEY_KIND, KIND_UNFLAG)
+            .put("l", label)
+            .toString()
+
     // ── Replay ─────────────────────────────────────────────────────────────
 
     /**
@@ -229,6 +241,12 @@ object CaptureJournal {
                 KIND_FLAG -> {
                     val label = o.optString("l")
                     if (label.isNotBlank()) flags += CaptureFlag(label)
+                }
+
+                KIND_UNFLAG -> {
+                    val label = o.optString("l")
+                    val at = flags.indexOfLast { it.label == label }
+                    if (at >= 0) flags.removeAt(at)
                 }
 
                 KIND_END -> closed = true

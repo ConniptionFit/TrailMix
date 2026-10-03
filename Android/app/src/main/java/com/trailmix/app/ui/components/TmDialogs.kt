@@ -8,7 +8,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ModalBottomSheet
@@ -160,4 +162,31 @@ fun TmSnackbarHost(state: SnackbarHostState, modifier: Modifier = Modifier) {
             },
         ) { Text(data.visuals.message, style = TrailMix.type.bodySmall) }
     }
+}
+
+/** A dialog with one dismiss button, for explanations that offer no choice. */
+@Composable
+fun TmInfoDialog(
+    title: String,
+    body: String,
+    dismissLabel: String,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = modifier,
+        shape = TrailMix.shapes.large,
+        containerColor = TrailMix.colors.card,
+        title = { Text(title, style = TrailMix.type.title, color = TrailMix.colors.text) },
+        text = {
+            Text(
+                body,
+                style = TrailMix.type.bodySmall,
+                color = TrailMix.colors.dim,
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+            )
+        },
+        confirmButton = { TmTextButton(dismissLabel, onClick = onDismiss) },
+    )
 }

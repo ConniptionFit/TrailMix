@@ -34,6 +34,21 @@ data class MergeStatus(
         else -> WRITING
     }
 
+    /** C8: 0..1 for a determinate bar, or null while only "working" can be said honestly. */
+    fun progress(): Float? =
+        if (indeterminate) null else (chunksDone.toFloat() / chunksTotal).coerceIn(0f, 1f)
+
+    /** C8: "3 of 6" for the counter beside the title, or null when [indeterminate]. */
+    fun counter(): String? =
+        if (indeterminate) null else "${(chunksDone + 1).coerceAtMost(chunksTotal)} of $chunksTotal"
+
+    /** C8: what the current step is called in the step list; no counter, no ellipsis. */
+    fun stage(): MergeStage = when {
+        chunksTotal <= 1 -> MergeStage.WORKING
+        chunksDone < chunksTotal -> MergeStage.SUMMARIZING
+        else -> MergeStage.WRITING
+    }
+
     /** True while there is no meaningful fraction to draw — the bar should spin, not fill. */
     val indeterminate: Boolean get() = chunksTotal <= 1
 
@@ -42,3 +57,6 @@ data class MergeStatus(
         const val WRITING = "Writing the note…"
     }
 }
+
+/** C7/C8: the coarse stages the UI lists. Derived from [MergeStatus], never stored. */
+enum class MergeStage { WORKING, SUMMARIZING, WRITING }
