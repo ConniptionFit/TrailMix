@@ -5,7 +5,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -21,12 +21,12 @@ fun ChatScreen(
     val recipes by viewModel.recipes.collectAsStateWithLifecycle()
     val aiAvailable by viewModel.aiAvailable.collectAsStateWithLifecycle()
     val canAddToNote by viewModel.canAddToNote.collectAsStateWithLifecycle()
-    val context = LocalContext.current
+    val resources = LocalResources.current
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(Unit) {
         viewModel.addedToNote.collect {
-            snackbarHostState.showSnackbar(context.getString(R.string.chat_added_to_note))
+            snackbarHostState.showSnackbar(resources.getString(R.string.chat_added_to_note))
         }
     }
 
