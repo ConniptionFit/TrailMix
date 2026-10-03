@@ -228,6 +228,15 @@ class CaptureSessionManager @Inject constructor(
     @Volatile
     private var diarizationConfiguredForSession = false
 
+    /**
+     * SPK-01: where on the transcript's timeline [audioRetention]'s first sample sits. A new
+     * session starts it at 0, but a resumed note or a recovered journal already has minutes of
+     * transcript before the first retained sample (audio is never persisted), so diarization
+     * segments (relative to the buffer) must be shifted by this before they meet the transcript
+     * labels (relative to the whole capture).
+     */
+    private var retentionBaseMs = 0L
+
     /** REL-09: last values written to the journal, so each flush only records what moved. */
     @Volatile
     private var journaled = JournalSnapshot()
@@ -388,6 +397,7 @@ class CaptureSessionManager @Inject constructor(
             } else {
                 null
             }
+            retentionBaseMs = priorDurationMs
             engine.setAudioSink(audioRetention)
             laneActivity = LaneActivity(clock = { currentDurationMs() }).also { engine.setLaneActivity(it) }
         }
@@ -805,7 +815,7 @@ class CaptureSessionManager @Inject constructor(
         audioRetention = null
         val pcm = buffer.toShortArray()
         if (pcm.isEmpty()) return transcript
-        val segments = speakerDiarizer.diarize(pcm)
+        val segments = SpeakerLabels.shift(speakerDiarizer.diarize(pcm), retentionBaseMs / 1000f)
         return SpeakerLabels.apply(transcript, segments)
     }
 
