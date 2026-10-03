@@ -408,6 +408,7 @@ fun NoteDetailScreen(
                             }
                         },
                         onRebuild = { showRebuild = true },
+                        onCancelRebuild = viewModel::cancelRebuild,
                     )
                 }
             }
@@ -513,6 +514,7 @@ private fun ReadContent(
     onCancelRaw: () -> Unit,
     onSaveRaw: () -> Unit,
     onRebuild: () -> Unit,
+    onCancelRebuild: () -> Unit,
 ) {
     val c = TrailMix.colors
     val inCall = stringResource(R.string.note_meta_in_call)
@@ -591,6 +593,7 @@ private fun ReadContent(
                 progress = mergeStatus?.progress(),
                 counter = mergeStatus?.counter(),
                 reassurance = stringResource(R.string.note_rebuilding_safe),
+                onCancel = onCancelRebuild,
                 modifier = Modifier.padding(bottom = TmSpacing.l),
             )
         }
@@ -739,6 +742,7 @@ private fun MyNotesPane(
     lines.forEach { line ->
         when {
             line.isBlank() -> Unit
+
             line.startsWith("# ") -> Text(
                 text = line.removePrefix("# "),
                 style = TrailMix.type.heading,
@@ -769,6 +773,7 @@ private fun SourceSheet(
             Text(data.text, style = TrailMix.type.body, color = c.text)
             val caption = when {
                 data.source == Provenance.FRAGMENT -> stringResource(R.string.note_sheet_typed)
+
                 data.timestampLabel != null -> stringResource(
                     if (data.edited) R.string.note_sheet_recording_edited else R.string.note_sheet_recording,
                     data.timestampLabel,
