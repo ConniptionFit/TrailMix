@@ -127,4 +127,80 @@ class SpeakerFusionTest {
         assertEquals("Jack", SpeakerFusion.Assignment("Speaker 1", "Jack", 3.0).display)
         assertEquals("Speaker 1 (Jack?)", SpeakerFusion.Assignment("Speaker 1", "Jack", 1.5).display)
     }
+
+    private fun match(name: String, sim: Float = 0.8f, margin: Float = 0.3f, isMe: Boolean = false) =
+        VoiceMatch("id-$name", name, sim, margin, isMe)
+
+    @Test
+    fun `a confident voice match for a rostered name is a plain name`() {
+        val lines = listOf(spk(1, "Hello"), spk(2, "Hi"))
+        val named = SpeakerFusion.apply(lines, roster3, null, mapOf("Speaker 2" to match("Jack Lee")))
+        assertEquals(listOf("Speaker 1", "Jack Lee"), named.map { it.speakerLabel })
+    }
+
+    @Test
+    fun `a weak voice match is a question`() {
+        val lines = listOf(spk(1, "Hello"))
+        val named = SpeakerFusion.apply(lines, roster3, null, mapOf("Speaker 1" to match("Jack Lee", sim = 0.55f, margin = 0.02f)))
+        assertEquals("Speaker 1 (Jack Lee?)", named.single().speakerLabel)
+    }
+
+    @Test
+    fun `voice and a cue for the same name add up`() {
+        val lines = listOf(spk(1, "Jack, what's the status"), spk(2, "On track"))
+        val named = SpeakerFusion.apply(lines, roster3, null, mapOf("Speaker 2" to match("Jack Lee", sim = 0.55f, margin = 0.02f)))
+        assertEquals("Jack Lee", named[1].speakerLabel)
+    }
+
+    @Test
+    fun `a voice that disagrees with a self introduction names nobody`() {
+        val lines = listOf(spk(1, "Hi this is Priya"))
+        val named = SpeakerFusion.apply(lines, roster3, null, mapOf("Speaker 1" to match("Dana Wu")))
+        assertEquals("Speaker 1", named.single().speakerLabel)
+    }
+
+    @Test
+    fun `an enrolled guest who is not on the calendar is named by voice alone`() {
+        val lines = listOf(spk(1, "Hello"))
+        val named = SpeakerFusion.apply(lines, roster3, null, mapOf("Speaker 1" to match("Alex Guest")))
+        assertEquals("Alex Guest", named.single().speakerLabel)
+    }
+
+    @Test
+    fun `an enrolled guest works with no calendar at all`() {
+        val lines = listOf(spk(1, "Hello"))
+        val named = SpeakerFusion.apply(lines, emptyList(), null, mapOf("Speaker 1" to match("Alex Guest")))
+        assertEquals("Alex Guest", named.single().speakerLabel)
+    }
+
+    @Test
+    fun `the note-taker's voice relabels a cluster as Me when the lane could not`() {
+        val lines = listOf(spk(1, "Hello"), spk(2, "Hi"))
+        val named = SpeakerFusion.apply(lines, roster3, null, mapOf("Speaker 2" to match("Sam", isMe = true)))
+        assertEquals(listOf("Speaker 1", "Me"), named.map { it.speakerLabel })
+    }
+
+    @Test
+    fun `the note-taker's voice does not override an existing Me`() {
+        val lines = listOf(me("Hello"), spk(1, "Hi"))
+        val named = SpeakerFusion.apply(lines, roster3, null, mapOf("Speaker 1" to match("Sam", isMe = true)))
+        assertEquals(listOf("Me", "Speaker 1"), named.map { it.speakerLabel })
+    }
+
+    @Test
+    fun `a voice match never names the Them lane`() {
+        val lines = listOf(me("Hi"), them("Hello"))
+        val named = SpeakerFusion.apply(lines, roster3, "Priya Patel", mapOf("Them" to match("Jack Lee")))
+        assertTrue(named[1].speakerLabel == null)
+    }
+
+    @Test
+    fun `one enrolled name is not given to two speakers`() {
+        val lines = listOf(spk(1, "Hello"), spk(2, "Hi"))
+        val named = SpeakerFusion.apply(
+            lines, roster3, null,
+            mapOf("Speaker 1" to match("Alex Guest"), "Speaker 2" to match("alex guest", sim = 0.6f)),
+        )
+        assertEquals(1, named.count { it.speakerLabel == "Alex Guest" })
+    }
 }
