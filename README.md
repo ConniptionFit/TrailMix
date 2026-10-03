@@ -156,22 +156,22 @@ the asset — it never publishes anything itself.
 
 ## Screens (Android)
 
-1. **Home** — notes list (every row shows its creation date & time, and calendar-linked
-   notes get a **Meeting** tag), one upcoming meeting (opt-in calendar), a **search bar**
-   (keywords or dates — "jul 18", "7/18/2026", and "2026-07-18" all work), a **Meetings**
-   filter chip, and an amber FAB to start capture. While a capture is running — even after
-   you've navigated away — an amber *Recording · mm:ss* chip appears here (and on Note
-   detail, so it's never far away); tap it to jump straight back into the live session
-   (recording keeps running in the background the whole time). **Press and hold a note**
-   for a context menu: **Select multiple** (selection mode with bulk Delete and bulk
-   Share), Delete (also removes the exported copy), and Share. Deleting is safe: notes
-   move to **Recently deleted** (an entry row appears at the bottom of the list) and stay
-   restorable for 1 day before being removed for good — open it to restore a note or
-   delete it immediately. If TrailMix ever dies mid-capture (a crash, or Android killing
-   it for memory while you're in another app), the next launch says so here and offers
-   the transcript back: **Continue capture**, **Save as note**, **Later**, or Discard.
-   Nothing is lost in the meantime — the transcript is written to disk as it's recognized,
-   not held in memory until you press End & Merge.
+1. **Home** — notes grouped by day (Today, Yesterday, then dates), each row a title plus
+   one meta line (start time, duration, template; calendar-linked notes get a small
+   calendar glyph). On a first run it explains the product and the privacy promise
+   instead of showing an empty list. A **search bar** (keywords or dates such as
+   "jul 18") and a **Meetings** filter sit above the list; the next meeting (opt-in
+   calendar) has real **Start note** and **See all meetings** buttons. While a capture
+   runs — even after you leave the screen — a recording card with a live level meter
+   stays at the top, and shows *Building* with progress during a merge; tap it to
+   return. Everything that is not the list (Meetings, Recently deleted, Settings) is in
+   the top-right overflow menu. **Press and hold** a note to start selection: Share,
+   Chat across the selected notes, and Delete sit in a labelled bar. Delete is instant
+   with an **Undo** snackbar, because notes move to **Recently deleted** for 1 day
+   (restore with one tap, or delete for good after a second confirmation). If TrailMix
+   ever dies mid-capture, the next launch offers a sheet: **Build the note**, **Keep
+   recording**, **Decide later**, or Discard (confirmed). The transcript is written to
+   disk as it is recognized, so nothing is lost in the meantime.
 2. **Live capture** — recording status, live transcript preview, free-typing fragment area,
    red *End & Merge* button. Tap the live-transcript card to **expand** it into a
    scrolling view of recent lines. A 3-dot menu (upper right) picks the input mic
@@ -268,31 +268,29 @@ typed notes, time-windowed `Key points`, and `- [ ]` action items. That means it
 from Obsidian Dataview, scannable on a phone, and unambiguous to a model reading it cold.
    - **Upcoming meetings** — tap the calendar label on Home to see the next 7 days; tap a
      meeting to capture it (a meeting more than 5 minutes out asks first).
-4. **Transcript** — full-screen, timestamp-labeled lines, with a speaker label on each line
-   when the optional **Speaker labels** setting is on (off by default). When the device-audio
-   lane was on, lines are also tagged **Me** (your mic) or **Them** (the other device's
-   audio) by comparing the two lanes' loudness. Diarization runs
-   entirely on-device — audio is never sent anywhere to identify who's speaking. A Share
-   icon sends the raw transcript through the Android share sheet.
-5. **Chat & Recipes** — chat about the note; recipe chips (Follow-up email, Create ticket,
-   Summarize, Action items, plus any **custom recipes** you've saved in Settings) are
-   saved prompts. Chat knows the meeting attendees, so it can answer things like "what
-   did Charlie say I need to do." Every assistant reply has a **Copy** button, and the
-   latest output of each recipe is included in the note's Markdown export as a
-   *Recipe Outputs* section.
-6. **Settings** — dark mode (follows system until overridden), an optional **Your profile**
-   (name, role, company, focus areas; stays on-device and tells the on-device AI whose
-   notes these are), privacy disclosure, a
-   **Speech recognition language** picker, an optional off-by-default **Speaker labels**
-   toggle (on-device diarization, no audio ever leaves the device), an optional
-   **Export location** (pick any folder via the system picker; changing it moves your
-   already-exported files over automatically, and an **Open folder** button jumps to it),
-   **Built-in and Custom
-   Recipes** (tap any recipe to see the exact prompt it runs; create/edit/delete your own),
-   **Built-in and Custom summary templates** (tap any template to see its meeting context
-   and sections, and add your own with a meeting context plus an ordered section list,
-   each section with an optional one-line instruction), and a
-   **Default summary template** (custom templates selectable there and on Capture too).
+4. **Transcript** — full-screen, grouped into speaker blocks with a time gutter. Search
+   inside the transcript (with *n of m* stepping), filter to **Flagged**, **Me** or
+   **Them**, and long-press a line to **Copy**, **Share as quote**, or **Fix the wording**
+   (edited lines are marked *edited*). Speaker names appear when the optional **Speaker
+   labels** setting is on (off by default); with the device-audio lane on, lines are also
+   tagged **Me** (your mic) or **Them** by comparing the two lanes' loudness. Diarization
+   runs entirely on-device. A Share icon sends the whole transcript through the share sheet.
+5. **Chat & Recipes** — one chat for a single note and for several notes picked on Home.
+   Answers render as formatted text (headings, bullets, numbered steps, bold) and your
+   questions sit in a tonal block. An empty chat offers starter questions; recipe chips
+   (Follow-up email, Create ticket, Summarize, Action items, plus your **custom recipes**)
+   are saved prompts above the message box. While the on-device model works you see a
+   timer and can **Stop**. Under each answer: **Copy**, **Share**, and **Add to note**,
+   which appends it to the note as a *From chat* section. Chat knows the meeting
+   attendees. The latest output of each recipe is included in the note's Markdown export
+   as a *Recipe Outputs* section. If the on-device model is unavailable a banner says so.
+6. **Settings** — a short list of six pages, each with a one-line summary of its current
+   state: **Appearance** (system, light or dark), **Capture** (speech recognition language,
+   speaker labels, custom vocabulary), **Notes** (default summary template, your profile,
+   built-in and custom templates and recipes; tap any to see the exact prompt it runs, or
+   create your own), **Export** (the folder, **Export now**, **Open folder**, format, and
+   moving or unlinking the location, each behind a confirm), **Privacy**, and **About**.
+   Long editors open full screen.
 
 ## Architecture (Android)
 
