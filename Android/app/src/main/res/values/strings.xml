@@ -109,6 +109,8 @@
     <string name="capture_merge_step_writing">Writing the note</string>
     <string name="capture_merge_back_home">Back to Home</string>
     <string name="capture_merge_safe">Safe to leave. It keeps working in the background and the notification tells you when it\'s ready. Your transcript and notes are already saved.</string>
+    <string name="capture_nothing_captured_toast">Nothing captured. No note saved.</string>
+    <string name="capture_merge_failed_toast">Couldn\'t build the note. Your recording is saved. Open Home to try again.</string>
     <!-- Note detail -->
     <string name="note_back">Back</string>
     <string name="note_share">Share note</string>

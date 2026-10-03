@@ -750,7 +750,7 @@ class CaptureSessionManager @Inject constructor(
                 .onFailure { if (it is CancellationException) throw it }
                 .getOrElse {
                     Log.e(TAG, "End & Merge failed; the journal is kept for recovery", it)
-                    -1L
+                    MERGE_FAILED
                 }
             resumeNoteId = -1L
             recoveredCreatedAtMs = 0L
@@ -768,6 +768,9 @@ class CaptureSessionManager @Inject constructor(
             // The caller navigates from this callback — NavController is main-thread-only
             // (this scope's default dispatcher crashed popBackStack when first shipped).
             withContext(Dispatchers.Main) { onDone(id) }
+            // REL-24: a failed merge keeps its journal; surface it as a recovery on Home now
+            // rather than only after the next launch.
+            if (id == MERGE_FAILED) refreshRecovery()
         }
     }
 
@@ -1404,8 +1407,9 @@ class CaptureSessionManager @Inject constructor(
 
     /**
      * Finish the recovered capture as it stands: merge it into a note without recording any
-     * more (REL-09). [onDone] receives the note id on the main thread, or -1 if the journal
-     * turned out to hold nothing mergeable.
+     * more (REL-09). [onDone] receives the note id on the main thread, -1 if the journal
+     * turned out to hold nothing mergeable, or [MERGE_FAILED] if the merge threw (the journal
+     * is kept).
      *
      * This can take minutes on a long session — it is the same chunked on-device merge End &
      * Merge runs — which is why [recovering] exists for the UI to show progress against.
@@ -1455,7 +1459,7 @@ class CaptureSessionManager @Inject constructor(
                 )
             }.getOrElse {
                 Log.e(TAG, "Recovery merge failed; the journal is kept", it)
-                -1L
+                MERGE_FAILED
             }
             // Only discard the journal once the note exists. If the merge threw, the
             // transcript stays on disk and is offered again rather than being thrown away
@@ -1505,6 +1509,12 @@ class CaptureSessionManager @Inject constructor(
 
     internal companion object {
         const val TAG = "TrailMixSession"
+
+        /**
+         * REL-24: the `onDone` id for a merge that threw. Distinct from -1 ("nothing worth
+         * saving") because the transcript is still on disk and the user must be told so.
+         */
+        const val MERGE_FAILED = -2L
 
         /**
          * REL-11: shown when the engine could not listen for a *situational* reason — the mic

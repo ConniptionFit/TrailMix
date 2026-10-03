@@ -4,12 +4,15 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.trailmix.app.R
+import com.trailmix.app.data.speech.CaptureSessionManager
 import com.trailmix.app.ui.capture.CaptureScreen
 import com.trailmix.app.ui.chat.ChatScreen
 import com.trailmix.app.ui.chat.CrossNoteChatScreen
@@ -94,6 +97,7 @@ fun TrailMixNavHost(navController: NavHostController = rememberNavController()) 
             ),
         ) {
             val context = LocalContext.current
+            val resources = LocalResources.current
             CaptureScreen(
                 onMerged = { noteId ->
                     if (noteId > 0) {
@@ -102,8 +106,15 @@ fun TrailMixNavHost(navController: NavHostController = rememberNavController()) 
                         }
                     } else {
                         // CAP-11: nothing typed, nothing transcribed — no note was saved.
+                        // REL-24: a merge that threw is different: the transcript is safe and
+                        // comes back as a recovery on Home, so say that instead.
                         // (CaptureSessionManager delivers this callback on the main thread.)
-                        Toast.makeText(context, "Nothing captured — no note saved", Toast.LENGTH_SHORT).show()
+                        val message = if (noteId == CaptureSessionManager.MERGE_FAILED) {
+                            R.string.capture_merge_failed_toast
+                        } else {
+                            R.string.capture_nothing_captured_toast
+                        }
+                        Toast.makeText(context, resources.getString(message), Toast.LENGTH_LONG).show()
                         navController.popBackStack(Routes.HOME, inclusive = false)
                     }
                 },
