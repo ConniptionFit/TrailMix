@@ -1,9 +1,9 @@
 package com.trailmix.app.ui.chat
 
+import com.trailmix.app.data.model.Provenance
 import com.trailmix.app.data.model.StructuredSummary
 import com.trailmix.app.data.model.SummaryBullet
 import com.trailmix.app.data.model.SummarySection
-import com.trailmix.app.data.model.Provenance
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
