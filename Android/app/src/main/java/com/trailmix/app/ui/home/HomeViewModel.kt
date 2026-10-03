@@ -201,6 +201,9 @@ class HomeViewModel @Inject constructor(
     fun completeRecovered() = captureSessionManager.completeRecovered { id ->
         if (id > 0) {
             _recoveredNoteId.tryEmit(id)
+        } else if (id == CaptureSessionManager.MERGE_FAILED) {
+            // REL-24: a merge that threw keeps the journal, so say it is safe and can be retried.
+            _snackbarMessage.tryEmit("Couldn't build the note this time. Your recording is still saved. Try again.")
         } else {
             _snackbarMessage.tryEmit("That capture had nothing in it — nothing was saved")
         }
