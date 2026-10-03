@@ -106,6 +106,9 @@ class NoteDetailViewModel @Inject constructor(
         }
     }
 
+    /** Stops the rebuild started from this screen; the note stays as it was. */
+    fun cancelRebuild() = captureSessionManager.cancelRebuild()
+
     /** UX-40: persist hand-edited raw notes — only the `typedFragments` column. */
     fun saveRawNotes(text: String, onDone: () -> Unit) {
         viewModelScope.launch {

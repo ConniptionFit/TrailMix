@@ -27,6 +27,7 @@ import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -784,9 +785,11 @@ class CaptureSessionManager @Inject constructor(
             resuming -> resumeCreatedAt.takeIf { it > 0 }
                 ?: notesRepository.getNote(resumeNoteId)?.createdAtEpochMs
                 ?: System.currentTimeMillis()
+
             // REL-09: a recovered session is stamped with when the capture really began,
             // not when it was rescued — the two can be a day apart.
             recoveredCreatedAtMs > 0 -> recoveredCreatedAtMs
+
             else -> System.currentTimeMillis()
         }
         val id = mergeAndSave(
@@ -1000,40 +1003,63 @@ class CaptureSessionManager @Inject constructor(
         _state.update { it.copy(merging = true) }
         _mergeStatus.value = MergeStatus(CaptureUiState.UNTITLED)
         CaptureService.merge(appContext)
-        scope.launch {
-            // CAP-28: runCatching catches CancellationException too — rethrow it.
-            val ok = runCatching {
-                val note = notesRepository.getNote(noteId) ?: return@runCatching false
-                _mergeStatus.update { it?.copy(title = note.title) }
-                val typed = typedFragmentsOverride ?: note.typedFragments
-                val transcript = note.transcript
-                mergeAndSave(
-                    noteId = noteId,
-                    typed = typed,
-                    transcript = transcript,
-                    durationMs = note.durationMs,
-                    createdAtEpochMs = note.createdAtEpochMs,
-                    meetingTitle = note.meetingTitle,
-                    capturedInCall = note.capturedInCall,
-                    attendees = note.attendees,
-                    template = template ?: note.template ?: SummaryTemplate.NONE.name,
-                    flags = note.flaggedLabels,
-                    rediarize = false,
-                    keepTitle = note.title.takeUnless { NoteTitle.isDefault(it) },
-                ) > 0
-            }
-                .onFailure { if (it is CancellationException) throw it }
-                .getOrElse {
-                    Log.e(TAG, "Regenerate failed; the existing note is untouched", it)
-                    false
+        rebuildJob = scope.launch {
+            var ok = false
+            try {
+                // CAP-28: runCatching catches CancellationException too — rethrow it.
+                ok = runCatching {
+                    val note = notesRepository.getNote(noteId) ?: return@runCatching false
+                    _mergeStatus.update { it?.copy(title = note.title) }
+                    val typed = typedFragmentsOverride ?: note.typedFragments
+                    val transcript = note.transcript
+                    mergeAndSave(
+                        noteId = noteId,
+                        typed = typed,
+                        transcript = transcript,
+                        durationMs = note.durationMs,
+                        createdAtEpochMs = note.createdAtEpochMs,
+                        meetingTitle = note.meetingTitle,
+                        capturedInCall = note.capturedInCall,
+                        attendees = note.attendees,
+                        template = template ?: note.template ?: SummaryTemplate.NONE.name,
+                        flags = note.flaggedLabels,
+                        rediarize = false,
+                        keepTitle = note.title.takeUnless { NoteTitle.isDefault(it) },
+                    ) > 0
                 }
-            _mergeStatus.value = null
-            _state.update { it.copy(merging = false) }
-            // AI-13: see endAndMerge's identical call for why.
-            aiProcessor.releaseModel()
-            runCatching { CaptureService.stop(appContext) }
-            withContext(Dispatchers.Main) { onDone(ok) }
+                    .onFailure { if (it is CancellationException) throw it }
+                    .getOrElse {
+                        Log.e(TAG, "Regenerate failed; the existing note is untouched", it)
+                        false
+                    }
+            } finally {
+                // Unconditional, and non-cancellable: a cancelled rebuild (cancelRebuild) must
+                // still clear `merging`, stand the service down and tell the caller, or every
+                // capture entry point stays blocked on it.
+                withContext(NonCancellable) {
+                    rebuildJob = null
+                    _mergeStatus.value = null
+                    _state.update { it.copy(merging = false) }
+                    // AI-13: see endAndMerge's identical call for why.
+                    aiProcessor.releaseModel()
+                    runCatching { CaptureService.stop(appContext) }
+                    withContext(Dispatchers.Main) { onDone(ok) }
+                }
+            }
         }
+    }
+
+    @Volatile
+    private var rebuildJob: Job? = null
+
+    /**
+     * Stops a running [regenerateNote]. The merge only writes the note once it has finished, so
+     * cancelling mid-way leaves the existing note exactly as it was; [regenerateNote]'s `onDone`
+     * still fires, with false. Does nothing when no rebuild is running (End & Merge cannot be
+     * cancelled: its transcript is the only copy).
+     */
+    fun cancelRebuild() {
+        rebuildJob?.cancel()
     }
 
     fun cancel() {
@@ -1076,12 +1102,25 @@ class CaptureSessionManager @Inject constructor(
     }
 
     private fun friendlyName(device: AudioDeviceInfo): String = when (device.type) {
-        AudioDeviceInfo.TYPE_BUILTIN_MIC -> "Built-in mic"
-        AudioDeviceInfo.TYPE_WIRED_HEADSET -> "Wired headset"
-        AudioDeviceInfo.TYPE_USB_DEVICE, AudioDeviceInfo.TYPE_USB_HEADSET -> "USB mic"
-        AudioDeviceInfo.TYPE_BLUETOOTH_SCO, AudioDeviceInfo.TYPE_BLE_HEADSET ->
+        AudioDeviceInfo.TYPE_BUILTIN_MIC -> {
+            "Built-in mic"
+        }
+
+        AudioDeviceInfo.TYPE_WIRED_HEADSET -> {
+            "Wired headset"
+        }
+
+        AudioDeviceInfo.TYPE_USB_DEVICE, AudioDeviceInfo.TYPE_USB_HEADSET -> {
+            "USB mic"
+        }
+
+        AudioDeviceInfo.TYPE_BLUETOOTH_SCO, AudioDeviceInfo.TYPE_BLE_HEADSET -> {
             device.productName.toString().ifBlank { "Bluetooth mic" }
-        else -> device.productName.toString().ifBlank { "Microphone" }
+        }
+
+        else -> {
+            device.productName.toString().ifBlank { "Microphone" }
+        }
     }.let { base ->
         if (device.type == AudioDeviceInfo.TYPE_BUILTIN_MIC && device.address.isNotBlank()) {
             "$base (${device.address})"
