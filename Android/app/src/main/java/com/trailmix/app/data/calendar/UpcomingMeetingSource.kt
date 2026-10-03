@@ -22,6 +22,8 @@ data class UpcomingMeeting(
     val endEpochMs: Long,
     /** Underlying calendar event id — used to look up attendees (CAL-02). 0 if unknown. */
     val eventId: Long = 0,
+    /** Number of invitees, or null when the calendar does not say (M1 shows it as the row's second line). */
+    val attendeeCount: Int? = null,
 ) {
     val minutesUntilStart: Long
         get() = (beginEpochMs - System.currentTimeMillis()) / 60_000
@@ -46,8 +48,36 @@ class UpcomingMeetingSource @Inject constructor(
         queryWindow(TimeUnit.HOURS.toMillis(24), limit = 1).firstOrNull()
 
     /** Upcoming (and currently ongoing) non-all-day events over the next [days]. */
-    suspend fun listUpcoming(days: Int = 7): List<UpcomingMeeting> =
-        queryWindow(TimeUnit.DAYS.toMillis(days.toLong()), limit = 50)
+    suspend fun listUpcoming(days: Int = 7): List<UpcomingMeeting> {
+        val meetings = queryWindow(TimeUnit.DAYS.toMillis(days.toLong()), limit = 50)
+        val counts = attendeeCounts(meetings.map { it.eventId })
+        return meetings.map { it.copy(attendeeCount = counts[it.eventId]) }
+    }
+
+    /**
+     * Invitee count per event in one query (read-only, same permission). Events with no
+     * attendee rows are absent from the map, which the screen reads as "not known".
+     */
+    private suspend fun attendeeCounts(eventIds: List<Long>): Map<Long, Int> = withContext(Dispatchers.IO) {
+        val ids = eventIds.filter { it > 0 }.distinct()
+        if (ids.isEmpty() || !hasPermission()) return@withContext emptyMap()
+        runCatching {
+            val counts = HashMap<Long, Int>()
+            context.contentResolver.query(
+                CalendarContract.Attendees.CONTENT_URI,
+                arrayOf(CalendarContract.Attendees.EVENT_ID),
+                "${CalendarContract.Attendees.EVENT_ID} IN (${ids.joinToString(",")})",
+                null,
+                null,
+            )?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(0)
+                    counts[id] = (counts[id] ?: 0) + 1
+                }
+            }
+            counts
+        }.getOrDefault(emptyMap())
+    }
 
     /** The event happening right now, if any — used to tag capture metadata. */
     suspend fun currentEvent(): UpcomingMeeting? {

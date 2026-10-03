@@ -262,6 +262,35 @@
     <string name="home_share_chooser_note">Share note</string>
     <string name="home_share_chooser_notes">Share notes</string>
     <string name="home_share_notes_subject">%1$d notes from TrailMix</string>
+    <string name="deleted_title">Recently deleted</string>
+    <string name="deleted_intro">Deleted notes stay here for 1 day with their transcripts, then they\'re erased from this phone.</string>
+    <string name="deleted_empty">Nothing deleted in the last day.</string>
+    <string name="deleted_restore">Restore</string>
+    <string name="deleted_delete_now">Delete now</string>
+    <string name="deleted_delete_all">Delete all now</string>
+    <string name="deleted_restored">Note restored</string>
+    <plurals name="deleted_erased">
+        <item quantity="one">Note erased</item>
+        <item quantity="other">%1$d notes erased</item>
+    </plurals>
+    <string name="deleted_erase_title">Erase \"%1$s\" for good?</string>
+    <plurals name="deleted_erase_all_title">
+        <item quantity="one">Erase this note for good?</item>
+        <item quantity="other">Erase all %1$d notes for good?</item>
+    </plurals>
+    <string name="deleted_erase_body">The note, your typed notes and its transcript will be removed from this phone. Copies already in your export folder aren\'t touched. This can\'t be undone.</string>
+    <string name="deleted_erase_confirm">Erase for good</string>
+    <string name="deleted_erase_keep">Keep it</string>
+    <string name="meetings_title">Upcoming meetings</string>
+    <string name="meetings_subtitle">Next 7 days · read-only calendar</string>
+    <string name="meetings_empty">Nothing on your calendar in the next 7 days.</string>
+    <string name="meetings_now">Now</string>
+    <string name="meetings_open_note">Open note</string>
+    <string name="meetings_start_note">Start note</string>
+    <plurals name="meetings_people">
+        <item quantity="one">%1$d person</item>
+        <item quantity="other">%1$d people</item>
+    </plurals>
     <string name="home_new_note">New note</string>
     <string name="home_open">Open</string>
     <string name="home_building_title">Building \"%1$s\"</string>

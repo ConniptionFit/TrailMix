@@ -1,24 +1,16 @@
 package com.trailmix.app.ui.home
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.Snackbar
-import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -29,19 +21,33 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.trailmix.app.R
 import com.trailmix.app.data.db.NoteEntity
 import com.trailmix.app.data.db.RecentlyDeleted
+import com.trailmix.app.ui.components.TmBackButton
+import com.trailmix.app.ui.components.TmDestructiveButton
+import com.trailmix.app.ui.components.TmIcons
+import com.trailmix.app.ui.components.TmListRow
+import com.trailmix.app.ui.components.TmMenuItem
+import com.trailmix.app.ui.components.TmOverflowMenu
+import com.trailmix.app.ui.components.TmSheet
+import com.trailmix.app.ui.components.TmSheetAction
+import com.trailmix.app.ui.components.TmSnackbarHost
+import com.trailmix.app.ui.components.TmTextButton
+import com.trailmix.app.ui.components.TmTopBar
+import com.trailmix.app.ui.theme.TmSpacing
 import com.trailmix.app.ui.theme.TrailMix
 
 /**
- * REL-06: Recently deleted — soft-deleted notes with the time left before the 1-day purge,
- * each restorable or immediately (unrecoverably) removable. Tapping a row asks which.
+ * R1/R2 (REL-06): soft-deleted notes with the time left before the 1-day purge. Restore is one
+ * tap on the row. Tapping the row opens a sheet (Restore, Delete now); Delete now then asks once
+ * more in a dialog that names the note, which is the only filled red button in the app.
  */
 @Composable
 fun RecentlyDeletedScreen(
@@ -51,117 +57,72 @@ fun RecentlyDeletedScreen(
     val c = TrailMix.colors
     val notes by viewModel.deletedNotes.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
 
     LaunchedEffect(Unit) {
-        viewModel.snackbarMessage.collect { snackbarHostState.showSnackbar(it) }
+        viewModel.events.collect { event ->
+            val res = context.resources
+            val message = when (event.kind) {
+                DeletedEvent.Kind.RESTORED -> {
+                    res.getString(R.string.deleted_restored)
+                }
+
+                DeletedEvent.Kind.ERASED -> {
+                    res.getQuantityString(R.plurals.deleted_erased, event.count, event.count)
+                }
+            }
+            snackbarHostState.showSnackbar(message)
+        }
     }
 
-    // The note whose Restore / Delete now dialog is open.
+    // The note whose Restore / Delete now sheet is open.
     var actingOn by remember { mutableStateOf<NoteEntity?>(null) }
-    // UX-34 (2026-09-19): the note pending a *second* confirmation for "Delete now" — the one
-    // truly irreversible action in this screen previously fired on a single tap, while the
-    // reversible soft-delete on Home gets a confirmation of its own. Inverted from what a
-    // destructive-action gradient should be; this closes the gap without touching the first
-    // dialog's Restore path at all.
-    var confirmingForeverDelete by remember { mutableStateOf<NoteEntity?>(null) }
-    confirmingForeverDelete?.let { note ->
-        AlertDialog(
-            onDismissRequest = { confirmingForeverDelete = null },
-            containerColor = c.card,
-            title = { Text("Delete for good?", color = c.text, fontSize = 17.sp) },
-            text = {
-                Text(
-                    text = "\"${note.title}\" will be deleted permanently. This can't be undone.",
-                    color = c.dim,
-                    fontSize = 13.5.sp,
-                    lineHeight = 19.sp,
-                )
+    // UX-34: the one truly irreversible action asks a second time, naming the note.
+    var erasing by remember { mutableStateOf<NoteEntity?>(null) }
+    var erasingAll by remember { mutableStateOf(false) }
+
+    erasing?.let { note ->
+        EraseDialog(
+            title = stringResource(R.string.deleted_erase_title, note.title),
+            body = stringResource(R.string.deleted_erase_body),
+            onConfirm = {
+                erasing = null
+                viewModel.deleteForever(note.id)
             },
-            confirmButton = {
-                Text(
-                    text = "Delete",
-                    color = c.recordingRed,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier
-                        .clickable {
-                            confirmingForeverDelete = null
-                            viewModel.deleteForever(note.id)
-                        }
-                        .padding(8.dp),
-                )
+            onDismiss = { erasing = null },
+        )
+    }
+    if (erasingAll) {
+        EraseDialog(
+            title = pluralStringResource(R.plurals.deleted_erase_all_title, notes.size, notes.size),
+            body = stringResource(R.string.deleted_erase_body),
+            onConfirm = {
+                erasingAll = false
+                viewModel.deleteAllForever()
             },
-            dismissButton = {
-                Text(
-                    text = "Cancel",
-                    color = c.dim,
-                    fontSize = 14.sp,
-                    modifier = Modifier
-                        .clickable { confirmingForeverDelete = null }
-                        .padding(8.dp),
-                )
-            },
+            onDismiss = { erasingAll = false },
         )
     }
     actingOn?.let { note ->
-        AlertDialog(
-            onDismissRequest = { actingOn = null },
-            containerColor = c.card,
-            title = { Text(note.title, color = c.text, fontSize = 17.sp) },
-            text = {
-                Text(
-                    text = "Restore this note, or delete it now? Deleting now can't be " +
-                        "undone — otherwise it stays recoverable here until it's " +
-                        "removed automatically (${
-                            RecentlyDeleted.timeLeftLabel(
-                                note.deletedAtEpochMs ?: 0L,
-                                System.currentTimeMillis(),
-                            ).replaceFirstChar { it.lowercase() }
-                        }).",
-                    color = c.dim,
-                    fontSize = 13.5.sp,
-                    lineHeight = 19.sp,
-                )
-            },
-            confirmButton = {
-                Text(
-                    text = "Restore",
-                    color = c.amber,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier
-                        .clickable {
-                            actingOn = null
-                            viewModel.restore(note.id)
-                        }
-                        .padding(8.dp),
-                )
-            },
-            dismissButton = {
-                Row {
-                    Text(
-                        text = "Delete now",
-                        color = c.recordingRed,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier
-                            .clickable {
-                                actingOn = null
-                                confirmingForeverDelete = note
-                            }
-                            .padding(8.dp),
-                    )
-                    Text(
-                        text = "Cancel",
-                        color = c.dim,
-                        fontSize = 14.sp,
-                        modifier = Modifier
-                            .clickable { actingOn = null }
-                            .padding(8.dp),
-                    )
-                }
-            },
-        )
+        TmSheet(onDismiss = { actingOn = null }, title = note.title) {
+            TmSheetAction(
+                label = stringResource(R.string.deleted_restore),
+                drawable = TmIcons.Undo,
+                onClick = {
+                    actingOn = null
+                    viewModel.restore(note.id)
+                },
+            )
+            TmSheetAction(
+                label = stringResource(R.string.deleted_delete_now),
+                drawable = TmIcons.Delete,
+                destructive = true,
+                onClick = {
+                    actingOn = null
+                    erasing = note
+                },
+            )
+        }
     }
 
     Box(
@@ -170,108 +131,71 @@ fun RecentlyDeletedScreen(
             .background(c.background)
             .statusBarsPadding(),
     ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = onBack) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
-                        tint = c.text,
-                    )
-                }
-                Text(
-                    text = "Recently deleted",
-                    color = c.text,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            Text(
-                text = "Deleted notes stay here for 1 day, then they're removed for good. " +
-                    "Tap a note to restore it or delete it now.",
-                color = c.dim,
-                fontSize = 12.5.sp,
-                lineHeight = 18.sp,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+        Column(modifier = Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+            TmTopBar(
+                title = stringResource(R.string.deleted_title),
+                navigation = { TmBackButton(onClick = onBack, contentDescription = stringResource(R.string.action_back)) },
+                actions = {
+                    if (notes.isNotEmpty()) {
+                        TmOverflowMenu(
+                            contentDescription = stringResource(R.string.home_more),
+                            items = listOf(
+                                TmMenuItem(stringResource(R.string.deleted_delete_all), onClick = { erasingAll = true }),
+                            ),
+                        )
+                    }
+                },
             )
-
-            if (notes.isEmpty()) {
+            Column(modifier = Modifier.widthIn(max = 640.dp).fillMaxWidth().weight(1f)) {
                 Text(
-                    text = "Nothing here — deleted notes appear for 1 day before " +
-                        "being removed for good.",
+                    text = stringResource(R.string.deleted_intro),
+                    style = TrailMix.type.bodySmall,
                     color = c.dim,
-                    fontSize = 13.sp,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 20.dp),
+                    modifier = Modifier.padding(horizontal = TmSpacing.l, vertical = TmSpacing.xs),
                 )
-            } else {
-                LazyColumn(modifier = Modifier.weight(1f)) {
-                    items(notes, key = { it.id }) { note ->
-                        DeletedNoteRow(note = note, onClick = { actingOn = note })
+                if (notes.isEmpty()) {
+                    Text(
+                        text = stringResource(R.string.deleted_empty),
+                        style = TrailMix.type.body,
+                        color = c.dim,
+                        modifier = Modifier.padding(horizontal = TmSpacing.l, vertical = TmSpacing.xl),
+                    )
+                } else {
+                    LazyColumn(modifier = Modifier.weight(1f)) {
+                        items(notes, key = { it.id }) { note ->
+                            val timeLeft = RecentlyDeleted.timeLeftLabel(note.deletedAtEpochMs ?: 0L, System.currentTimeMillis())
+                            TmListRow(
+                                title = note.title,
+                                subtitle = timeLeft,
+                                onClick = { actingOn = note },
+                                trailing = {
+                                    TmTextButton(
+                                        label = stringResource(R.string.deleted_restore),
+                                        onClick = { viewModel.restore(note.id) },
+                                    )
+                                },
+                            )
+                        }
                     }
                 }
             }
         }
 
-        SnackbarHost(
-            hostState = snackbarHostState,
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp),
-        ) { data -> Snackbar(snackbarData = data) }
+        TmSnackbarHost(state = snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter))
     }
 }
 
+/** R2: the final step. A filled red button says what is lost and what is not. */
 @Composable
-private fun DeletedNoteRow(note: NoteEntity, onClick: () -> Unit) {
+private fun EraseDialog(title: String, body: String, onConfirm: () -> Unit, onDismiss: () -> Unit) {
     val c = TrailMix.colors
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 20.dp),
-    ) {
-        Column(modifier = Modifier.padding(vertical = 14.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = note.title,
-                    color = c.text,
-                    fontSize = 15.5.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    text = RecentlyDeleted.timeLeftLabel(
-                        note.deletedAtEpochMs ?: 0L,
-                        System.currentTimeMillis(),
-                    ),
-                    color = c.recordingRed,
-                    fontSize = 11.5.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(start = 10.dp),
-                )
-            }
-            Text(
-                text = note.preview,
-                color = c.dim,
-                fontSize = 13.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 3.dp),
-            )
-        }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(1.dp)
-                .background(c.border),
-        )
-    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = TrailMix.shapes.large,
+        containerColor = c.card,
+        title = { Text(title, style = TrailMix.type.title, color = c.text) },
+        text = { Text(body, style = TrailMix.type.bodySmall, color = c.dim) },
+        confirmButton = { TmDestructiveButton(stringResource(R.string.deleted_erase_confirm), onClick = onConfirm) },
+        dismissButton = { TmTextButton(stringResource(R.string.deleted_erase_keep), onClick = onDismiss) },
+    )
 }
