@@ -64,8 +64,10 @@ class SherpaOnnxDiarizer @Inject constructor(
     private val config: SherpaOnnxDiarizerConfig,
 ) : SpeakerDiarizer {
 
-    override suspend fun diarize(pcm: ShortArray): List<SpeakerSegment> = withContext(Dispatchers.Default) {
-        if (pcm.isEmpty()) return@withContext emptyList()
+    override suspend fun diarize(pcm: ShortArray): List<SpeakerSegment> = diarizeWithVoices(pcm).segments
+
+    override suspend fun diarizeWithVoices(pcm: ShortArray): DiarizationResult = withContext(Dispatchers.Default) {
+        if (pcm.isEmpty()) return@withContext DiarizationResult(emptyList(), emptyMap())
         val windowSamples = config.windowSeconds * Pcm.SAMPLE_RATE
         var diarization: OfflineSpeakerDiarization? = null
         var extractor: SpeakerEmbeddingExtractor? = null
@@ -82,6 +84,9 @@ class SherpaOnnxDiarizer @Inject constructor(
             linker = extractor?.let { SpeakerLinker(SpeakerEmbeddingManager(it.dim())) }
 
             val allSegments = mutableListOf<SpeakerSegment>()
+            // SPK-04: per global speaker, the window-level embeddings and how many seconds of
+            // speech each stood for, folded into one session-wide voice at the end.
+            val voiceSamples = HashMap<Int, MutableList<Pair<FloatArray, Double>>>()
             var windowIndex = 0
             var offset = 0
             while (offset < pcm.size) {
@@ -96,23 +101,31 @@ class SherpaOnnxDiarizer @Inject constructor(
                     emptyArray()
                 }
                 val localToGlobal = mutableMapOf<Int, Int>()
-                for (seg in localSegments) {
-                    val globalTag = localToGlobal.getOrPut(seg.speaker) {
-                        resolveGlobalTag(seg, windowFloats, extractor, linker, windowIndex)
+                for ((localId, segs) in localSegments.groupBy { it.speaker }) {
+                    val voice = voiceFor(extractor, windowFloats, segs)
+                    val globalTag = if (voice != null && linker != null) {
+                        linker.globalIdFor(voice.first, config.clusterThreshold)
+                    } else {
+                        windowIndex * FALLBACK_TAG_STRIDE + localId
                     }
+                    localToGlobal[localId] = globalTag
+                    if (voice != null && linker != null) voiceSamples.getOrPut(globalTag) { mutableListOf() }.add(voice)
+                }
+                for (seg in localSegments) {
                     allSegments += SpeakerSegment(
                         startSeconds = offsetSeconds + seg.start,
                         endSeconds = offsetSeconds + seg.end,
-                        speakerTag = globalTag,
+                        speakerTag = localToGlobal.getValue(seg.speaker),
                     )
                 }
                 offset = end
                 windowIndex++
             }
-            allSegments
+            val voices = voiceSamples.mapNotNull { (tag, samples) -> VoiceMath.weightedMean(samples)?.let { tag to it } }.toMap()
+            DiarizationResult(allSegments, voices)
         } catch (e: Exception) {
             Log.w(TAG, "sherpa-onnx diarization failed: $e")
-            emptyList()
+            DiarizationResult(emptyList(), emptyMap())
         } finally {
             runCatching { diarization?.release() }
             runCatching { extractor?.release() }
@@ -120,21 +133,23 @@ class SherpaOnnxDiarizer @Inject constructor(
         }
     }
 
-    /** One local speaker's global id: via [linker]/[extractor] when both are available, else a
-     *  per-window-offset fallback that keeps windows internally consistent but not linked to
-     *  each other (see this class's doc). */
-    private fun resolveGlobalTag(
-        seg: OfflineSpeakerDiarizationSegment,
-        windowFloats: FloatArray,
+    /**
+     * One local speaker's voice in one window: the weighted mean of the embeddings of its
+     * longest few segments, with the seconds of speech they cover as the weight. Null when the
+     * extractor is unavailable or no segment is long enough to embed reliably.
+     */
+    private fun voiceFor(
         extractor: SpeakerEmbeddingExtractor?,
-        linker: SpeakerLinker?,
-        windowIndex: Int,
-    ): Int {
-        if (extractor != null && linker != null) {
-            val embedding = embeddingFor(extractor, windowFloats, seg)
-            if (embedding != null) return linker.globalIdFor(embedding, config.clusterThreshold)
+        windowFloats: FloatArray,
+        segments: List<OfflineSpeakerDiarizationSegment>,
+    ): Pair<FloatArray, Double>? {
+        if (extractor == null) return null
+        val longest = segments.sortedByDescending { it.end - it.start }.take(MAX_CLIPS_PER_SPEAKER)
+        val clips = longest.mapNotNull { seg ->
+            embeddingFor(extractor, windowFloats, seg)?.let { it to (seg.end - seg.start).toDouble().coerceAtMost(MAX_CLIP_SECONDS.toDouble()) }
         }
-        return windowIndex * FALLBACK_TAG_STRIDE + seg.speaker
+        val mean = VoiceMath.weightedMean(clips) ?: return null
+        return mean to clips.sumOf { it.second }
     }
 
     /** The voice embedding for one segment's own audio slice within [windowFloats], or null if
@@ -145,7 +160,7 @@ class SherpaOnnxDiarizer @Inject constructor(
         seg: OfflineSpeakerDiarizationSegment,
     ): FloatArray? = runCatching {
         val startSample = (seg.start * Pcm.SAMPLE_RATE).toInt().coerceIn(0, windowFloats.size)
-        val endSample = (seg.end * Pcm.SAMPLE_RATE).toInt().coerceIn(startSample, windowFloats.size)
+        val endSample = (seg.end * Pcm.SAMPLE_RATE).toInt().coerceIn(startSample, minOf(windowFloats.size, startSample + MAX_CLIP_SECONDS * Pcm.SAMPLE_RATE))
         if (endSample - startSample < MIN_EMBEDDING_SAMPLES) return@runCatching null
         val clip = windowFloats.copyOfRange(startSample, endSample)
         val stream = extractor.createStream()
@@ -201,6 +216,11 @@ class SherpaOnnxDiarizer @Inject constructor(
         // guidance for speaker-embedding models) — they fall back to the per-window-offset tag
         // instead of a garbage-in embedding match.
         const val MIN_EMBEDDING_SAMPLES = Pcm.SAMPLE_RATE / 2 // 0.5s
+
+        // SPK-04: a speaker's voice in a window is the mean of its few longest segments, each
+        // capped, so embedding cost per window stays bounded however much anyone talks.
+        const val MAX_CLIPS_PER_SPEAKER = 3
+        const val MAX_CLIP_SECONDS = 20
 
         // Fallback-path only (no working extractor/linker): spreads each window's own local
         // tags (0, 1, 2…, never more than a handful of speakers per window in practice) into a
