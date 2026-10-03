@@ -41,6 +41,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -110,6 +111,7 @@ fun HomeScreen(
 
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val resources = LocalResources.current
     val c = TrailMix.colors
     val snackbarHostState = remember { SnackbarHostState() }
     var pendingShare by remember { mutableStateOf<PendingShare?>(null) }
@@ -458,11 +460,11 @@ fun HomeScreen(
                     viewModel.exitSelectionMode()
                     val sendIntent = Intent(Intent.ACTION_SEND).apply {
                         type = "text/plain"
-                        putExtra(Intent.EXTRA_SUBJECT, context.getString(R.string.home_share_notes_subject, share.count))
+                        putExtra(Intent.EXTRA_SUBJECT, resources.getString(R.string.home_share_notes_subject, share.count))
                         putExtra(Intent.EXTRA_TEXT, markdown)
                     }
                     val chooser = if (share.count == 1) R.string.home_share_chooser_note else R.string.home_share_chooser_notes
-                    context.startActivity(Intent.createChooser(sendIntent, context.getString(chooser)))
+                    context.startActivity(Intent.createChooser(sendIntent, resources.getString(chooser)))
                 }
             },
             onDismiss = { pendingShare = null },
