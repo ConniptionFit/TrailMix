@@ -193,7 +193,12 @@ internal fun UpcomingMeetingCard(
 
 /** The search box. Hits include transcript moments and typed lines (see [NoteListRow]). */
 @Composable
-internal fun SearchField(query: String, onQueryChange: (String) -> Unit, modifier: Modifier = Modifier) {
+internal fun SearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    hint: String = stringResource(R.string.home_search_hint),
+) {
     val c = TrailMix.colors
     Row(
         modifier = modifier
@@ -215,7 +220,7 @@ internal fun SearchField(query: String, onQueryChange: (String) -> Unit, modifie
             decorationBox = { inner ->
                 if (query.isEmpty()) {
                     Text(
-                        text = stringResource(R.string.home_search_hint),
+                        text = hint,
                         style = TrailMix.type.body,
                         color = c.dim,
                         maxLines = 1,

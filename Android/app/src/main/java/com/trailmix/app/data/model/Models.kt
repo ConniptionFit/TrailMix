@@ -34,6 +34,8 @@ data class TranscriptLine(
     val speakerLabel: String? = null,
     /** CAP-31: lane attribution; null for mic-only captures or ambiguous audio. */
     val speechSource: SpeechSource? = null,
+    /** True once the user has corrected this line's text by hand (shown as "edited"). */
+    val edited: Boolean = false,
 )
 
 object SegmentsJson {
@@ -66,6 +68,7 @@ object TranscriptJson {
                 JSONObject().put("l", it.label).put("t", it.text).apply {
                     it.speakerLabel?.let { sp -> put("sp", sp) }
                     it.speechSource?.let { src -> put("src", src.name) }
+                    if (it.edited) put("ed", true)
                 },
             )
         }
@@ -81,6 +84,7 @@ object TranscriptJson {
                 text = o.getString("t"),
                 speakerLabel = o.optString("sp").takeIf { it.isNotBlank() },
                 speechSource = SpeechSource.fromStored(o.optString("src").takeIf { it.isNotBlank() }),
+                edited = o.optBoolean("ed", false),
             )
         }
     }.getOrDefault(emptyList())
