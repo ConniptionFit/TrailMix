@@ -17,11 +17,16 @@ import javax.inject.Singleton
  * ([rememberVoice]) or, for the note-taker's own voice, a session in which the capture lanes
  * were unambiguous enough to trust ([MeEnrollment]).
  */
+/** The one thing note deletion needs from voice recognition (keeps the repository testable). */
+fun interface NoteVoiceCleaner {
+    suspend fun forgetNote(noteId: Long)
+}
+
 @Singleton
 class SpeakerRecognition @Inject constructor(
     private val store: VoiceprintStore,
     private val settings: SettingsRepository,
-) {
+) : NoteVoiceCleaner {
     private suspend fun enabled(): Boolean = settings.speakerRecognitionEnabled.first()
 
     /** Matches for the speakers in [voices] (keyed by the raw label they carry), best first. */
@@ -72,7 +77,7 @@ class SpeakerRecognition @Inject constructor(
 
     suspend fun forget(personId: String): Boolean = store.update { people -> people.filter { it.id != personId } }
 
-    suspend fun forgetNote(noteId: Long) = store.deleteNoteCentroids(noteId)
+    override suspend fun forgetNote(noteId: Long) = store.deleteNoteCentroids(noteId)
 
     suspend fun forgetEveryone() = store.clearAll()
 
