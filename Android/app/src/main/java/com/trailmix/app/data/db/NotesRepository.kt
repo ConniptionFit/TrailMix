@@ -3,7 +3,6 @@ package com.trailmix.app.data.db
 import com.trailmix.app.data.ai.NoteTitle
 import com.trailmix.app.data.export.ExportFormat
 import com.trailmix.app.data.export.ExportSink
-import com.trailmix.app.data.speech.NoteVoiceCleaner
 import com.trailmix.app.data.export.ExportedPhoto
 import com.trailmix.app.data.export.NoteMarkdown
 import com.trailmix.app.data.export.NoteMarkdownImporter
@@ -16,6 +15,7 @@ import com.trailmix.app.data.model.StructuredSummaryJson
 import com.trailmix.app.data.model.TranscriptJson
 import com.trailmix.app.data.model.TranscriptLine
 import com.trailmix.app.data.model.moveSection
+import com.trailmix.app.data.speech.NoteVoiceCleaner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
