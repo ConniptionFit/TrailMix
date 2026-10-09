@@ -3,6 +3,7 @@ package com.trailmix.app.data.db
 import com.trailmix.app.data.ai.NoteTitle
 import com.trailmix.app.data.export.ExportFormat
 import com.trailmix.app.data.export.ExportSink
+import com.trailmix.app.data.speech.NoteVoiceCleaner
 import com.trailmix.app.data.export.ExportedPhoto
 import com.trailmix.app.data.export.NoteMarkdown
 import com.trailmix.app.data.export.NoteMarkdownImporter
@@ -54,6 +55,7 @@ class NotesRepository @Inject constructor(
     private val chatDao: ChatDao,
     private val exportSink: ExportSink,
     private val conversationDao: ConversationDao,
+    private val voiceCleaner: NoteVoiceCleaner,
 ) {
     fun observeNotes(): Flow<List<NoteEntity>> = noteDao.observeAll()
 
@@ -377,6 +379,9 @@ class NotesRepository @Inject constructor(
         }
         chatDao.deleteForNote(note.id)
         noteDao.deleteById(note.id)
+        // SPK-04: the per-note voice centroids are biometric-adjacent data that nothing else
+        // points at once the row is gone. Fail-soft: a cleanup failure must not undo a delete.
+        runCatching { voiceCleaner.forgetNote(note.id) }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
     }
 
     /**

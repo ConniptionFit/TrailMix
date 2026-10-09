@@ -46,6 +46,7 @@ class NotesRepositoryTest {
     private lateinit var exporter: FakeExportSink
     private lateinit var conversationDao: FakeConversationDao
     private lateinit var repo: NotesRepository
+    private val forgotten = mutableListOf<Long>()
 
     @Before
     fun setUp() {
@@ -53,7 +54,7 @@ class NotesRepositoryTest {
         chatDao = FakeChatDao()
         exporter = FakeExportSink()
         conversationDao = FakeConversationDao()
-        repo = NotesRepository(noteDao, chatDao, exporter, conversationDao)
+        repo = NotesRepository(noteDao, chatDao, exporter, conversationDao) { forgotten += it }
     }
 
     private fun seed(
@@ -436,6 +437,24 @@ class NotesRepositoryTest {
             exporter.deleted,
         )
         assertFalse(id in noteDao.rows)
+    }
+
+    @Test
+    fun `deleting forever forgets the note's voice centroids`() = runBlocking {
+        val id = save()
+
+        repo.deleteForever(id)
+
+        assertEquals(listOf(id), forgotten)
+    }
+
+    @Test
+    fun `a soft delete keeps the voice centroids so restore still has them`() = runBlocking {
+        val id = save()
+
+        repo.delete(id)
+
+        assertTrue(forgotten.isEmpty())
     }
 
     @Test

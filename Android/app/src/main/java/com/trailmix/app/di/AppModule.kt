@@ -52,6 +52,11 @@ object AppModule {
     @Singleton
     fun provideExportSink(exporter: NoteExporter): ExportSink = exporter
 
+    /** SPK-04: note deletion forgets that note's voice centroids via this seam. */
+    @Provides
+    @Singleton
+    fun provideNoteVoiceCleaner(recognition: com.trailmix.app.data.speech.SpeakerRecognition): com.trailmix.app.data.speech.NoteVoiceCleaner = recognition
+
     /**
      * AI-01 (2026-09-13): [CaptureSessionManager][com.trailmix.app.data.speech.CaptureSessionManager]
      * depends on the [SpeakerDiarizer] *interface*, not [SherpaOnnxDiarizer] — same seam,
