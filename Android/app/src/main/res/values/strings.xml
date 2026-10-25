@@ -131,6 +131,7 @@
     <string name="note_move_down">Move down</string>
     <string name="note_reorder_done">Done</string>
     <string name="note_menu_continue">Continue recording</string>
+    <string name="note_menu_send_claude">Send to Claude</string>
     <string name="note_menu_edit">Edit note</string>
     <string name="note_menu_rebuild">Rebuild note…</string>
     <string name="note_menu_reorder">Reorder sections</string>
