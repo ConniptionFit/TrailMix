@@ -266,6 +266,9 @@ The summary carries YAML frontmatter (`title`, `date`, `duration`, `meeting`, `a
 `topics`, `action_items`, a link to the transcript, `tags`), then a `TL;DR` callout, your own
 typed notes, time-windowed `Key points`, and `- [ ]` action items. That means it's queryable
 from Obsidian Dataview, scannable on a phone, and unambiguous to a model reading it cold.
+
+To hand a note to Claude (one tap from Note Detail, or via a synced export folder on your
+Linux machine) see [`Android/docs/claude-handoff.md`](Android/docs/claude-handoff.md).
    - **Upcoming meetings** — tap the calendar label on Home to see the next 7 days; tap a
      meeting to capture it (a meeting more than 5 minutes out asks first).
 4. **Transcript** — full-screen, grouped into speaker blocks with a time gutter. Search
