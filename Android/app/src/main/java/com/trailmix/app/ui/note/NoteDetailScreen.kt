@@ -70,6 +70,7 @@ import com.trailmix.app.ui.components.TmSnackbarHost
 import com.trailmix.app.ui.components.TmTextButton
 import com.trailmix.app.ui.components.TmTonalButton
 import com.trailmix.app.ui.components.TmTopBar
+import com.trailmix.app.ui.export.ClaudeHandoff
 import com.trailmix.app.ui.export.ExportFormatPickerDialog
 import com.trailmix.app.ui.export.PhotoPickerSheet
 import com.trailmix.app.ui.theme.TmSpacing
@@ -151,6 +152,15 @@ fun NoteDetailScreen(
             putExtra(Intent.EXTRA_TEXT, current.toMarkdown(format = format))
         }
         context.startActivity(Intent.createChooser(sendIntent, shareChooserTitle))
+    }
+
+    fun sendToClaude() {
+        ClaudeHandoff.send(
+            context = context,
+            title = current.title,
+            markdown = current.toMarkdown(format = ExportFormat.LLM_OPTIMIZED),
+            chooserTitle = shareChooserTitle,
+        )
     }
 
     fun enterEdit() {
@@ -302,6 +312,7 @@ fun NoteDetailScreen(
                         contentDescription = stringResource(R.string.note_more),
                         items = buildList {
                             add(TmMenuItem(stringResource(R.string.note_menu_continue), onResume, enabled = !regenerating))
+                            add(TmMenuItem(stringResource(R.string.note_menu_send_claude), ::sendToClaude))
                             add(TmMenuItem(stringResource(R.string.note_menu_edit), ::enterEdit, enabled = !regenerating))
                             add(TmMenuItem(stringResource(R.string.note_menu_rebuild), { showRebuild = true }, enabled = !regenerating))
                             if (summary != null && summary.sections.size >= 2 && tab == 0) {
